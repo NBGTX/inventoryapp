@@ -1512,7 +1512,7 @@ const Sites = {
     if (!host) return;
     const hasCustomCat = this.categories.some(c => this._isCustom(c));
     if (!this.list.length && !hasCustomCat) {
-      host.innerHTML = `<div class="empty">No sites yet. Add them under <b>Configuration → NBT Sites</b>.</div>`;
+      host.innerHTML = `<div class="empty">No sites yet. Add them under <a onclick="Settings.open('links')">Settings → NBT Sites</a>.</div>`;
       return;
     }
     // normal categories (in order), then Other, then Custom pinned to the bottom
@@ -2713,7 +2713,7 @@ const BGTools = {
     p.innerHTML =
       `<div class="chart-card" style="max-width:860px">
         <h4 style="margin:0 0 4px">Missing Groups</h4>
-        <p class="sub-note" style="margin:0 0 12px">Compare a teammate or a whole department against its <b>group baseline</b> — the groups the majority of that department holds — to find who's missing groups their peers have. Build/adjust baselines in <b>Configuration → Group baselines</b>.</p>
+        <p class="sub-note" style="margin:0 0 12px">Compare a teammate or a whole department against its <b>group baseline</b> — the groups the majority of that department holds — to find who's missing groups their peers have. Build/adjust baselines in <a onclick="Settings.open('perms')">Settings → Group baselines</a>.</p>
         <div class="miss-modes">
           <button class="miss-mode active" data-m="user" onclick="BGTools.missMode('user')">By teammate</button>
           <button class="miss-mode" data-m="dept" onclick="BGTools.missMode('dept')">By department</button>
@@ -2749,7 +2749,7 @@ const BGTools = {
           <div class="field" style="flex:2;min-width:240px;margin:0"><label>Department (with a saved baseline)</label>
             <select id="missDept"><option value="">Loading…</option></select></div>
           <button class="primary" id="missDeptBtn" onclick="BGTools.missShowDept()">Check department</button></div>
-         <p class="sub-note" style="margin:8px 0 0">Only departments analyzed in <b>Configuration → Group baselines</b> appear here.</p>`;
+         <p class="sub-note" style="margin:8px 0 0">Only departments analyzed in <a onclick="Settings.open('perms')">Settings → Group baselines</a> appear here.</p>`;
       this._missLoadDepts();
     }
   },
@@ -2763,7 +2763,7 @@ const BGTools = {
       this._miss.depts = depts;
       sel.innerHTML = depts.length
         ? depts.map(d => `<option value="${attr(d)}">${esc(d)}</option>`).join("")
-        : `<option value="">No baselines yet — analyze one in Configuration</option>`;
+        : `<option value="">No baselines yet — analyze one in Settings → Group baselines</option>`;
       const btn = document.getElementById("missDeptBtn"); if (btn) btn.disabled = !depts.length;
     } catch (e) { sel.innerHTML = `<option value="">Could not load</option>`; }
   },
@@ -2802,7 +2802,7 @@ const BGTools = {
       body.innerHTML = head +
         `<div class="cfg-warn" style="margin-top:6px">No group baseline saved for <b>${esc(dept || "this department")}</b> yet, so there's nothing to compare against.` +
         (dept ? ` <button class="rowbtn" style="margin-left:8px" onclick="BGTools.missAnalyzeThenUser('${attr(dept)}','${attr(u.id)}')">Analyze “${esc(dept)}” now</button>` : "") +
-        `<div class="sub-note" style="margin-top:8px">Or build it in <b>Configuration → Group baselines</b>.</div></div>`;
+        `<div class="sub-note" style="margin-top:8px">Or build it in <a onclick="Settings.open('perms')">Settings → Group baselines</a>.</div></div>`;
       return;
     }
     const total = r.total || 0;
@@ -2840,7 +2840,7 @@ const BGTools = {
   _missRenderDept(r) {
     const body = document.getElementById("missBody"); if (!body) return;
     if (!r.has_baseline) {
-      body.innerHTML = `<div class="cfg-warn">No baseline saved for <b>${esc(r.department)}</b>. Analyze it first in <b>Configuration → BomsNet baselines</b>.</div>`;
+      body.innerHTML = `<div class="cfg-warn">No baseline saved for <b>${esc(r.department)}</b>. Analyze it first in <a onclick="Settings.open('perms')">Settings → Group baselines</a>.</div>`;
       return;
     }
     const total = r.total || 0, compliant = r.compliant || 0, gap = total - compliant;
@@ -3882,7 +3882,7 @@ const Depts = {
     if (r && r.ok) {
       this.departments = data.departments; this.map = data.map;
       this.close();
-      App.toast ? App.toast("Configuration saved.") : 0;
+      App.toast ? App.toast("Saved.") : 0;
       try { Dashboard.load(); } catch (e) {}
     } else {
       App.error ? App.error((r && r.error) || "Could not save.") : alert((r && r.error) || "Could not save.");
