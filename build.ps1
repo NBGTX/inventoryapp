@@ -1,89 +1,162 @@
-# Build NBG Hub with PyInstaller.
+# Build the NBG Hub release: PyInstaller folder build -> self-test -> (sign) -> installer with WebView2.
 #
-#   powershell -ExecutionPolicy Bypass -File build.ps1            # build to dist\ (default)
-#   powershell -ExecutionPolicy Bypass -File build.ps1 -OneDir   # folder build (best vs. AV false positives)
-#   powershell -ExecutionPolicy Bypass -File build.ps1 -Deploy   # also copy to C:\Program Files\NBG (needs admin)
+#   powershell -ExecutionPolicy Bypass -File build.ps1                  # full release build
+#   powershell -ExecutionPolicy Bypass -File build.ps1 -NoInstaller     # app folder only (dist\NBG Hub\)
+#   powershell -ExecutionPolicy Bypass -File build.ps1 -Sign            # also Authenticode-sign (needs a cert + signtool)
+#   powershell -ExecutionPolicy Bypass -File build.ps1 -SkipTests       # emergencies only
 #
-# Output (default):  dist\NBG Hub.exe  (+ config.json beside it) — share the dist\ folder.
+# Output: release\NBG-Hub-Setup-<version>.exe  +  release\NBG-Hub-Setup-<version>.sha256
+# Process, prerequisites, rollback: docs\BUILD_AND_DEPLOY.md
 #
-# Defender flags many PyInstaller exes as Trojan:Win32/*!ml (an ML false positive,
-# not a real detection). Hardening baked in:
-#   * --version-file  stamps real Nucor/product metadata onto the exe
-#   * --noupx         never UPX-pack (packers are a major AV red flag)
-#   * -OneDir         optional folder build; onefile self-extracts to temp, which the
-#                     ML model most often flags. Durable fix = code signing + a Defender
-#                     allow-by-certificate indicator (see the Deployment guide docx).
-#
-# The exe writes its sign-in token cache to %LOCALAPPDATA%\NBG Hub (not next to the
-# exe), so each user's tokens stay local and it also runs from a read-only install.
-#
-# Prereqs (already on Blake's machine): pywebview, pythonnet, clr_loader, cffi,
-# msal, requests, truststore, pyinstaller. config.json is NOT bundled; it lives
-# next to the exe so each site can edit settings without a rebuild.
+# Notes
+#   * Keep this file ASCII only (Windows PowerShell 5.1 mangles other characters).
+#   * Builds run in .venv-build with the pinned versions in requirements.lock.txt (reproducible).
+#   * config.json is NOT built from git: the one on THIS machine is scrubbed of secrets and shipped.
 
 param(
-    [switch]$OneDir,
-    [switch]$Deploy,
+    [string]$Python = "",
     [switch]$SkipTests,
-    [string]$Python = ""
+    [switch]$NoInstaller,
+    [switch]$Sign
 )
 
 $ErrorActionPreference = "Stop"
+Set-Location $PSScriptRoot
 
-# ---- find Python 3.12: -Python arg, then $env:NBG_PYTHON, then the py launcher, then the old path ----
-$py = $Python
-if (-not $py) { $py = $env:NBG_PYTHON }
-if (-not $py) {
-    try { $py = (& py -3.12 -c "import sys;print(sys.executable)").Trim() } catch { $py = "" }
-}
-if (-not $py -or -not (Test-Path $py)) {
-    $legacy = "C:\Users\Blake.Stevenson\AppData\Local\Programs\Python\Python312\python.exe"
-    if (Test-Path $legacy) { $py = $legacy }
-}
-if (-not $py -or -not (Test-Path $py)) {
-    throw "Python 3.12 not found. Install it, or pass -Python <path-to-python.exe>, or set NBG_PYTHON."
-}
-Write-Host "Using Python: $py"
+function Step($text) { Write-Host ""; Write-Host "== $text" -ForegroundColor Cyan }
 
-# ---- version files must agree (CLAUDE.md Rule 3) ----
-& $py tools\bump_version.py --check
-if ($LASTEXITCODE -ne 0) { throw "Version files disagree. Run: python tools\bump_version.py" }
+# Run a native command; PyInstaller/pip write progress to stderr, so judge success by exit code only.
+function Run([string]$exe, [string[]]$arguments) {
+    $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    & $exe @arguments
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    if ($code -ne 0) { throw "$exe failed (exit $code): $($arguments -join ' ')" }
+}
 
-# ---- offline tests must pass ----
+# ---- 1. Python 3.12 -------------------------------------------------------------------------
+Step "Find Python 3.12"
+$basePy = $Python
+if (-not $basePy) { $basePy = $env:NBG_PYTHON }
+if (-not $basePy) {
+    try { $basePy = (& py -3.12 -c "import sys; print(sys.executable)").Trim() } catch { $basePy = "" }
+}
+if (-not $basePy -or -not (Test-Path $basePy)) {
+    throw "Python 3.12 not found. Install it, pass -Python <path>, or set NBG_PYTHON."
+}
+Write-Host "Using $basePy"
+
+# ---- 2. clean, pinned build environment -----------------------------------------------------
+Step "Build environment (.venv-build, pinned)"
+$venvPy = Join-Path $PSScriptRoot ".venv-build\Scripts\python.exe"
+if (-not (Test-Path $venvPy)) { Run $basePy @("-m", "venv", ".venv-build") }
+Run $venvPy @("-m", "pip", "install", "--quiet", "--disable-pip-version-check", "-r", "requirements.lock.txt")
+$py = $venvPy
+
+# ---- 3. gates: versions, tests, shipped config ----------------------------------------------
+Step "Version files agree"
+Run $py @("tools\bump_version.py", "--check")
+$version = (& $py -c "import version; print(version.APP_VERSION)").Trim()
+Write-Host "Version $version"
+
 if (-not $SkipTests) {
-    & $py -m unittest discover -s tests -p "test_*.py"
-    if ($LASTEXITCODE -ne 0) { throw "Tests failed. Fix them, or pass -SkipTests to build anyway." }
+    Step "Offline tests"
+    Run $py @("-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py")
 }
 
-$mode = if ($OneDir) { "--onedir" } else { "--onefile" }
-Write-Host "Building NBG Hub.exe ($mode, with version metadata, no UPX) ..."
+Step "Shipped config (scrub + secret scan)"
+New-Item -ItemType Directory -Force -Path build | Out-Null
+Run $py @("tools\check_release.py", "config.json", "--write", "build\config.release.json")
 
-& $py -m PyInstaller --noconfirm $mode --windowed --noupx --name "NBG Hub" `
-    --version-file version.txt `
-    --add-data "web;web" `
-    --collect-all pythonnet --collect-all clr_loader `
-    --hidden-import clr --hidden-import truststore --hidden-import cffi --hidden-import hub --hidden-import divisions --hidden-import hubstore --hidden-import securecache --hidden-import schema --hidden-import settings_catalog --hidden-import paths --hidden-import localstore --hidden-import adlookup --hidden-import sqltools --hidden-import version `
-    app.py
+# ---- 4. PyInstaller (folder build: faster start, fewer antivirus false positives) ------------
+Step "PyInstaller"
+$hidden = @()
+foreach ($m in (& $py -c "import selftest; print(' '.join(selftest.MODULES))").Trim().Split(" ")) {
+    $hidden += @("--hidden-import", $m)
+}
+if (Test-Path "dist\NBG Hub") { Remove-Item -Recurse -Force "dist\NBG Hub" }
+if (Test-Path "build\NBG Hub") { Remove-Item -Recurse -Force "build\NBG Hub" }
+$pyi = @("-m", "PyInstaller", "--noconfirm", "--onedir", "--windowed", "--noupx", "--name", "NBG Hub",
+         "--version-file", "version.txt", "--add-data", "web;web",
+         "--collect-all", "pythonnet", "--collect-all", "clr_loader") + $hidden + @("app.py")
+Run $py $pyi
+$appDir = "dist\NBG Hub"
+$exe = Join-Path $appDir "NBG Hub.exe"
+if (-not (Test-Path $exe)) { throw "PyInstaller did not produce $exe" }
+Copy-Item -Force "build\config.release.json" (Join-Path $appDir "config.json")
 
-$target = if ($OneDir) { "dist\NBG Hub" } else { "dist" }
-Copy-Item -Force config.json (Join-Path $target "config.json")
-Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $target ".token_cache.bin")
+# ---- 5. self-test the REAL exe (catches missing modules/assets before they reach a tech) -----
+Step "Self-test of the built exe"
+$result = Join-Path $PSScriptRoot "build\selftest.txt"
+if (Test-Path $result) { Remove-Item -Force $result }
+$p = Start-Process -FilePath $exe -ArgumentList @("--selftest", "`"$result`"") -Wait -PassThru
+if (Test-Path $result) { Get-Content $result }
+if ($p.ExitCode -ne 0) { throw "Self-test FAILED (exit $($p.ExitCode)). Fix the FAIL lines above; do not ship this build." }
+Write-Host "Self-test passed." -ForegroundColor Green
+
+# ---- 6. signing (optional until Nucor has a certificate) ------------------------------------
+function Find-SignTool {
+    $c = Get-Command signtool.exe -ErrorAction SilentlyContinue
+    if ($c) { return $c.Source }
+    $kits = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
+    if (Test-Path $kits) {
+        $f = Get-ChildItem $kits -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+             Where-Object { $_.FullName -like "*\x64\*" } | Sort-Object FullName -Descending | Select-Object -First 1
+        if ($f) { return $f.FullName }
+    }
+    return $null
+}
+function Sign-File([string]$file) {
+    $st = Find-SignTool
+    if (-not $st) { throw "signtool.exe not found (install the Windows SDK)." }
+    Run $st @("sign", "/fd", "SHA256", "/tr", "http://timestamp.digicert.com", "/td", "SHA256", "/a", $file)
+}
+if ($Sign) { Step "Sign app"; Sign-File $exe }
+else { Write-Warning "UNSIGNED build: expect SmartScreen / Defender warnings until a code-signing certificate is used (-Sign)." }
+
+if ($NoInstaller) {
+    Write-Host ""
+    Write-Host "Done (no installer): $appDir" -ForegroundColor Green
+    return
+}
+
+# ---- 7. installer with the offline WebView2 runtime -----------------------------------------
+Step "WebView2 offline runtime"
+$assets = Join-Path $PSScriptRoot "installer\assets"
+New-Item -ItemType Directory -Force -Path $assets | Out-Null
+$wv2 = Join-Path $assets "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
+if (-not (Test-Path $wv2)) {
+    Write-Host "Downloading the Evergreen Standalone Installer from Microsoft (about 170 MB, one time) ..."
+    Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124701" -OutFile $wv2 -UseBasicParsing
+}
+$sig = Get-AuthenticodeSignature $wv2
+if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notlike "*Microsoft Corporation*") {
+    Remove-Item -Force $wv2
+    throw "WebView2 installer failed signature check ($($sig.Status)). Deleted; re-run to download again."
+}
+Write-Host "WebView2 installer signature OK."
+
+Step "Inno Setup installer"
+$iscc = $null
+foreach ($c in @((Get-Command ISCC.exe -ErrorAction SilentlyContinue | ForEach-Object { $_.Source }),
+                 (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
+                 (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe"),
+                 (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"))) {
+    if ($c -and (Test-Path $c)) { $iscc = $c; break }
+}
+if (-not $iscc) { throw "Inno Setup 6 not found. Install it:  winget install JRSoftware.InnoSetup   (then re-run)." }
+New-Item -ItemType Directory -Force -Path release | Out-Null
+$env:NBG_VERSION = $version
+Run $iscc @("/Qp", "installer\NBG-Hub.iss")
+$setup = "release\NBG-Hub-Setup-$version.exe"
+if (-not (Test-Path $setup)) { throw "Inno Setup did not produce $setup" }
+if ($Sign) { Step "Sign installer"; Sign-File $setup }
+
+$hash = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLower()
+"$hash  NBG-Hub-Setup-$version.exe" | Out-File -Encoding ascii "release\NBG-Hub-Setup-$version.sha256"
 
 Write-Host ""
-Write-Host "Done -> $target\NBG Hub.exe (config.json beside it)."
-Write-Host "Share the whole dist\ folder (exe + config.json)."
-
-if ($Deploy) {
-    $Install = "C:\Program Files\NBG"
-    $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
-             ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    if (-not $admin) {
-        Write-Warning "-Deploy needs an elevated (Administrator) PowerShell. Skipped; build is in $target."
-        return
-    }
-    New-Item -ItemType Directory -Force -Path $Install | Out-Null
-    if ($OneDir) { Copy-Item "$target\*" $Install -Recurse -Force }
-    else { Copy-Item "dist\NBG Hub.exe" $Install -Force; Copy-Item "config.json" $Install -Force }
-    Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $Install ".token_cache.bin")
-    Write-Host "Deployed -> $Install"
-}
+Write-Host "Done." -ForegroundColor Green
+Write-Host "  Installer : $setup"
+Write-Host "  SHA256    : $hash"
+Write-Host "  Next      : docs\BUILD_AND_DEPLOY.md  (smoke test on a clean PC, hand out, then set 'Latest released version' in Settings)"

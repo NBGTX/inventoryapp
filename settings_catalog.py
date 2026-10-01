@@ -52,6 +52,12 @@ CATALOG = [
     {"key": "intune_enrich_per_sync", "group": "Sync", "label": "Vendor lookups per sync run",
      "kind": "number", "secret": False, "min": 0, "max": 500, "default": 75, "status": "active",
      "help": "How many devices get a Lenovo/Dell/HP spec lookup in one sync. Lower = gentler on vendor APIs, slower to fill in."},
+    {"key": "latest_version", "group": "Releases", "label": "Latest released version",
+     "kind": "version", "secret": False, "status": "active",
+     "help": "The newest NBG Hub build, for example 2026.10.15. Techs on an older build see an 'Update available' notice."},
+    {"key": "min_version", "group": "Releases", "label": "Oldest allowed version",
+     "kind": "version", "secret": False, "status": "active",
+     "help": "Builds older than this show a red 'Update required' notice. Raise it when a release changes how data is stored."},
     {"key": "stale_checkin_days", "group": "Sync", "label": "Flag devices not seen for (days)",
      "kind": "number", "secret": False, "min": 1, "max": 365, "default": 30, "status": "active",
      "help": "Intune devices with no check-in for longer than this are flagged stale."},
@@ -71,6 +77,11 @@ def check_value(key: str, value: str) -> str:
         return value
     if c["kind"] == "choice" and v and v not in {o["id"] for o in c["options"]}:
         raise ValueError(f"'{v}' is not an allowed value for {c['label']}.")
+    if c["kind"] == "version":
+        import version
+        if v and not version.parse(v):
+            raise ValueError(f"{c['label']} must look like 2026.10.15 (or 2026.10.15.2).")
+        return v
     if c["kind"] == "number":
         if not v:
             return ""                                   # blank = back to the built-in default

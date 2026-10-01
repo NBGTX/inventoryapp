@@ -148,15 +148,34 @@ class GraphError(Exception):
     """Graph/HTTP error with a human-readable message."""
 
 
-def load_config(path: str | None = None) -> dict:
+def merge_config(base: dict, over: dict) -> dict:
+    """User overrides win; nested objects (e.g. "central") are merged key by key."""
+    out = dict(base)
+    for k, v in (over or {}).items():
+        out[k] = merge_config(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
+def load_config(path: str | None = None, user_path: str | None = None) -> dict:
+    """Two layers: the config.json shipped beside the app (replaced on every update) and an optional
+    per-user override %LOCALAPPDATA%\\NBG Hub\\config.json (never touched by updates)."""
+    default_layout = path is None
     path = path or os.path.join(HERE, "config.json")
-    if not os.path.exists(path):
+    if user_path is None:
+        user_path = os.path.join(_USER_DIR, "config.json") if default_layout else ""   # explicit path: that file only
+    if not os.path.exists(path) and not os.path.exists(user_path):
         raise GraphError(
             "Missing config.json - copy config.example.json to config.json and "
             "fill in tenant_id + client_id."
         )
-    with open(path, encoding="utf-8") as f:
-        cfg = json.load(f)
+    cfg = {}
+    for p in (path, user_path):
+        if p and os.path.exists(p):
+            try:
+                with open(p, encoding="utf-8-sig") as f:
+                    cfg = merge_config(cfg, json.load(f))
+            except ValueError as e:
+                raise GraphError(f"{p} is not valid JSON ({e}). Fix or delete it.")
     for key in ("tenant_id", "client_id"):
         if not cfg.get(key) or str(cfg[key]).startswith("PASTE"):
             raise GraphError(f"config.json: '{key}' is not filled in yet.")

@@ -1,0 +1,14 @@
+# Pinned build environment for NBG Hub (Python 3.12). build.ps1 installs exactly these into .venv-build.
+# Direct dependencies are pinned; pip resolves their own sub-dependencies. To update: change a pin,
+# run build.ps1 + the tests, then commit this file with the release.
+msal==1.39.0
+requests==2.34.2
+truststore==0.10.4
+pywebview==6.2.1
+pythonnet==3.2.0
+clr_loader==0.3.1
+cffi==2.1.1
+proxy_tools==0.1.0
+bottle==0.13.4
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.8

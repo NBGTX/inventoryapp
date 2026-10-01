@@ -220,6 +220,18 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    def get_update_info(self) -> dict:
+        """This build vs the latest/minimum versions set under Platform > Integrations (master settings)."""
+        try:
+            import version
+            gc = self._client()
+            cur, latest, low = version.APP_VERSION, gc.get_setting("latest_version", ""), gc.get_setting("min_version", "")
+            c, l, m = version.parse(cur), version.parse(latest), version.parse(low)
+            return {"ok": True, "current": cur, "latest": latest if l else "", "min": low if m else "",
+                    "update_available": bool(l and c < l), "update_required": bool(m and c < m)}
+        except Exception as e:
+            return self._fail(e)
+
     def _stale_limit(self) -> int:
         try:
             import settings_catalog
@@ -1996,7 +2008,13 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:                      # packaging check (build.ps1): no window, no network
+        import selftest
+        i = sys.argv.index("--selftest")
+        sys.exit(selftest.run(sys.argv[i + 1] if len(sys.argv) > i + 1 else None))
     try:
+        import selftest
+        selftest.require_webview2()
         main()
     except Exception:
         traceback.print_exc()

@@ -454,6 +454,7 @@ const App = {
       await Tz.load(); Settings.refreshAccess();
       if (!Divisions.list.length && Divisions._err) this.toast("Divisions: " + Divisions._err, true);
     }
+    this.checkUpdate();
     this.renderCached();       // 1) instant: show last-known data from local cache
     await this.reload();       // 2) fast: re-read the SharePoint lists and repaint
     // 3) background: Intune sync (moves + backfill). Deferred a few seconds so it
@@ -461,6 +462,17 @@ const App = {
     const fl = await Backend.call("get_flags");
     if (!fl || fl.auto_sync !== false) setTimeout(() => this.backgroundSync(), 4000);
     else { const b = document.getElementById("syncBtn"); if (b) b.title = "Auto-sync is off (NBG_NO_AUTOSYNC / config auto_sync=false). Click to sync."; }
+  },
+
+  /* newer build available / current build too old (versions are set under Settings > Integrations & options) */
+  async checkUpdate() {
+    try {
+      const r = await Backend.call("get_update_info");
+      if (!r || !r.ok || !(r.update_available || r.update_required)) return;
+      const el = document.getElementById("verLine");
+      if (el) { el.style.color = r.update_required ? "var(--red)" : "var(--amber)"; el.title = (r.update_required ? "Update required: this build is older than " + r.min : "Update available: " + r.latest) + ". Ask your admin for the new installer."; }
+      this.toast(r.update_required ? "NBG Hub update required (this build is older than " + r.min + ")." : "NBG Hub update available: " + r.latest + ".", !!r.update_required);
+    } catch (e) {}
   },
 
   renderCached() {
@@ -4498,6 +4510,8 @@ Object.assign(Mock, {
     { key: "hp_client_secret", group: "Vendor APIs", label: "HP warranty API client secret", kind: "secret", secret: true, status: "planned", help: "Pairs with the HP client ID." },
     { key: "default_timezone", group: "Regional", label: "Default time zone", kind: "choice", secret: false, status: "active", help: "Used by every division that has not picked its own time zone. Blank = each PC's own time zone." },
     { key: "intune_enrich_per_sync", group: "Sync", label: "Vendor lookups per sync run", kind: "number", secret: false, min: 0, max: 500, default: 75, status: "active", help: "How many devices get a Lenovo/Dell/HP spec lookup in one sync. Lower = gentler on vendor APIs, slower to fill in." },
+    { key: "latest_version", group: "Releases", label: "Latest released version", kind: "version", secret: false, status: "active", help: "The newest NBG Hub build, for example 2026.10.15. Techs on an older build see an 'Update available' notice." },
+    { key: "min_version", group: "Releases", label: "Oldest allowed version", kind: "version", secret: false, status: "active", help: "Builds older than this show a red 'Update required' notice. Raise it when a release changes how data is stored." },
     { key: "stale_checkin_days", group: "Sync", label: "Flag devices not seen for (days)", kind: "number", secret: false, min: 1, max: 365, default: 30, status: "active", help: "Intune devices with no check-in for longer than this are flagged stale." }],
   _ms: { lenovo_client_id: "SECRET", super_admins: "demo@nucor.com", legacy_thing: "old value" },
   async get_master_settings() {
@@ -4536,6 +4550,7 @@ Object.assign(Mock, {
     return { ok: true };
   },
   _ra: { user: [], admin: ["models", "links", "access", "sites", "sql", "perms", "storage"] },
+  async get_update_info() { return { ok: true, current: "2026.10.01", latest: "", min: "", update_available: false, update_required: false }; },
   async get_my_role() { return { ok: true, role: "super", sections: ["models", "links", "access", "sites", "sql", "perms", "storage"] }; },
   async get_role_access() {
     return { ok: true, super_admin: true, matrix: JSON.parse(JSON.stringify(this._ra)),

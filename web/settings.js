@@ -377,11 +377,13 @@ const Settings = {
     this.cat = r.catalog || []; this.other = r.other || [];
     const order = []; this.cat.forEach(c => { if (!order.includes(c.group)) order.push(c.group); });
     const blurb = { "Vendor APIs": "Credentials for warranty and spec lookups. Secrets are stored hidden and are never shown again; type a new value to replace one.",
-                    "Regional": "Platform-wide defaults.", "Sync": "How the Intune sync behaves." };
+                    "Regional": "Platform-wide defaults.", "Sync": "How the Intune sync behaves.",
+                    "Releases": "Tell techs when a newer NBG Hub build is out. Set these after you hand out a new installer." };
     const row = (c, i) => {
       const st = c.status === "planned" ? SetUI.pill("plan", "Not used yet") : (c.kind === "secret" ? (c.is_set ? SetUI.pill("ok", "Set") : SetUI.pill("warn", "Not set")) : "");
       let ctl;
       if (c.kind === "secret") ctl = `<input id="ig${i}" type="password" autocomplete="new-password" placeholder="${c.is_set ? "•••••• set - type to replace" : "paste the value"}">`;
+      else if (c.kind === "version") ctl = `<input id="ig${i}" value="${attr(c.value || "")}" placeholder="2026.10.15">`;
       else if (c.kind === "choice") ctl = SetUI.select("ig" + i, c.options || [], c.value, "", "(none - use each PC's own)");
       else ctl = `<input id="ig${i}" type="number" min="${c.min}" max="${c.max}" value="${attr(c.value || "")}" placeholder="${c.default} (default)">`;
       return `<div class="set-row"><div class="set-row-main"><b>${esc(c.label)}</b> ${st}<p>${esc(c.help)}</p></div>

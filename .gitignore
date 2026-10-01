@@ -27,3 +27,8 @@ SystemsData/
 webapp/**/bin/
 webapp/**/obj/
 webapp/**/App_Data/
+
+# Release build outputs
+release/
+installer/assets/
+.venv-build/

@@ -49,10 +49,10 @@ python tools\load_central.py                         # DRY RUN: snapshot → cen
 python tools\load_central.py --commit                # writes central lists (approval needed)
 python tools\bump_version.py                         # next version everywhere; --check to verify
 python app.py                                        # REAL: writes within seconds (Rule 2)
-powershell -ExecutionPolicy Bypass -File build.ps1   # tests + version check, then PyInstaller → dist\NBG Hub.exe
+powershell -ExecutionPolicy Bypass -File build.ps1   # pinned venv, tests, scrubbed config, PyInstaller folder build, exe --selftest, WebView2 + Inno Setup → release\NBG-Hub-Setup-<ver>.exe
 ```
 
-Build: needs Python 3.12 (`py -3.12`, `-Python <exe>` or `NBG_PYTHON`), `config.json`, app closed, `build\` deleted first. Release steps: HANDOFF (paths there are the old owner's).
+Build + deploy process: **docs/BUILD_AND_DEPLOY.md** (installer is per-user, bundles the offline WebView2 runtime; unsigned until Nucor has a certificate). New local module or web file -> add to `selftest.MODULES` / `WEB_FILES` (a test enforces it). Secrets never ship in config.json (the build scrubs and scans a copy). A per-user `%LOCALAPPDATA%\NBG Hub\config.json` overrides the installed one.
 
 ## Rules (must follow)
 
@@ -67,7 +67,7 @@ Build: needs Python 3.12 (`py -3.12`, `-Python <exe>` or `NBG_PYTHON`), `config.
 
 ## Conventions
 
-- **Api methods:** try/except → `{"ok": …}`, never raise to JS. Lazy-import local modules; add to `build.ps1 --hidden-import`. Graph via `gc._req`/`gc._get_all`. Advanced queries need `ConsistencyLevel: eventual` + `$count=true` on every page (`Api._users_where`). Escape OData with `Api._odq`. Batch lookups 20 at a time via `$batch`. HTTPS needs `truststore.inject_into_ssl()`; never `verify=False`.
+- **Api methods:** try/except → `{"ok": …}`, never raise to JS. Lazy-import local modules; add to `selftest.MODULES` (build.ps1 turns that list into `--hidden-import`s). Graph via `gc._req`/`gc._get_all`. Advanced queries need `ConsistencyLevel: eventual` + `$count=true` on every page (`Api._users_where`). Escape OData with `Api._odq`. Batch lookups 20 at a time via `$batch`. HTTPS needs `truststore.inject_into_ssl()`; never `verify=False`.
 - **Divisions:** use `Divisions.codes()/bucket()/cls()/label()` in JS and `divisions.*` helpers in Python; no literal `LTR`/`BRI` in logic (Mock data aside). Division-scoped lists are `new_stock`, `in_use`, `log` (`graph._DIVISION_SCOPED`); `model_specs` is shared.
 - **Hub data:** only through `Hub` methods (JSON API unchanged). Central: `HubConflict` means someone else saved first — reload and retry. Docs over ~50k chars are chunked automatically.
 - **Frontend:** one global object per feature (`App`, `Dashboard`, `Divisions`, `DataMode`, `MasterSettings`, `DivisionAdmin`, `BGTools`, `Depts`, `Hub`, `Upgrade`, `Software`, `Sites`, `HotSpares`, `Drill`). Template strings into `innerHTML`, inline `onclick="Obj.method()"`. `esc()` text, `attr()` attributes; `attr()` does not escape `'`.
