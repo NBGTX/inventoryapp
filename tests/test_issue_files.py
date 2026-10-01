@@ -125,5 +125,45 @@ class Board(unittest.TestCase):
         self.assertFalse(self.api.issue_attachment(iid, "a-nope")["ok"])
 
 
+class LibraryWithoutMetadataColumns(unittest.TestCase):
+    """The Hub Files library may lack Division / Kind / Item Id columns: the upload must still succeed."""
+
+    def test_upload_survives_a_failing_metadata_patch(self):
+        import hubstore
+        calls = []
+
+        class R:
+            content = b""
+
+            def json(self_):
+                return {"id": "item1"} if self_.kind == "PUT" else {"id": "li9"}
+
+            def __init__(self_, kind):
+                self_.kind = kind
+
+        class GC:
+            division = {"id": "_platform"}
+
+            def _ensure_site(self):
+                return "site"
+
+            def _list_id(self, k):
+                return "lib"
+
+            def _col_map(self, k):
+                return {}
+
+            def _req(self, method, url, **kw):
+                calls.append((method, url.split("?")[0][-30:]))
+                if method == "PATCH":
+                    raise RuntimeError('400: Field Division is not recognized')
+                return R(method)
+        st = hubstore.SharePointHubStore(GC(), div_id="_platform")
+        st.put_bytes("iss-1-a-1.png", PNG)                                   # must not raise
+        st._blob_put("setup.html", "<html></html>")                          # same rule for the older text blobs
+        self.assertEqual([c[0] for c in calls].count("PUT"), 2)
+        self.assertIn("PATCH", [c[0] for c in calls])
+
+
 if __name__ == "__main__":
     unittest.main()

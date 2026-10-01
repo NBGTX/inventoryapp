@@ -852,7 +852,8 @@ body.is-busy button.primary,body.is-busy .modal-foot button,body.is-busy .set-ro
 .iss-seg label:hover{color:var(--text);}
 .iss-seg label.on{background:var(--med);color:#fff;font-weight:600;}
 .iss-seg input{position:absolute;opacity:0;width:0;height:0;}
-.iss-seg label:has(input:focus-visible){box-shadow:0 0 0 2px var(--light);}
+.iss-seg label:has(input:focus-visible):not(.on){background:rgba(255,255,255,.08);}   /* keyboard focus cue without a ring that distorts the pill */
+.iss-seg label.on{box-shadow:none;outline:none;}
 .field textarea{width:100%;background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:11px 12px;color:var(--text);font-size:14px;font-family:inherit;line-height:1.45;resize:vertical;min-height:110px;}
 .field textarea::placeholder,.field input::placeholder{color:var(--muted);opacity:.7;}
 #mfbType{display:flex;width:100%;}
@@ -871,3 +872,5 @@ body.is-busy button.primary,body.is-busy .modal-foot button,body.is-busy .set-ro
 .att-box{margin-top:12px;}
 .att-light{position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;cursor:zoom-out;}
 .att-light img{max-width:92vw;max-height:90vh;border-radius:8px;box-shadow:0 10px 40px #000;}
+.field .iss-seg label,.iss-seg label{margin:0;display:inline-flex;font-size:13px;line-height:1.2;}
+.field .iss-seg label.on{color:#fff;}

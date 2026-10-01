@@ -100,24 +100,29 @@ class SharePointHubStore:
         gc = self.gc
         item = gc._req("PUT", self._blob_url(name, ":/content"), data=text.encode("utf-8"),
                        headers={"Content-Type": "application/octet-stream"}).json()
-        site = gc._ensure_site()
-        lid = gc._list_id("hub_files")
-        li = gc._req("GET", f"{GRAPH}/sites/{site}/lists/{lid}/drive/items/{item['id']}/listItem?$select=id").json()["id"]
-        gc._req("PATCH", f"{GRAPH}/sites/{site}/lists/{lid}/items/{li}/fields",
-                json={self._col("Division", "hub_files"): self._div(), self._col("Kind", "hub_files"): "setup-html",
-                      self._col("Item Id", "hub_files"): name})
+        self._tag_blob(item, "setup-html", name)
+
+    def _tag_blob(self, item: dict, kind: str, name: str) -> None:
+        """Best effort: fill the library's Division / Kind / Item Id columns when they exist. The file is already saved and is
+        found by its folder + name, so a library without those columns (or any hiccup here) must not fail the save."""
+        from graph import GRAPH
+        gc = self.gc
+        try:
+            site = gc._ensure_site()
+            lid = gc._list_id("hub_files")
+            li = gc._req("GET", f"{GRAPH}/sites/{site}/lists/{lid}/drive/items/{item['id']}/listItem?$select=id").json()["id"]
+            gc._req("PATCH", f"{GRAPH}/sites/{site}/lists/{lid}/items/{li}/fields",
+                    json={self._col("Division", "hub_files"): self._div(), self._col("Kind", "hub_files"): kind,
+                          self._col("Item Id", "hub_files"): name})
+        except Exception:
+            pass
 
     def put_bytes(self, name: str, data: bytes, kind: str = "attachment") -> None:
         """Upload a binary file to this division's folder in the Hub Files library."""
         from graph import GRAPH
         gc = self.gc
         item = gc._req("PUT", self._blob_url(name, ":/content"), data=data, headers={"Content-Type": "application/octet-stream"}).json()
-        site = gc._ensure_site()
-        lid = gc._list_id("hub_files")
-        li = gc._req("GET", f"{GRAPH}/sites/{site}/lists/{lid}/drive/items/{item['id']}/listItem?$select=id").json()["id"]
-        gc._req("PATCH", f"{GRAPH}/sites/{site}/lists/{lid}/items/{li}/fields",
-                json={self._col("Division", "hub_files"): self._div(), self._col("Kind", "hub_files"): kind,
-                      self._col("Item Id", "hub_files"): name})
+        self._tag_blob(item, kind, name)
 
     def get_bytes(self, name: str):
         from graph import GraphError
