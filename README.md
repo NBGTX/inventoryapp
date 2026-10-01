@@ -216,6 +216,6 @@ A desktop app only runs when someone opens it. Today every client syncs on launc
   - `tenant_id` and `client_id` are identifiers.
   - The one real secret, `lenovo_client_id`, lives only in the gitignored `config.json`. That file currently ships inside the shared `dist\` folder; see HANDOFF §11 and §15.
 - **Corporate TLS inspection.** `graph.py` calls `truststore.inject_into_ssl()` so HTTPS verifies against the Windows certificate store, which holds the proxy's root CA. Verification is never disabled (`verify=False` is never used).
-- **Token cache.** Stored at `%LOCALAPPDATA%\NBG Hub\.token_cache.bin`, currently **not** DPAPI-protected. Hardening to-do: `msal-extensions`.
+- **Token cache.** Stored at `%LOCALAPPDATA%\NBG Hub\.token_cache.bin`, encrypted with Windows DPAPI (`securecache.py`, current user + machine only). An old plaintext cache is migrated automatically on the next sign-in; an undecryptable cache just means signing in again.
 - **Configuration PIN.** It's a UI lock only, not access control.
 - **Known issues and roadmap.** See HANDOFF §11 (ranked issues: Boneyard false positives, config reseed, full-window site bridge exposure, boot race, shared-file locking) and §14.

@@ -605,20 +605,30 @@ class GraphClient:
 
     # ---- auth -------------------------------------------------------------
     def _cache(self) -> msal.SerializableTokenCache:
-        # Local file cache. Production hardening: back this with Windows DPAPI
-        # via msal-extensions (PersistedTokenCache). File cache is adequate for
-        # a single-user machine and keeps the dependency footprint small.
+        # Encrypted with Windows DPAPI (securecache.py): only this Windows user on this machine can
+        # read the refresh token. A legacy plaintext cache is read once, then rewritten encrypted.
+        import securecache
         cache = msal.SerializableTokenCache()
         p = _TOKEN_CACHE
-        if os.path.exists(p):
-            cache.deserialize(open(p, encoding="utf-8").read())
+        text = securecache.read_secure(p)
+        if text:
+            try:
+                cache.deserialize(text)
+                if not securecache.is_encrypted(p):
+                    cache.has_state_changed = True      # force the encrypted rewrite on the next save
+            except Exception:
+                pass                                    # unreadable cache: user just signs in again
         self._cache_path = p
         self._cache_obj = cache
         return cache
 
     def _save_cache(self) -> None:
         if getattr(self, "_cache_obj", None) and self._cache_obj.has_state_changed:
-            open(self._cache_path, "w", encoding="utf-8").write(self._cache_obj.serialize())
+            import securecache
+            try:
+                securecache.write_secure(self._cache_path, self._cache_obj.serialize())
+            except Exception:
+                pass            # never fall back to plaintext; worst case: sign in again next launch
 
     def sign_in(self, interactive: bool = True) -> str:
         # Reuse the in-memory access token only while it's still valid (5-minute
