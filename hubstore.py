@@ -52,8 +52,12 @@ def kind_for_file(stem: str) -> str:
 class SharePointHubStore:
     def __init__(self, gc):
         self.gc = gc
+        self._div_id = gc.division["id"]       # fixed for this Hub: a later division switch cannot redirect its writes
         self._rev: dict = {}       # (kind, doc) -> rev seen at last read/write
         self._cache: dict = {}     # kind -> (t, {doc: (text, rev, rows)})
+
+    def _div(self) -> str:
+        return getattr(self, "_div_id", None) or self.gc.division["id"]
 
     # ------------------------------------------------ REST seam (overridden in tests)
     def _col(self, display: str, key: str = "hub_items") -> str:
@@ -66,7 +70,9 @@ class SharePointHubStore:
         gc = self.gc
         site = gc._ensure_site()
         lid = gc._list_id("hub_files")
-        path = quote(f"{gc.division['id']}/{name}", safe="/")
+        if not name or "/" in name or "\\" in name or ".." in name:
+            raise ValueError(f"Bad file name: {name!r}")
+        path = quote(f"{self._div()}/{name}", safe="/")
         return f"{GRAPH}/sites/{site}/lists/{lid}/drive/root:/{path}{tail}"
 
     def _blob_get(self, name: str):
@@ -97,7 +103,7 @@ class SharePointHubStore:
         lid = gc._list_id("hub_files")
         li = gc._req("GET", f"{GRAPH}/sites/{site}/lists/{lid}/drive/items/{item['id']}/listItem?$select=id").json()["id"]
         gc._req("PATCH", f"{GRAPH}/sites/{site}/lists/{lid}/items/{li}/fields",
-                json={self._col("Division", "hub_files"): gc.division["id"], self._col("Kind", "hub_files"): "setup-html",
+                json={self._col("Division", "hub_files"): self._div(), self._col("Kind", "hub_files"): "setup-html",
                       self._col("Item Id", "hub_files"): name})
 
     def _blob_del(self, name: str) -> None:
@@ -113,7 +119,7 @@ class SharePointHubStore:
         gc = self.gc
         site = gc._ensure_site()
         lid = gc._list_id("hub_items")
-        div = gc.division["id"].replace("'", "''")
+        div = self._div().replace("'", "''")
         k = kind.replace("'", "''")
         url = (f"{GRAPH}/sites/{site}/lists/{lid}/items?expand=fields&$top=500"
                f"&$filter=fields/{self._col('Division')} eq '{div}' and fields/{self._col('Kind')} eq '{k}'")
@@ -147,12 +153,16 @@ class SharePointHubStore:
                 else:
                     reqs.append({"id": str(n), "method": "DELETE", "url": f"{base}/{op[1]}"})
             resp = gc._req("POST", f"{GRAPH}/$batch", json={"requests": reqs}).json()
-            bad = [r for r in resp.get("responses", []) if r.get("status", 500) >= 300 and r.get("status") != 404]
+            method = {r["id"]: r["method"] for r in reqs}
+            bad = [r for r in resp.get("responses", [])
+                   if r.get("status", 500) >= 300 and not (r.get("status") == 404 and method.get(r.get("id")) == "DELETE")]
+            if any(r.get("status") == 404 for r in bad):
+                raise HubConflict("A hub row was removed by someone else while saving. Reload and try again.")
             if bad:
                 raise GraphError(f"Hub write failed ({len(bad)} of {len(reqs)} operations; first status {bad[0].get('status')}).")
 
     # ------------------------------------------------ reading
-    def _docs(self, kind: str, force: bool = False) -> dict:
+    def _docs(self, kind: str, force: bool = False, strict: bool = True) -> dict:
         c = self._cache.get(kind)
         if c and not force and time.monotonic() - c[0] < _TTL:
             return c[1]
@@ -172,6 +182,9 @@ class SharePointHubStore:
             if consistent:
                 break
             time.sleep(0.4)
+        else:
+            if strict:     # never hand out text stitched from two revisions (it could be corrupt JSON)
+                raise HubConflict(f"'{kind}' is being updated by someone else. Try again in a moment.")
         self._cache[kind] = (time.monotonic(), docs)
         return docs
 
@@ -207,7 +220,7 @@ class SharePointHubStore:
         if kind == "blob":
             self._blob_put(doc, text)
             return
-        docs = self._docs(kind, force=True)
+        docs = self._docs(kind, force=True, strict=False)      # a write may repair a half-written document
         e = docs.get(doc)
         cur_rev = e[1] if e else 0
         old_rows = e[2] if e else []
@@ -216,7 +229,7 @@ class SharePointHubStore:
             raise HubConflict(f"'{kind}' was changed by someone else. Reload and try again.")
         new_rev = cur_rev + 1
         chunks = [text[i:i + CHUNK] for i in range(0, len(text), CHUNK)] or [""]
-        div = self.gc.division["id"]
+        div = self._div()
         have = {r["item_id"]: r for r in old_rows}
         ops = []
         for i, chunk in enumerate(chunks):
@@ -237,7 +250,7 @@ class SharePointHubStore:
         if kind == "blob":
             self._blob_del(doc)
             return
-        e = self._docs(kind, force=True).get(doc)
+        e = self._docs(kind, force=True, strict=False).get(doc)
         if e:
             self._apply([("delete", r["id"]) for r in e[2]])
         self._cache.pop(kind, None)

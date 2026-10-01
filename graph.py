@@ -199,6 +199,7 @@ class GraphClient:
         self._master_cache: dict | None = None
         self._master_at = 0.0
         self._reg_at = 0.0           # monotonic time of the last central registry read
+        self._div_changed = False    # refresh_registry moved the active division (caller must drop hub caches)
         self._has_dir_read = False           # did the token include Directory.Read.All?
         self._has_auditlog_read = False      # did the token include AuditLog.Read.All?
         self._has_authmethod_read = False    # did the token include UserAuthenticationMethod.Read.All?
@@ -218,12 +219,15 @@ class GraphClient:
         cfg = dict(self._base_cfg)
         central = cfg.get("central") or {}
         self._central = bool(central.get("site_path")) and not self._use_legacy
-        cfg.update({"sharepoint_hostname": d.get("sharepoint_hostname") or cfg.get("sharepoint_hostname"),
-                    "site_path": d.get("site_path") or cfg.get("site_path"),
-                    "lists": d.get("lists") or cfg.get("lists") or {},
-                    "intune_device_category": d.get("intune_category") or cfg.get("intune_device_category"),
-                    "ad_domain": d.get("ad_domain") or cfg.get("ad_domain"),
-                    "timesheet_sql_server": d.get("sql_server") or cfg.get("timesheet_sql_server")})
+        # The flat keys in config.json describe the ORIGINAL division only. Other divisions must
+        # never inherit them (a missing SQL server / AD domain must stay empty, not become NBGW's).
+        base = (lambda k: cfg.get(k)) if d.get("legacy_data") else (lambda k: None)
+        cfg.update({"sharepoint_hostname": d.get("sharepoint_hostname") or base("sharepoint_hostname"),
+                    "site_path": d.get("site_path") or base("site_path"),
+                    "lists": d.get("lists") or base("lists") or {},
+                    "intune_device_category": d.get("intune_category") or base("intune_device_category"),
+                    "ad_domain": d.get("ad_domain") or base("ad_domain"),
+                    "timesheet_sql_server": d.get("sql_server") or base("timesheet_sql_server")})
         if self._central:     # all divisions share the central site + lists
             cfg["sharepoint_hostname"] = central.get("site_host") or cfg.get("sharepoint_hostname")
             cfg["site_path"] = central["site_path"]
@@ -352,6 +356,17 @@ class GraphClient:
         self._reset_caches()
         return self.data_mode
 
+    def clone_for_snapshot(self) -> "GraphClient":
+        """An independent client for a snapshot pull: same sign-in and division, but its own
+        flags/caches, so a long pull never changes how concurrent calls on this client behave."""
+        c = GraphClient(config=self._base_cfg)
+        c.registry = self.registry
+        c.division = self.division
+        c._apply_division()
+        c._token, c._token_exp = self._token, self._token_exp
+        c.account_name, c.account_upn = self.account_name, self.account_upn
+        return c
+
     def snapshot_hub(self) -> dict:
         """Copy ONLY the division's hub folder (JSON files) into the local sandbox. No SharePoint
         or Graph access needed. Source = the folder Hub() resolves to (script mode: the project SystemsData folder)."""
@@ -446,7 +461,7 @@ class GraphClient:
         for it in rows:
             f = it.get("fields", {}) or {}
             did = str(f.get("Title") or "").strip().lower()
-            if not did or did.upper().startswith("EXAMPLE"):
+            if not did or did.upper().startswith("EXAMPLE") or not self._div_mod.valid_id(did):
                 continue
 
             def g(name, f=f):
@@ -470,17 +485,25 @@ class GraphClient:
             base["id"] = did
             base.setdefault("name", did)
             base.setdefault("company_name", base["name"])
-            sites = j("Sites JSON", [])
+            sites = self._div_mod.clean_sites(j("Sites JSON", []))
             if sites:
                 base["sites"] = sites
-            base["access"] = [str(a).strip().lower() for a in j("Access JSON", []) if str(a).strip()]
+            try:        # a malformed ACL must DENY (admins only), never open the division to everyone
+                acl = json.loads(g("Access JSON") or "[]")
+                if not isinstance(acl, list):
+                    raise ValueError("not a list")
+                base["access"] = [str(a).strip().lower() for a in acl if str(a).strip()]
+            except Exception:
+                base["access"] = ["!invalid-access-list"]
             merged[did] = base
         if merged:
             self.registry = sorted(merged.values(), key=lambda d: d.get("name", "").lower())
             keep = self.division["id"]
             self.division = self._div_mod.find(self.registry, keep)
-            if self.division["id"] != keep:
+            if self.division["id"] != keep:       # active division was hidden/removed: fully re-point
+                self._reset_caches()
                 self._store = None
+                self._div_changed = True
             self._apply_division()
         self._reg_at = _t.monotonic()
 
@@ -582,11 +605,12 @@ class GraphClient:
             acl = d.get("access") or []
             if sa or not acl or "*" in acl or (me and me in acl):
                 out.append(d)
-        return out or self.registry[:1]
+        return out           # may be empty: the caller shows "no division available to your account"
 
-    def set_division(self, div_id: str) -> dict:
+    def set_division(self, div_id: str, persist: bool = True) -> dict:
         """Switch tenant. Keeps the sign-in (same user/tenant); drops every cache that
-        is specific to the previous division's site, lists, and devices."""
+        is specific to the previous division's site, lists, and devices. `persist=False` (tools)
+        skips remembering the choice for the next app launch."""
         self.division = self._div_mod.find(self.registry, div_id)
         self._apply_division()
         self._store = None
@@ -600,7 +624,8 @@ class GraphClient:
         self._devmap_cache = None
         self._devmap_at = 0.0
         self._loc_cache = {}
-        self._div_mod.save_selection(self.division["id"])
+        if persist:
+            self._div_mod.save_selection(self.division["id"])
         return self.division
 
     # ---- auth -------------------------------------------------------------
@@ -1661,10 +1686,21 @@ class GraphClient:
         fields.setdefault("Title", data.get("serial"))
         self._create_item("in_use", fields)
 
-    def delete_item(self, key: str, item_id: str) -> None:
+    def _assert_own_item(self, key: str, item_id: str) -> None:
+        """Central mode: refuse to touch an item that belongs to another division."""
+        if not self._div_scoped(key):
+            return
+        site = self._ensure_site()
+        it = self._get(f"{GRAPH}/sites/{site}/lists/{self._list_id(key)}/items/{item_id}?expand=fields")
+        if self._item_division(it, key) != self.division["id"].lower():
+            raise GraphError("That item belongs to a different division.")
+
+    def delete_item(self, key: str, item_id: str, _checked: bool = False) -> None:
         if self._local:
             self._ls().delete(key, item_id)
             return
+        if not _checked:
+            self._assert_own_item(key, item_id)
         site = self._ensure_site()
         self._req("DELETE", f"{GRAPH}/sites/{site}/lists/{self._list_id(key)}/items/{item_id}")
 
@@ -1676,6 +1712,7 @@ class GraphClient:
         if self._local:
             self._ls().patch(key, item_id, fields)
             return
+        self._assert_own_item(key, item_id)
         site = self._ensure_site()
         self._req("PATCH",
                   f"{GRAPH}/sites/{site}/lists/{self._list_id(key)}/items/{item_id}/fields",
@@ -1695,6 +1732,9 @@ class GraphClient:
             if wl in [(l.get("displayName") or "").strip().lower(), (l.get("name") or "").strip().lower()]:
                 self._list_ids["log"] = l["id"]
                 return l["id"]
+        if self._central:
+            raise GraphError(f"The central Activity Log list '{want}' was not found on the central site. "
+                             "Create it (see docs/MANUAL_LIST_SETUP.md) - it is not auto-created because it needs a Division column.")
         # create it (needs list-management rights; first runner/owner triggers this once)
         payload = {
             "displayName": want,

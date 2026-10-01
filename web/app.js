@@ -327,7 +327,8 @@ const Divisions = {
       if (r && r.ok) {
         this.list = r.divisions || []; this.current = r.current;
         const d = this.list.find(x => x.id === this.current);
-        if (d) this.sites = d.sites || [];
+        // defence in depth: a site code ends up in HTML attributes / CSS classes, so only plain tags are accepted
+        if (d) this.sites = (d.sites || []).filter(s => /^[A-Za-z0-9]{2,6}$/.test(String(s.code)));
       }
     } catch (e) { /* keep fallback */ }
     App.state.siteTags = this.codes();
@@ -390,8 +391,9 @@ const MasterSettings = {
     const key = i >= 0 ? cur.key : prompt("Setting key (e.g. lenovo_client_id):");
     if (!key) return;
     const secret = i >= 0 ? cur.secret : confirm("Is this a secret (value hidden in this screen)?\nOK = secret, Cancel = normal.");
-    const value = prompt("New value for " + key + (secret ? " (will not be shown again)" : "") + ":", secret ? "" : (cur.value || ""));
+    const value = prompt("New value for " + key + (secret ? " (will not be shown again; leave blank to keep the current value)" : "") + ":", secret ? "" : (cur.value || ""));
     if (value === null) return;
+    if (secret && i >= 0 && value === "") return App.toast("Left unchanged.");
     const r = await Backend.call("set_master_setting", key.trim(), value, secret, cur.description || "");
     if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
     App.toast("Saved " + key);

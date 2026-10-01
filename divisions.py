@@ -48,6 +48,31 @@ def _legacy(cfg: dict) -> dict:
     return d
 
 
+_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,19}$")
+_CODE_RE = re.compile(r"^[A-Z0-9]{2,6}$")
+
+
+def valid_id(div_id) -> bool:
+    return bool(_ID_RE.match(str(div_id or "")))
+
+
+def clean_sites(sites) -> list[dict]:
+    """Keep only well-formed sites. A code ends up in HTML attributes and CSS classes, so anything
+    that is not 2-6 letters/digits is dropped (the registry can be edited by many people)."""
+    out, seen = [], set()
+    for s in sites if isinstance(sites, list) else []:
+        if not isinstance(s, dict):
+            continue
+        code = str(s.get("code") or "").strip().upper()
+        if not _CODE_RE.match(code) or code == "OTHER" or code in seen:
+            continue
+        seen.add(code)
+        lst = lambda v: [str(x).strip() for x in (v or []) if str(x).strip()] if isinstance(v, list) else []
+        out.append({"code": code, "name": str(s.get("name") or code).strip(),
+                    "city_prefixes": lst(s.get("city_prefixes")), "device_prefixes": lst(s.get("device_prefixes"))})
+    return out
+
+
 def load_registry(cfg: dict) -> list[dict]:
     divs = cfg.get("divisions")
     if not isinstance(divs, list) or not divs:
@@ -63,6 +88,9 @@ def load_registry(cfg: dict) -> list[dict]:
         d.setdefault("lists", {})
         d.setdefault("sites", [])
         d.setdefault("legacy_data", False)
+        if not valid_id(d["id"]):
+            continue
+        d["sites"] = clean_sites(d.get("sites"))
         out.append(d)
     return out or [_legacy(cfg)]
 

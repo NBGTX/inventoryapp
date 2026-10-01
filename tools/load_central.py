@@ -11,7 +11,9 @@ Target : the central site (config.json "central") - New Stock, In Use, Model Spe
 DRY RUN by default (reads the central lists, prints what it would add / skip).
 Writes only with --commit. Idempotent: rows already in the central list for this division
 (devices by serial, model specs by model, log rows by when+action+serial) are skipped.
---wipe first DELETES this division's existing rows from the target lists (use for test data).
+--wipe first DELETES this division's existing New Stock / In Use rows from the target lists (test data
+only). It needs --confirm-division <id> typed out, refuses an empty/old snapshot, and never touches the
+Activity Log (audit trail) or the shared Model Specs.
 
 Usage (from the project root, same Python as the app):
     python tools\\load_central.py                       # dry run, division nbgw
@@ -98,7 +100,7 @@ def plan(gc, store, division_id: str) -> dict:
                 skip += 1
             else:
                 add.append(fields)
-        out[key] = {"add": add, "skip": skip, "existing": list(have.values())}
+        out[key] = {"add": add, "skip": skip, "existing": [it["id"] for it in existing]}   # every id (duplicates too)
     return out
 
 
@@ -133,6 +135,25 @@ def _batch_post(gc, key: str, rows: list[dict]) -> int:
         print(f"    {key}: {min(i + BATCH, len(rows))}/{len(rows)}", end="\r")
     print()
     return failed
+
+
+WIPE_KEYS = ("new_stock", "in_use")      # never the audit log, never the shared model specs
+
+
+def wipe_problem(args, info: dict, plan_: dict):
+    """Why a --wipe must not run (None = OK)."""
+    import datetime
+    if args.confirm_division != args.division:
+        return f"type the division id again: --confirm-division {args.division}"
+    if not (info.get("counts", {}).get("new_stock", 0) + info.get("counts", {}).get("in_use", 0)):
+        return "the snapshot has no New Stock / In Use rows (wiping would leave the division empty)."
+    try:
+        age = (datetime.datetime.now() - datetime.datetime.fromisoformat(info["taken_at"])).total_seconds() / 86400
+    except Exception:
+        return "the snapshot has no valid timestamp."
+    if age > args.max_snapshot_age_days:
+        return f"the snapshot is {age:.1f} days old (limit {args.max_snapshot_age_days:g}). Pull a fresh one."
+    return None
 
 
 def hub_stage(gc, args) -> int:
@@ -181,6 +202,8 @@ def main() -> int:
     ap.add_argument("--commit", action="store_true", help="actually write (default: dry run)")
     ap.add_argument("--hub", action="store_true", help="also load the hub JSON into Hub Items")
     ap.add_argument("--hub-only", action="store_true", help="load ONLY the hub JSON (skip the device lists)")
+    ap.add_argument("--confirm-division", default="", help="required with --wipe: type the division id again")
+    ap.add_argument("--max-snapshot-age-days", type=float, default=7.0, help="--wipe refuses an older snapshot")
     ap.add_argument("--wipe", action="store_true", help="with --commit: delete this division's central rows first")
     args = ap.parse_args()
 
@@ -191,7 +214,10 @@ def main() -> int:
     if not gc._base_cfg.get("central", {}).get("site_path"):
         print('config.json has no "central" block (site_host / site_path). Add it first.')
         return 2
-    gc.set_division(args.division)
+    gc.set_division(args.division, persist=False)
+    if gc.division["id"] != args.division:
+        print(f"Unknown division '{args.division}'. Known: {', '.join(d['id'] for d in gc.registry)}")
+        return 2
     gc.data_mode = "live"           # target = central lists, never the local sandbox
     gc._reset_caches()
     store = localstore.LocalStore(args.division)
@@ -220,12 +246,14 @@ def main() -> int:
         return 0
 
     if args.wipe:
-        print("\nWiping this division's existing central rows ...")
-        for key in KEYS:
-            if key == "model_specs":
-                continue            # shared list: never wipe
+        problem = wipe_problem(args, info, p)
+        if problem:
+            print("\nREFUSING to wipe:", problem)
+            return 2
+        print("\nWiping this division's existing central New Stock / In Use rows ...")
+        for key in WIPE_KEYS:
             for iid in p[key]["existing"]:
-                gc.delete_item(key, iid)
+                gc.delete_item(key, iid, _checked=True)      # ids came from the division-filtered read
         p = plan(gc, store, args.division)      # re-plan against the now-empty division
     failed = 0
     for key in KEYS:

@@ -33,7 +33,10 @@ def main() -> int:
     import graph
 
     gc = graph.GraphClient()
-    gc.set_division(args.division)
+    gc.set_division(args.division, persist=False)
+    if gc.division["id"] != args.division:
+        print(f"Unknown division '{args.division}'. Known: {', '.join(d['id'] for d in gc.registry)}")
+        return 2
     gc.data_mode = "live"            # read production for the snapshot
     if args.hub_only:
         r = gc.snapshot_hub()

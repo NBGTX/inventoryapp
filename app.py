@@ -12,8 +12,10 @@ Build:    build.ps1 -> dist/NBG Hub.exe (double-click; config.json sits beside i
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
+import threading
 import traceback
 from datetime import date, datetime
 
@@ -84,6 +86,18 @@ class Api:
         self._gc = None
         self._hub = None
         self._site_view = False  # True while the main window is showing an NBT site
+        self._busy = 0           # long write operations in flight (a division switch must wait)
+        self._busy_lock = threading.Lock()
+
+    @contextlib.contextmanager
+    def _work(self):
+        with self._busy_lock:
+            self._busy += 1
+        try:
+            yield
+        finally:
+            with self._busy_lock:
+                self._busy -= 1
 
     def _client(self):
         if self._gc is None:
@@ -160,7 +174,8 @@ class Api:
         try:
             gc = self._client()
             gc.sign_in(interactive=True)
-            info = gc.snapshot_prod()
+            with self._work():
+                info = gc.clone_for_snapshot().snapshot_prod()      # own state: live client untouched
             return {"ok": True, **info}
         except Exception as e:
             return self._fail(e)
@@ -183,7 +198,12 @@ class Api:
             import divisions
             gc = self._client()
             gc.refresh_registry()
+            if gc._div_changed:                    # registry refresh moved the active division
+                gc._div_changed = False
+                self._hub = None
             vis = gc.visible_registry()
+            if not vis:
+                return {"ok": False, "error": "No division is available to your account. Ask a super admin for access."}
             if gc.division["id"] not in [d["id"] for d in vis]:
                 gc.set_division(vis[0]["id"])      # saved choice no longer allowed
                 self._hub = None
@@ -198,6 +218,8 @@ class Api:
         try:
             import divisions
             gc = self._client()
+            if self._busy:
+                return {"ok": False, "error": "A sync is still running. Wait for it to finish, then switch division."}
             gc.refresh_registry()
             if div_id not in [d["id"] for d in gc.visible_registry()]:
                 return {"ok": False, "error": f"Unknown division or no access: {div_id}"}
@@ -1126,10 +1148,10 @@ class Api:
     # Overridable per shared baseline doc ("company") if ever needed.
     def _division_company(self) -> str:
         """Entra companyName of the active division (scopes people queries)."""
-        try:
-            return self._client().division["company_name"]
-        except Exception:
-            return "Nucor Buildings Group West"
+        name = (self._client().division.get("company_name") or "").strip()
+        if not name:       # never default to another division's company: people queries would leak
+            raise RuntimeError("This division has no Entra company name configured.")
+        return name
     _PERM_MIN_MEMBERS = 5    # a "majority" baseline off fewer people isn't meaningful
 
     def _perm_doc(self) -> dict:
@@ -1661,6 +1683,21 @@ class Api:
 
 # Injected into an NBT site page (top-level) so the user can get back to the app
 # without a separate window. Self-heals if the site's own scripts remove it.
+def _long_op(fn):
+    """Mark an Api method as a long-running write: a division switch is refused while one runs."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(self, *a, **k):
+        with self._work():
+            return fn(self, *a, **k)
+    return wrapper
+
+
+for _n in ("run_sync", "enrich_inventory", "master_sync", "populate_mfa", "boneyard_sweep"):
+    setattr(Api, _n, _long_op(getattr(Api, _n)))
+
+
 _BACK_JS = r"""
 (function(){
   function add(){
