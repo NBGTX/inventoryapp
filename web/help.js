@@ -267,7 +267,7 @@ const Help = {
           <li>Tick the groups to copy (<b>Only source has</b> list). Groups marked <b>privileged</b> (protected admin groups) are never ticked for you.</li>
           <li><b>Preview</b> lists what would be added and changes nothing. <b>Copy now</b> asks you to confirm, then adds the destination to the groups.</li>
         </ol>
-        <p>Writing uses <b>your own admin account on your YubiKey</b>: insert the key and pick your account from the box (it lists the accounts on the key; you can also type one), and Windows asks for the PIN in its own window. The app never sees the PIN. Reading works on a PC that is not joined to AD, as long as you are on the corporate network or VPN. Each copy is written to the change log. Removing groups is not supported.</p>`
+        <p>Writing uses <b>your own admin account on your YubiKey</b>: insert the key and pick the account from the box (it lists only certificates on the inserted key). A separate window opens and asks for the PIN <b>once</b>, with hidden typing; the app never sees the PIN. A wrong PIN stops the run at once (no retries, to protect the key from locking). Reading works on a PC that is not joined to AD, as long as you are on the corporate network or VPN. Each copy is written to the change log. Removing groups is not supported.</p>`
     },
     "bgt-missing": {
       title: "How Missing Groups works",

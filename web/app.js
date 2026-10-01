@@ -2689,10 +2689,10 @@ const CopyPerms = {
     if (commit) {
       if (!acct) { App.toast("Enter your admin account (for example adm.name.pa) first.", true); return; }
       try { localStorage.setItem("nbg_ad_admin_acct", acct); } catch (e) {}
-      if (!confirm(`Add ${dst.name || dst.sam} to ${dns.length} AD group(s) copied from ${src.name || src.sam}?\n\nWindows will ask for your YubiKey PIN.`)) return;
+      if (!confirm(`Add ${dst.name || dst.sam} to ${dns.length} AD group(s) copied from ${src.name || src.sam}?\n\nA PIN window opens (look in the taskbar if you do not see it). You enter the PIN once, there.`)) return;
     }
     const btn = document.getElementById(commit ? "cpGo" : "cpPrev");
-    let r; await Ui.working(btn, commit ? "Waiting for the YubiKey PIN window…" : "Checking…", async () => { r = await Backend.call("ad_perm_copy", src.dn, dst.dn, dns, acct, commit); return false; });
+    let r; await Ui.working(btn, commit ? "Waiting for the PIN window…" : "Checking…", async () => { r = await Backend.call("ad_perm_copy", src.dn, dst.dn, dns, acct, commit); return false; });
     let h;
     if (!r || !r.ok) h = `<div class="cp-res bad">${esc((r && r.error) || "Failed.")}</div>`;
     else if (!r.committed) h = `<div class="cp-res">Would add ${r.would_add.length}: ${esc(r.would_add.join(", ") || "nothing")}.${r.skipped.length ? " Skipped: " + esc(r.skipped.map(x => x.dn.split(",")[0].slice(3) + " (" + x.why + ")").join("; ")) : ""}</div>`;

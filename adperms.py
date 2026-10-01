@@ -65,27 +65,63 @@ try {
 } catch { Fail "AD query failed: $($_.Exception.Message)" }
 '''
 
-# Runs under the admin account's smart card identity. ASCII only (Windows PowerShell 5.1).
+# Runs in its own console window. Binds to AD with ONE chosen smart card certificate: the PIN is typed here,
+# in this window (hidden input), never in the app. ASCII only (Windows PowerShell 5.1).
 _WRITE_PS = r'''
 param([string]$InFile, [string]$OutFile)
 $res = @{ done = @(); failed = @(); who = ""; error = "" }
+function Save() { ($res | ConvertTo-Json -Depth 4 -Compress) | Set-Content -LiteralPath $OutFile -Encoding UTF8 }
 try {
+  Add-Type -TypeDefinition @"
+using System; using System.Runtime.InteropServices;
+public static class NbgCred {
+  [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool CredMarshalCredential(int t, IntPtr c, out IntPtr m);
+  [DllImport("advapi32.dll")] static extern void CredFree(IntPtr b);
+  [DllImport("kernel32.dll")] static extern IntPtr GetConsoleWindow();
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int n);
+  public static void Front() { IntPtr h = GetConsoleWindow(); if (h != IntPtr.Zero) { ShowWindow(h, 9); SetForegroundWindow(h); } }
+  public static string Marshal(byte[] hash) {
+    IntPtr p = System.Runtime.InteropServices.Marshal.AllocHGlobal(24);
+    try {
+      System.Runtime.InteropServices.Marshal.WriteInt32(p, 24);
+      System.Runtime.InteropServices.Marshal.Copy(hash, 0, new IntPtr(p.ToInt64() + 4), 20);
+      IntPtr m; if (!CredMarshalCredential(1, p, out m)) throw new Exception("CredMarshalCredential failed " + System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+      string s = System.Runtime.InteropServices.Marshal.PtrToStringUni(m); CredFree(m); return s;
+    } finally { System.Runtime.InteropServices.Marshal.FreeHGlobal(p); }
+  }
+}
+"@
+  [NbgCred]::Front()
   $cfg = Get-Content -Raw -LiteralPath $InFile | ConvertFrom-Json
-  $res.who = [string][Security.Principal.WindowsIdentity]::GetCurrent().Name
+  $hash = New-Object byte[] 20
+  for ($i = 0; $i -lt 20; $i++) { $hash[$i] = [Convert]::ToByte($cfg.thumb.Substring($i * 2, 2), 16) }
+  $cred = [NbgCred]::Marshal($hash)
+  Write-Host ""
+  Write-Host "NBG Hub: add $($cfg.groups.Count) group(s) to a user as $($cfg.account)" -ForegroundColor Cyan
+  $sec = Read-Host "Enter the YubiKey PIN (typing is hidden)" -AsSecureString
+  $pin = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
+  $res.who = [string]$cfg.account
+  $auth = [System.DirectoryServices.AuthenticationTypes]::Secure
   foreach ($g in $cfg.groups) {
     try {
-      $e = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$($cfg.domain)/$g")
+      $e = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$($cfg.domain)/$g", $cred, $pin, $auth)
+      $e.RefreshCache()
       $null = $e.Properties["member"].Add([string]$cfg.user)
       $e.CommitChanges()
       $res.done += [string]$g
     } catch {
       $m = $_.Exception.Message
       if ($_.Exception.InnerException) { $m = $_.Exception.InnerException.Message }
-      if ($m -match "already exists|ENTRY_EXISTS|0x80071392") { $res.done += [string]$g } else { $res.failed += @{ dn = [string]$g; error = $m } }
+      if ($m -match "already exists|ENTRY_EXISTS|0x80071392") { $res.done += [string]$g }
+      else {
+        $res.failed += @{ dn = [string]$g; error = $m }
+        if ($m -match "logon failure|credentials|PIN|0x8009002D|0x8009000B|incorrect") { break }   # never retry a wrong PIN
+      }
     }
   }
 } catch { $res.error = $_.Exception.Message }
-($res | ConvertTo-Json -Depth 4 -Compress) | Set-Content -LiteralPath $OutFile -Encoding UTF8
+Save
 '''
 
 
@@ -100,13 +136,35 @@ Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue | ForEach-Objec
     if ($san) {
       $t = $san.Format($false)
       if ($t -match "Principal Name=([^,\s]+)") {
-        $out += @{ upn = $Matches[1]; cn = ($_.Subject -replace ",.*$", "" -replace "^CN=", ""); expires = $_.NotAfter.ToString("yyyy-MM-dd"); valid = ($_.NotAfter -gt (Get-Date)) }
+        $out += @{ thumb = $_.Thumbprint.ToLower(); upn = $Matches[1]; cn = ($_.Subject -replace ",.*$", "" -replace "^CN=", ""); expires = $_.NotAfter.ToString("yyyy-MM-dd"); valid = ($_.NotAfter -gt (Get-Date)) }
       }
     }
   }
 }
 Write-Output (@{ certs = $out } | ConvertTo-Json -Depth 4 -Compress)
 '''
+
+
+def _card_hashes() -> set:
+    """SHA1 thumbprints of the certificates on the cards inserted right now (`certutil -scinfo`; no PIN, Windows Hello reader ignored)."""
+    try:
+        p = subprocess.run(["certutil", "-scinfo"], capture_output=True, text=True, timeout=60, creationflags=_NO_WINDOW)
+    except Exception:
+        return set()
+    return parse_scinfo(p.stdout or "")
+
+
+def parse_scinfo(text: str) -> set:
+    import re
+    out, reader = set(), ""
+    for line in text.splitlines():
+        m = re.search(r"Reader:\s*(.+)$", line)
+        if m:
+            reader = m.group(1).strip().lower()
+        m = re.search(r"Cert Hash\(sha1\):\s*([0-9a-fA-F ]{40,60})", line)
+        if m and "hello" not in reader:
+            out.add(m.group(1).replace(" ", "").lower())
+    return out
 
 
 def smartcard_accounts(timeout: int = 30) -> dict:
@@ -119,12 +177,13 @@ def smartcard_accounts(timeout: int = 30) -> dict:
         txt = (proc.stdout or "").strip()
         if not txt:
             return {"__error__": (proc.stderr or "no output").strip()[:200]}
+        on_card = _card_hashes()
         seen, out = set(), []
         for c in _listify(json.loads(txt).get("certs")):
             u = (c.get("upn") or "").strip()
-            if u and c.get("valid") and u.lower() not in seen:
+            if u and c.get("valid") and u.lower() not in seen and (c.get("thumb") or "") in on_card:
                 seen.add(u.lower())
-                out.append({"upn": u, "cn": c.get("cn", ""), "expires": c.get("expires", "")})
+                out.append({"upn": u, "cn": c.get("cn", ""), "expires": c.get("expires", ""), "thumb": c["thumb"]})
         return {"accounts": sorted(out, key=lambda x: x["upn"].lower())}
     except Exception as e:
         return {"__error__": str(e)[:200]}
@@ -134,6 +193,8 @@ def smartcard_accounts(timeout: int = 30) -> dict:
                 os.remove(ps_p)
         except OSError:
             pass
+
+
 
 
 def _tmp(suffix: str, text: str | None = None) -> str:
@@ -237,32 +298,36 @@ def plan_copy(src: list, dst: list, wanted: list) -> dict:
 
 
 def write_groups(user_dn: str, group_dns: list, domain: str, account: str = "", timeout: int = 300) -> dict:
-    """Add `user_dn` to each group as the smart-card admin account. Returns {done:[dn], failed:[{dn,error}], who}."""
+    """Add `user_dn` to each group, bound with the smart card certificate of `account` (UPN picked from the inserted key).
+    A console window opens, asks for the PIN once (hidden input, never seen by this app) and reports back via a temp file."""
     if not group_dns:
         return {"done": [], "failed": [], "who": ""}
+    card = smartcard_accounts()
+    if "__error__" in card:
+        return {"__error__": card["__error__"]}
+    me = next((a for a in card["accounts"] if a["upn"].lower() == (account or "").strip().lower()), None)
+    if me is None:
+        return {"__error__": "That account was not found on the inserted YubiKey. Insert the key and pick the account from the list."}
     in_p = ps_p = out_p = None
     try:
-        in_p = _tmp(".json", json.dumps({"domain": domain, "user": user_dn, "groups": list(group_dns)}))
+        in_p = _tmp(".json", json.dumps({"domain": domain, "user": user_dn, "groups": list(group_dns), "thumb": me["thumb"], "account": me["upn"]}))
         ps_p = _tmp(".ps1", _WRITE_PS)
         out_p = _tmp(".json")
         os.remove(out_p)                                   # the script creates it; its existence means "finished"
-        inner = f'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{ps_p}" -InFile "{in_p}" -OutFile "{out_p}"'
-        cmd = 'runas /netonly /smartcard ' + (f'/user:{account} ' if account else '') + '"' + inner.replace('"', '\\"') + '"'
-        subprocess.run(cmd, timeout=60, creationflags=_NEW_CONSOLE)
+        subprocess.Popen(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps_p, "-InFile", in_p, "-OutFile", out_p],
+                         creationflags=_NEW_CONSOLE)
         import time
-        end = time.time() + timeout                        # runas returns when it starts the child, so wait for the result file
+        end = time.time() + timeout
         while not os.path.exists(out_p) and time.time() < end:
             time.sleep(0.5)
         if not os.path.exists(out_p):
-            return {"__error__": "No answer from the admin session. Was the PIN entered and the YubiKey inserted?"}
+            return {"__error__": "No answer from the PIN window (closed, or no PIN entered in time)."}
         time.sleep(0.3)
         with open(out_p, encoding="utf-8-sig") as f:
             r = json.loads(f.read() or "{}")
         if r.get("error"):
             return {"__error__": str(r["error"])[:300]}
         return {"done": _listify(r.get("done")), "failed": _listify(r.get("failed")), "who": r.get("who", "")}
-    except subprocess.TimeoutExpired:
-        return {"__error__": "Timed out waiting for the admin session."}
     except Exception as e:
         return {"__error__": str(e)[:300]}
     finally:

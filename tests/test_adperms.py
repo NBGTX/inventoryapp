@@ -32,6 +32,28 @@ class Pure(unittest.TestCase):
         us = [{"company": "NBG - Terrell"}, {"company": "nbg - terrell"}, {"company": ""}, {"company": "NBG - West"}]
         self.assertEqual(len([u for u in us if adperms.in_scope(u, ["NBG - Terrell", "Other"])]), 3)
 
+    def test_scinfo_hashes_ignore_the_windows_hello_reader(self):
+        txt = ("--- Reader: Windows Hello for Business 1
+Cert Hash(sha1): aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+"
+               "--- Reader: Yubico YubiKey OTP+FIDO+CCID 0
+Cert Hash(sha1): CB7B4E020AF1435D03C57AD0B66CC3A1C8F4E430
+"
+               "Cert Hash(sha1): b8 6b 4d 36 8b 40 90 2e cc d8 ac 4c 82 34 fd bc 43 f4 1a 00
+")
+        got = adperms.parse_scinfo(txt)
+        self.assertIn("cb7b4e020af1435d03c57ad0b66cc3a1c8f4e430", got)
+        self.assertNotIn("a" * 40, got)
+
+    def test_write_needs_the_account_to_be_on_the_inserted_key(self):
+        o = adperms.smartcard_accounts
+        adperms.smartcard_accounts = lambda timeout=30: {"accounts": [{"upn": "adm.x.pa@nucorsteel.local", "thumb": "00" * 20}]}
+        try:
+            r = adperms.write_groups("CN=U", ["CN=G"], "bg", "someone.else@nucorsteel.local")
+        finally:
+            adperms.smartcard_accounts = o
+        self.assertIn("not found on the inserted YubiKey", r["__error__"])
+
     def test_powershell_scripts_are_ascii(self):
         for ps in (adperms._READ_PS, adperms._WRITE_PS, adperms._CERTS_PS):
             ps.encode("ascii")
