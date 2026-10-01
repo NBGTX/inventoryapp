@@ -354,7 +354,13 @@ const Divisions = {
   renderSwitcher() {
     const el = document.getElementById("divSwitch");
     if (!el) return;
-    if (this.list.length < 2) { el.classList.add("hidden"); return; }
+    const sub = document.getElementById("divSub");
+    if (this.list.length < 2) {                 // one division: no dropdown, just its name
+      el.classList.add("hidden");
+      if (sub) sub.textContent = this.cur().name || "Systems";
+      return;
+    }
+    if (sub) sub.textContent = "Systems";
     el.classList.remove("hidden");
     el.innerHTML = this.list.map(d => `<option value="${attr(d.id)}"${d.id === this.current ? " selected" : ""}>${esc(d.name)}</option>`).join("");
   },
