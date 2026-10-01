@@ -1832,7 +1832,7 @@ class Api:
             written = [x for x in w["done"] if x in names]
             have = None
             for attempt in range(3):                       # another domain controller may answer before the write has replicated
-                after = adperms.user_groups(dst_dn, domain)
+                after = adperms.user_groups(dst_dn, w.get("dc") or domain)      # ask the controller that took the write first
                 have = {g["dn"].lower() for g in after.get("groups", [])} if "__error__" not in after else None
                 if have is None or all(x.lower() in have for x in written):
                     break
@@ -1842,10 +1842,10 @@ class Api:
             unverified = [names[x] for x in written if have is not None and x.lower() not in have]
             try:
                 self._hubc()._change("AD copy permissions", f"{self._actor() or 'NBG Hub'} added {dst_dn.split(',')[0][3:]} to {len(added)} group(s) "
-                                     f"copied from {src_dn.split(',')[0][3:]} as {w.get('who') or 'admin account'}: {', '.join(added)[:300]}")
+                                     f"copied from {src_dn.split(',')[0][3:]} as {w.get('who') or 'admin account'} on {w.get('dc') or 'a domain controller'}: {', '.join(added)[:300]}")
             except Exception:
                 pass
-            out.update({"committed": True, "added": added, "failed": failed, "unverified": unverified, "who": w.get("who", "")})
+            out.update({"committed": True, "added": added, "failed": failed, "unverified": unverified, "who": w.get("who", ""), "dc": w.get("dc", "")})
             return out
         except Exception as e:
             return self._fail(e)

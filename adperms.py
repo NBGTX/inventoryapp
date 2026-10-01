@@ -69,7 +69,7 @@ try {
 # in this window (hidden input), never in the app. ASCII only (Windows PowerShell 5.1).
 _WRITE_PS = r'''
 param([string]$InFile, [string]$OutFile)
-$res = @{ done = @(); failed = @(); who = ""; error = "" }
+$res = @{ done = @(); failed = @(); who = ""; dc = ""; error = "" }
 function Save() { ($res | ConvertTo-Json -Depth 4 -Compress) | Set-Content -LiteralPath $OutFile -Encoding UTF8 }
 try {
   Add-Type -TypeDefinition @"
@@ -109,6 +109,7 @@ public static class NbgCred {
       $e.RefreshCache()
       $null = $e.Properties["member"].Add([string]$cfg.user)
       $e.CommitChanges()
+      try { $res.dc = [string]$e.Options.GetCurrentServerName() } catch {}
       $res.done += [string]$g
     } catch {
       $m = $_.Exception.Message
@@ -323,7 +324,7 @@ def write_groups(user_dn: str, group_dns: list, domain: str, account: str = "", 
             r = json.loads(f.read() or "{}")
         if r.get("error"):
             return {"__error__": str(r["error"])[:300]}
-        return {"done": _listify(r.get("done")), "failed": _listify(r.get("failed")), "who": r.get("who", "")}
+        return {"done": _listify(r.get("done")), "failed": _listify(r.get("failed")), "who": r.get("who", ""), "dc": r.get("dc", "")}
     except Exception as e:
         return {"__error__": str(e)[:300]}
     finally:
