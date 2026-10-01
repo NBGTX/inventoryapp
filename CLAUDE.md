@@ -7,6 +7,8 @@ Windows desktop app for NBGW Systems/IT (Nucor Buildings Group West; sites LTR =
 
 Be concise in all responses.
 
+**Git:** after every change set, commit and push to `origin main` (repo `NBGTX/inventoryapp`). Never commit `config.json`, token cache, or `SystemsData/`.
+
 ## Architecture
 
 ```
