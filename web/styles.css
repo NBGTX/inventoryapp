@@ -775,3 +775,11 @@ details.miss-card .miss-row{padding:5px 14px;}
 a{color:var(--light);text-decoration:underline;text-underline-offset:2px;cursor:pointer;}
 a:hover{color:#fff;}
 a:visited{color:var(--light);}
+.side-brand img.mark{background:none;object-fit:contain;display:block;}
+
+/* ---- saving indicator (Busy in app.js) ---- */
+body.is-busy{cursor:progress;}
+body.is-busy button.primary,body.is-busy .modal-foot button,body.is-busy .set-row-ctl button{pointer-events:none;opacity:.55;}
+#busyPill{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:100000;display:none;align-items:center;gap:10px;background:var(--card);border:1px solid var(--light);color:var(--text);border-radius:20px;padding:8px 18px;font-size:13px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.45);}
+.busy-spin{width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--light);border-radius:50%;animation:busyspin .8s linear infinite;}
+@keyframes busyspin{to{transform:rotate(360deg);}}

@@ -77,7 +77,7 @@ foreach ($m in (& $py -c "import selftest; print(' '.join(selftest.MODULES))").T
 if (Test-Path "dist\NBG Hub") { Remove-Item -Recurse -Force "dist\NBG Hub" }
 if (Test-Path "build\NBG Hub") { Remove-Item -Recurse -Force "build\NBG Hub" }
 $pyi = @("-m", "PyInstaller", "--noconfirm", "--onedir", "--windowed", "--noupx", "--name", "NBG Hub",
-         "--version-file", "version.txt", "--add-data", "web;web",
+         "--version-file", "version.txt", "--icon", "assets\nbg-hub.ico", "--add-data", "web;web",
          "--collect-all", "pythonnet", "--collect-all", "clr_loader") + $hidden + @("app.py")
 Run $py $pyi
 $appDir = "dist\NBG Hub"

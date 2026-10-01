@@ -6,13 +6,45 @@ const attr = s => (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/"
 
 
 /* ---- backend bridge: real pywebview API, or a mock for browser preview ---- */
+/* "Saving..." indicator. Writes to SharePoint can take 3-4 seconds; without feedback the app looks frozen.
+   Shown only if a save is still running after 250 ms. Long jobs (syncs, pulls) have their own progress UI and
+   must NOT lock the screen, so they are excluded. */
+const Busy = {
+  n: 0, timer: null,
+  WRITE: /^(save_|set_|add_|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|switch_|register_|reserve_|complete_|start_)/,
+  LONG: /^(run_sync|enrich_inventory|sync_all_divisions|master_sync|populate_mfa|boneyard_sweep|software_refresh|pull_prod_snapshot|set_data_mode)$/,
+  watches(method) { return this.WRITE.test(method) && !this.LONG.test(method); },
+  start() {
+    if (++this.n > 1) return;
+    this.timer = setTimeout(() => {
+      document.body.classList.add("is-busy");
+      let el = document.getElementById("busyPill");
+      if (!el) { el = document.createElement("div"); el.id = "busyPill"; el.innerHTML = '<span class="busy-spin"></span> Saving…'; document.body.appendChild(el); }
+      el.style.display = "flex";
+    }, 250);
+  },
+  end() {
+    if (this.n > 0 && --this.n > 0) return;
+    clearTimeout(this.timer);
+    document.body.classList.remove("is-busy");
+    const el = document.getElementById("busyPill");
+    if (el) el.style.display = "none";
+  },
+};
+
 const Backend = {
   real: false,
   async call(method, ...args) {
-    if (this.real && window.pywebview && window.pywebview.api && window.pywebview.api[method]) {
-      return await window.pywebview.api[method](...args);
+    const watch = Busy.watches(method);
+    if (watch) Busy.start();
+    try {
+      if (this.real && window.pywebview && window.pywebview.api && window.pywebview.api[method]) {
+        return await window.pywebview.api[method](...args);
+      }
+      return await Mock[method](...args);
+    } finally {
+      if (watch) Busy.end();
     }
-    return await Mock[method](...args);
   },
 };
 

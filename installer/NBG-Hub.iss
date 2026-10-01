@@ -28,6 +28,7 @@ OutputBaseFilename=NBG-Hub-Setup-{#AppVer}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\assets\nbg-hub.ico
 UninstallDisplayIcon={app}\NBG Hub.exe
 UninstallDisplayName={#AppName}
 VersionInfoVersion={#AppVer}
