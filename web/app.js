@@ -2470,27 +2470,45 @@ const BGTools = {
     p.innerHTML =
       `<div class="chart-card" style="max-width:640px">
         <h4 style="margin:0 0 4px">Timesheet Fix</h4>
-        <p class="sub-note" style="margin:0 0 14px">Search an employee to see the last 8 weeks' timesheet lock status, and unlock a week (sets it back to unlocked in NBSTimesheet).</p>
+        <p class="sub-note" style="margin:0 0 14px">Search an employee to see the last 8 weeks' timesheet lock status, and unlock a week. Results appear as you type.</p>
         <div style="display:flex;gap:8px;align-items:flex-end">
           <div class="field" style="flex:1;margin:0"><label>Employee — first or last name</label>
-            <input id="bgtSearch" placeholder="e.g. Smith" autocomplete="off" onkeydown="if(event.key==='Enter')BGTools.search()"></div>
+            <input id="bgtSearch" placeholder="Start typing a name…" autocomplete="off" oninput="BGTools.typed()" onkeydown="if(event.key==='Enter'){clearTimeout(BGTools._typeTimer);BGTools.search()}"></div>
           <button class="primary" onclick="BGTools.search()">Search</button>
         </div>
         <div id="bgtBody" style="margin-top:16px"><p class="hint">Results appear here.</p></div>
       </div>`;
     const el = document.getElementById("bgtSearch"); if (el) el.focus();
   },
-  async search() {
+  /* Live lookup: search shortly after the last keystroke. Each search starts a SQL query, so at most one runs at a
+     time; if you kept typing meanwhile, only the newest text is searched next and older answers are dropped. */
+  _typeTimer: null, _tsRunning: false, _tsWanted: null,
+  typed() {
+    clearTimeout(this._typeTimer);
     const q = (document.getElementById("bgtSearch").value || "").trim();
+    if (q.length < 2) { document.getElementById("bgtBody").innerHTML = `<p class="hint">Type at least 2 letters.</p>`; this._tsWanted = null; return; }
+    this._typeTimer = setTimeout(() => this.search(true), 350);
+  },
+  async search(live) {
+    const input = document.getElementById("bgtSearch");
+    if (!input) return;
+    const q = (input.value || "").trim();
     const body = document.getElementById("bgtBody");
     if (q.length < 2) { body.innerHTML = `<p class="hint">Type at least 2 letters.</p>`; return; }
-    body.innerHTML = `<p class="hint">Searching…</p>`;
-    const r = await Backend.call("ts_search", q);
+    if (this._tsRunning) { this._tsWanted = { q, live }; return; }       // run the newest text when the current search ends
+    this._tsRunning = true;
+    body.innerHTML = `<p class="hint"><span class="busy-spin" style="display:inline-block;vertical-align:middle;margin-right:6px"></span>Searching…</p>`;
+    let r;
+    try { r = await Backend.call("ts_search", q); } finally { this._tsRunning = false; }
+    const next = this._tsWanted; this._tsWanted = null;
+    const cur = (document.getElementById("bgtSearch") || {}).value;
+    if (next && (cur || "").trim() !== q) { this.search(next.live); return; }   // typed more while waiting: this answer is stale
+    if (!document.getElementById("bgtBody")) return;
     if (!r || !r.ok) { body.innerHTML = `<div class="cfg-warn">${esc((r && r.error) || "Search failed.")}</div>`; return; }
     const emps = r.employees || []; this._found = emps;
     if (!emps.length) { body.innerHTML = `<p class="hint">No employee matches “${esc(q)}”.</p>`; return; }
-    if (emps.length === 1) { this.selectEmp(emps[0]); return; }
-    body.innerHTML = `<div class="hint" style="margin-bottom:8px">${emps.length} matches — pick one:</div>` +
+    if (emps.length === 1 && !live) { this.selectEmp(emps[0]); return; }
+    body.innerHTML = `<div class="hint" style="margin-bottom:8px">${emps.length === 1 ? "1 match — click to open:" : emps.length + " matches — pick one:"}</div>` +
       `<div class="bgt-list">` + emps.map((e, i) => `<div class="bgt-emp" onclick="BGTools.pick(${i})">
         <span>${esc(e.last)}, ${esc(e.first)}</span><span class="muted">${esc(e.dept || "")} · ${esc(e.employid)}</span></div>`).join("") + `</div>`;
   },
@@ -2548,10 +2566,10 @@ const BGTools = {
         <p class="sub-note" style="margin:0 0 14px">Find every group a teammate belongs to — directly and through nested groups (Entra) — then filter (e.g. type "boms"). Division narrows the search to one division (${esc(Divisions.label())} by default).</p>
         <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
           <div class="field" style="flex:2;min-width:200px;margin:0"><label>Teammate name</label>
-            <input id="bgpSearch" placeholder="e.g. Alberto Padilla" autocomplete="off" onkeydown="if(event.key==='Enter')BGTools.permSearch()"></div>
+            <input id="bgpSearch" placeholder="Start typing a name…" autocomplete="off" oninput="BGTools.permTyped()" onkeydown="if(event.key==='Enter'){clearTimeout(BGTools._tt.perm);BGTools.permSearch(false)}"></div>
           <div class="field" style="flex:1;min-width:200px;margin:0"><label>Division</label>
             <select id="bgpLoc"><option value="co:${attr(Divisions.cur().company_name)}">${esc(Divisions.label())} — ${esc(Divisions.cur().company_name)}</option></select></div>
-          <button class="primary" onclick="BGTools.permSearch()">Search</button>
+          <button class="primary" onclick="BGTools.permSearch(false)">Search</button>
         </div>
         <div id="bgpBody" style="margin-top:16px"><p class="hint">Results appear here.</p></div>
       </div>`;
@@ -2582,20 +2600,47 @@ const BGTools = {
     if (v.startsWith("dom:")) return [v.slice(4), ""];
     return ["", ""];
   },
-  async permSearch() {
-    const q = (document.getElementById("bgpSearch").value || "").trim();
-    const [domain, company] = this._scopeArgs((document.getElementById("bgpLoc") || {}).value);
-    const body = document.getElementById("bgpBody");
+  /* ---- live (as-you-type) search, shared by the Permissions Finder and Missing Groups ----
+     Searches start 350 ms after the last keystroke; one search at a time; an answer for text that has since changed
+     is dropped and the newest text is searched instead. Enter / the button still search at once. */
+  _tt: {}, _live: {},
+  _typed(key, inputId, bodyId, run) {
+    clearTimeout(this._tt[key]);
+    const q = ((document.getElementById(inputId) || {}).value || "").trim();
+    if (q.length < 2) { const b = document.getElementById(bodyId); if (b) b.innerHTML = `<p class="hint">Type at least 2 letters.</p>`; return; }
+    this._tt[key] = setTimeout(run, 350);
+  },
+  async _liveRun(key, inputId, bodyId, fetcher, show, live) {
+    const input = document.getElementById(inputId), body = document.getElementById(bodyId);
+    if (!input || !body) return;
+    const q = (input.value || "").trim();
     if (q.length < 2) { body.innerHTML = `<p class="hint">Type at least 2 letters.</p>`; return; }
-    body.innerHTML = `<p class="hint">Searching…</p>`;
-    const r = await Backend.call("bg_user_search", q, domain, company);
-    if (!r || !r.ok) { body.innerHTML = `<div class="cfg-warn">${esc((r && r.error) || "Search failed.")}</div>`; return; }
-    const users = r.users || []; this._perm.found = users;
-    if (!users.length) { body.innerHTML = `<p class="hint">No teammate matches “${esc(q)}”.</p>`; return; }
-    if (users.length === 1) { this.permSelectUser(users[0]); return; }
-    body.innerHTML = `<div class="hint" style="margin-bottom:8px">${users.length} matches — pick one:</div>` +
-      `<div class="bgt-list">` + users.map((u, i) => `<div class="bgt-emp" onclick="BGTools.permPick(${i})">
-        <span>${esc(u.display)}</span><span class="muted">${esc(u.dept || "")} · ${esc(u.upn)}</span></div>`).join("") + `</div>`;
+    const st = this._live[key] = this._live[key] || {};
+    if (st.running) { st.again = true; st.live = live; return; }
+    st.running = true;
+    body.innerHTML = `<p class="hint"><span class="busy-spin" style="display:inline-block;vertical-align:middle;margin-right:6px"></span>Searching…</p>`;
+    let r;
+    try { r = await fetcher(q); } finally { st.running = false; }
+    const again = st.again; st.again = false;
+    const nowVal = ((document.getElementById(inputId) || {}).value || "").trim();
+    if (again && nowVal !== q) return this._liveRun(key, inputId, bodyId, fetcher, show, st.live);   // typed more: answer is stale
+    if (!document.getElementById(bodyId)) return;
+    show(r, q, live);
+  },
+  permTyped() { this._typed("perm", "bgpSearch", "bgpBody", () => this.permSearch(true)); },
+  missTyped() { this._typed("miss", "missSearch", "missBody", () => this.missSearchUser(true)); },
+  permSearch(live) {
+    const [domain, company] = this._scopeArgs((document.getElementById("bgpLoc") || {}).value);
+    return this._liveRun("perm", "bgpSearch", "bgpBody", q => Backend.call("bg_user_search", q, domain, company), (r, q, lv) => {
+      const body = document.getElementById("bgpBody");
+      if (!r || !r.ok) { body.innerHTML = `<div class="cfg-warn">${esc((r && r.error) || "Search failed.")}</div>`; return; }
+      const users = r.users || []; this._perm.found = users;
+      if (!users.length) { body.innerHTML = `<p class="hint">No teammate matches “${esc(q)}”.</p>`; return; }
+      if (users.length === 1 && !lv) { this.permSelectUser(users[0]); return; }
+      body.innerHTML = `<div class="hint" style="margin-bottom:8px">${users.length === 1 ? "1 match — click to open:" : users.length + " matches — pick one:"}</div>` +
+        `<div class="bgt-list">` + users.map((u, i) => `<div class="bgt-emp" onclick="BGTools.permPick(${i})">
+          <span>${esc(u.display)}</span><span class="muted">${esc(u.dept || "")} · ${esc(u.upn)}</span></div>`).join("") + `</div>`;
+    }, live);
   },
   permPick(i) { const u = this._perm.found[i]; if (u) this.permSelectUser(u); },
   async permSelectUser(u) {
@@ -2662,8 +2707,8 @@ const BGTools = {
       ctl.innerHTML =
         `<div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
           <div class="field" style="flex:1;min-width:220px;margin:0"><label>${esc(Divisions.label())} teammate name</label>
-            <input id="missSearch" placeholder="e.g. Stephen Thornton" autocomplete="off" onkeydown="if(event.key==='Enter')BGTools.missSearchUser()"></div>
-          <button class="primary" onclick="BGTools.missSearchUser()">Search</button></div>
+            <input id="missSearch" placeholder="Start typing a name…" autocomplete="off" oninput="BGTools.missTyped()" onkeydown="if(event.key==='Enter'){clearTimeout(BGTools._tt.miss);BGTools.missSearchUser(false)}"></div>
+          <button class="primary" onclick="BGTools.missSearchUser(false)">Search</button></div>
          <p class="sub-note" style="margin:8px 0 0">Searches <b>${esc(this._miss.company || Divisions.cur().company_name)}</b> (${esc(Divisions.label())}) teammates only — the same people the baselines are built from.</p>`;
       const el = document.getElementById("missSearch"); if (el) el.focus();
     } else {
@@ -2690,19 +2735,17 @@ const BGTools = {
       const btn = document.getElementById("missDeptBtn"); if (btn) btn.disabled = !depts.length;
     } catch (e) { sel.innerHTML = `<option value="">Could not load</option>`; }
   },
-  async missSearchUser() {
-    const q = (document.getElementById("missSearch").value || "").trim();
-    const body = document.getElementById("missBody");
-    if (q.length < 2) { body.innerHTML = `<p class="hint">Type at least 2 letters.</p>`; return; }
-    body.innerHTML = `<p class="hint">Searching…</p>`;
-    const r = await Backend.call("bg_user_search", q, "", this._miss.company || Divisions.cur().company_name);
-    if (!r || !r.ok) { body.innerHTML = `<div class="cfg-warn">${esc((r && r.error) || "Search failed.")}</div>`; return; }
-    const users = r.users || []; this._miss.found = users;
-    if (!users.length) { body.innerHTML = `<p class="hint">No ${esc(Divisions.label())} teammate matches “${esc(q)}”.</p>`; return; }
-    if (users.length === 1) { this.missShowUser(users[0]); return; }
-    body.innerHTML = `<div class="hint" style="margin-bottom:8px">${users.length} matches — pick one:</div>` +
-      `<div class="bgt-list">` + users.map((u, i) => `<div class="bgt-emp" onclick="BGTools.missPickUser(${i})">
-        <span>${esc(u.display)}</span><span class="muted">${esc(u.dept || "")} · ${esc(u.upn)}</span></div>`).join("") + `</div>`;
+  missSearchUser(live) {
+    return this._liveRun("miss", "missSearch", "missBody", q => Backend.call("bg_user_search", q, "", this._miss.company || Divisions.cur().company_name), (r, q, lv) => {
+      const body = document.getElementById("missBody");
+      if (!r || !r.ok) { body.innerHTML = `<div class="cfg-warn">${esc((r && r.error) || "Search failed.")}</div>`; return; }
+      const users = r.users || []; this._miss.found = users;
+      if (!users.length) { body.innerHTML = `<p class="hint">No ${esc(Divisions.label())} teammate matches “${esc(q)}”.</p>`; return; }
+      if (users.length === 1 && !lv) { this.missShowUser(users[0]); return; }
+      body.innerHTML = `<div class="hint" style="margin-bottom:8px">${users.length === 1 ? "1 match — click to open:" : users.length + " matches — pick one:"}</div>` +
+        `<div class="bgt-list">` + users.map((u, i) => `<div class="bgt-emp" onclick="BGTools.missPickUser(${i})">
+          <span>${esc(u.display)}</span><span class="muted">${esc(u.dept || "")} · ${esc(u.upn)}</span></div>`).join("") + `</div>`;
+    }, live);
   },
   missPickUser(i) { const u = this._miss.found[i]; if (u) this.missShowUser(u); },
   async missShowUser(u) {
