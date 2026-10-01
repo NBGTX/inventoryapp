@@ -693,9 +693,11 @@ class GraphClient:
             # mints a refresh token authorized for them, so later silent 'full' keeps
             # working. Fall back to core scopes if the full request can't complete
             # (e.g. a scope isn't consented yet) so sign-in never breaks.
-            result = self._app.acquire_token_interactive(full)
+            # prompt=select_account: always show the account picker, so a user with both a normal
+            # and an admin (adm.<name>.azure@...) account can choose the one that holds the roles.
+            result = self._app.acquire_token_interactive(full, prompt="select_account")
             if not result or "access_token" not in result:
-                result = self._app.acquire_token_interactive(SCOPES)
+                result = self._app.acquire_token_interactive(SCOPES, prompt="select_account")
         self._save_cache()
         if not result or "access_token" not in result:
             err = (result or {}).get("error_description", "no cached account; sign in required")
