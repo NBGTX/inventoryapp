@@ -116,12 +116,18 @@ def site_codes(d: dict) -> list[str]:
     return [s["code"].upper() for s in d.get("sites", [])]
 
 
+def _only_site(d: dict) -> str:
+    """A division with exactly ONE site puts every device and person there, whatever the name or city says."""
+    sites = d.get("sites", [])
+    return sites[0]["code"].upper() if len(sites) == 1 else ""
+
+
 def site_from_name(d: dict, device_name: str) -> str:
     n = (device_name or "").upper()
     for s in d.get("sites", []):
         if any(n.startswith(p.upper()) for p in s.get("device_prefixes", [])):
             return s["code"].upper()
-    return ""
+    return _only_site(d)
 
 
 def city_to_site(d: dict, city: str) -> str:
@@ -129,7 +135,7 @@ def city_to_site(d: dict, city: str) -> str:
     for s in d.get("sites", []):
         if any(c.startswith(p.lower()) for p in s.get("city_prefixes", [])):
             return s["code"].upper()
-    return ""
+    return _only_site(d)
 
 
 def site_bucket(d: dict, site: str) -> str:

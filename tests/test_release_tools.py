@@ -175,3 +175,20 @@ class PackagingGuards(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SingleSiteDivision(unittest.TestCase):
+    def test_one_site_takes_every_device_and_city(self):
+        import divisions
+        d = {"sites": [{"code": "ter", "city_prefixes": ["terrell"], "device_prefixes": ["BGTER"]}]}
+        for name in ("BGTERLT1", "DETMZ-01", "TEREN9", "", "anything"):
+            self.assertEqual(divisions.site_from_name(d, name), "TER")
+        for city in ("Terrell", "Dallas", ""):
+            self.assertEqual(divisions.city_to_site(d, city), "TER")
+
+    def test_two_or_more_sites_still_need_a_match(self):
+        import divisions
+        d = divisions.load_registry({})[0]
+        self.assertEqual(divisions.site_from_name(d, "XYZ"), "")
+        self.assertEqual(divisions.city_to_site(d, "Nowhere"), "")
+        self.assertEqual(divisions.site_from_name({"sites": []}, "X"), "")
