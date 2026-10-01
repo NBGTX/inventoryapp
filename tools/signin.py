@@ -46,7 +46,14 @@ def main() -> int:
         print("Signed out. A browser window opens: choose the account you want to use.")
     gc.sign_in(interactive=True)
     print(f"\nSigned in as: {gc.account_upn}  ({gc.account_name})")
-    print(f"Super admin in this app: {gc.is_super_admin()}\n")
+    print(f"Super admin in this app: {gc.is_super_admin()}")
+    try:
+        gc.refresh_registry(force=True)
+        vis = [d["id"] for d in gc.visible_registry()]
+        print("Divisions this account can see:", ", ".join(vis) or "(none)", "  of", len(gc.registry), "total")
+    except Exception as e:
+        print("Could not read divisions:", str(e)[:120])
+    print()
 
     central = gc._base_cfg.get("central") or {}
     if central.get("site_path"):
