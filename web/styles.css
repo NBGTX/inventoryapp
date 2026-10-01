@@ -674,3 +674,7 @@ details.miss-card .miss-row{padding:5px 14px;}
 .miss-tag{display:inline-block;background:rgba(224,96,90,.14);color:#ed928d;border:1px solid rgba(224,96,90,.4);border-radius:6px;padding:1px 7px;margin:1px 2px 1px 0;font-size:11px;}
 
 @media(max-width:820px){.dash-grid,.choice-grid,.fields{grid-template-columns:1fr;}}
+
+/* data mode (live vs local snapshot) */
+.dm-btn{font-size:12px;}
+.dm-btn.dm-local{background:rgba(224,165,65,.18);border-color:var(--amber);color:var(--amber);}

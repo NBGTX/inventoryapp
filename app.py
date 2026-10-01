@@ -93,8 +93,43 @@ class Api:
     def _hubc(self):
         if self._hub is None:
             from hub import Hub  # lazy import
-            self._hub = Hub(division=self._client().division)
+            gc = self._client()
+            if gc.data_mode == "local":
+                import localstore
+                self._hub = Hub(logs_folder=localstore.hub_logs_dir(gc.division["id"]), division=gc.division)
+            else:
+                self._hub = Hub(division=gc.division)
         return self._hub
+
+    # ---- data mode: live production vs local snapshot sandbox --------------
+    def get_data_mode(self) -> dict:
+        try:
+            gc = self._client()
+            return {"ok": True, "mode": gc.data_mode, "snapshot": gc._ls().info(),
+                    "has_snapshot": gc._ls().has_snapshot()}
+        except Exception as e:
+            return self._fail(e)
+
+    def pull_prod_snapshot(self) -> dict:
+        """READ-ONLY pull of production lists + hub folder into the local sandbox."""
+        try:
+            gc = self._client()
+            gc.sign_in(interactive=True)
+            info = gc.snapshot_prod()
+            return {"ok": True, **info}
+        except Exception as e:
+            return self._fail(e)
+
+    def set_data_mode(self, mode: str) -> dict:
+        """Switch between "live" (production) and "local" (snapshot; all writes stay on
+        this machine). Local needs a snapshot first."""
+        try:
+            gc = self._client()
+            gc.set_data_mode(mode)
+            self._hub = None
+            return {"ok": True, "mode": gc.data_mode}
+        except Exception as e:
+            return self._fail(e)
 
     # ---- divisions (tenants) ----------------------------------------------
     def get_divisions(self) -> dict:
@@ -881,6 +916,9 @@ class Api:
         if not emp:
             return {"ok": False, "error": "No employee id."}
         actor = (self._actor() or "NBGW Hub")[:60]
+        if self._client().data_mode == "local":
+            return {"ok": False, "error": "Local data mode: Timesheet unlock writes to the production SQL "
+                                          "server, so it is disabled. Switch to Live to unlock."}
         try:
             from sqltools import run
             # Only flip Locked — leave ModifiedBy/ModifiedDate as they were (per request).

@@ -36,7 +36,7 @@ Write-Host "Building NBGW Hub.exe ($mode, with version metadata, no UPX) ..."
     --version-file version.txt `
     --add-data "web;web" `
     --collect-all pythonnet --collect-all clr_loader `
-    --hidden-import clr --hidden-import truststore --hidden-import cffi --hidden-import hub --hidden-import divisions --hidden-import adlookup --hidden-import sqltools --hidden-import version `
+    --hidden-import clr --hidden-import truststore --hidden-import cffi --hidden-import hub --hidden-import divisions --hidden-import localstore --hidden-import adlookup --hidden-import sqltools --hidden-import version `
     app.py
 
 $target = if ($OneDir) { "dist\NBGW Hub" } else { "dist" }

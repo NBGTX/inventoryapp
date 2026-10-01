@@ -279,6 +279,43 @@ const Mock = {
 };
 
 /* ---- app ----------------------------------------------------------------- */
+/* ---- data mode: live production vs local snapshot ------------------------ */
+const DataMode = {
+  info: null,
+  async refresh() {
+    const r = await Backend.call("get_data_mode");
+    const b = document.getElementById("dmBtn");
+    if (!r || !r.ok || !b) return;
+    this.info = r;
+    const local = r.mode === "local";
+    b.textContent = local ? "Data: LOCAL copy" : "Data: Live";
+    b.classList.toggle("dm-local", local);
+  },
+  async open() {
+    const r = this.info || (await Backend.call("get_data_mode"));
+    if (!r || !r.ok) return alert("Could not read data mode.");
+    if (r.mode === "local") {
+      if (!confirm("Switch back to LIVE production data?")) return;
+      const s = await Backend.call("set_data_mode", "live");
+      return s.ok ? location.reload() : alert(s.error);
+    }
+    const snap = r.has_snapshot ? (r.snapshot.taken_at || "").replace("T", " ") : "";
+    if (r.has_snapshot && confirm("Switch to the LOCAL copy taken " + snap + "?\nWrites stay on this PC; production is not touched.\n\nCancel = pull a fresh copy instead.")) {
+      const s = await Backend.call("set_data_mode", "local");
+      return s.ok ? location.reload() : alert(s.error);
+    }
+    if (!confirm("Pull a fresh READ-ONLY copy of production into this PC?\n(Replaces the existing local copy and any local changes.)")) return;
+    const b = document.getElementById("dmBtn"); if (b) b.textContent = "Data: pulling…";
+    const p = await Backend.call("pull_prod_snapshot");
+    if (!p.ok) { alert("Pull failed: " + p.error); return this.refresh(); }
+    if (confirm("Copy ready. Switch to LOCAL data now?")) {
+      const s = await Backend.call("set_data_mode", "local");
+      return s.ok ? location.reload() : alert(s.error);
+    }
+    this.refresh();
+  },
+};
+
 const App = {
   state: {
     tab: "stock", stock: [], use: [], boneyard: [], account: null, siteTags: ["LTR", "BRI"],
@@ -289,6 +326,7 @@ const App = {
   async init(real) {
     Backend.real = real;
     this.loadVersion();
+    DataMode.refresh();
     document.getElementById("tableWrap").addEventListener("click", e => {
       const b = e.target.closest("button[data-action]");
       if (!b) return;
@@ -4303,6 +4341,11 @@ const Hub = {
 
 /* ---- mock additions for the hub + dashboard (browser preview only) ------- */
 Object.assign(Mock, {
+  /* data mode - mirrors Api.get_data_mode / pull_prod_snapshot / set_data_mode */
+  _dm: { mode: "live", snap: "" },
+  async get_data_mode() { return { ok: true, mode: this._dm.mode, has_snapshot: !!this._dm.snap, snapshot: { taken_at: this._dm.snap, counts: {} } }; },
+  async pull_prod_snapshot() { this._dm.snap = new Date().toISOString().slice(0, 19); return { ok: true, taken_at: this._dm.snap, counts: {} }; },
+  async set_data_mode(m) { if (m === "local" && !this._dm.snap) return { ok: false, error: "No local snapshot yet." }; this._dm.mode = m; return { ok: true, mode: m }; },
   /* divisions (tenants) - mirrors Api.get_divisions / switch_division */
   _divCur: "nbgw",
   async get_divisions() {

@@ -164,6 +164,11 @@ class GraphClient:
         self.registry = divisions.load_registry(self._base_cfg)
         self.division = divisions.find(self.registry, divisions.load_selection())
         self._apply_division()
+        import localstore
+        self._localstore_mod = localstore
+        self.data_mode = localstore.load_mode()      # "live" | "local" (snapshot sandbox)
+        self._store = None
+        self._force_live = False                     # True only while pulling a snapshot
         self._token: str | None = None
         self._token_exp: float = 0.0         # unix expiry of the in-memory access token
         self._sign_lock = threading.Lock()   # serialize token refresh across threads
@@ -198,11 +203,89 @@ class GraphClient:
                     "timesheet_sql_server": d.get("sql_server") or cfg.get("timesheet_sql_server")})
         self.cfg = cfg
 
+    # ---- local data mode (snapshot sandbox) ---------------------------------
+    @property
+    def _local(self) -> bool:
+        return self.data_mode == "local" and not self._force_live
+
+    def _ls(self):
+        if self._store is None:
+            self._store = self._localstore_mod.LocalStore(self.division["id"])
+        return self._store
+
+    def _reset_caches(self) -> None:
+        self._site_id = None
+        self._list_ids = {}
+        self._col_maps = {}
+        self._resolved = {}
+        self._dept_cache = {}
+        self._mfa_cache = None
+        self._mfa_cache_at = 0.0
+        self._devmap_cache = None
+        self._devmap_at = 0.0
+        self._loc_cache = {}
+
+    def set_data_mode(self, mode: str) -> str:
+        if mode == "local" and not self._ls().has_snapshot():
+            raise GraphError("No local snapshot yet - pull production data first.")
+        self.data_mode = "local" if mode == "local" else "live"
+        self._localstore_mod.save_mode(self.data_mode)
+        self._reset_caches()
+        return self.data_mode
+
+    def snapshot_prod(self) -> dict:
+        """READ-ONLY pull of production into the local store: the division's SharePoint
+        lists (rows + column map) and a copy of its hub folder. Nothing is written to prod."""
+        import shutil
+        from hub import Hub
+        self._force_live = True
+        try:
+            self._reset_caches()
+            store = self._ls()
+            counts = {}
+            for key in ("new_stock", "in_use", "model_specs"):
+                try:
+                    items = self._items_raw(key)
+                    colmap = dict(self._col_map(key))
+                except Exception as e:
+                    if key == "model_specs":
+                        continue          # optional list
+                    raise GraphError(f"Snapshot failed on '{key}': {e}")
+                store.replace_list(key, colmap, items)
+                counts[key] = len(items)
+            try:
+                lid = self._ensure_log_list()
+                site = self._ensure_site()
+                logs = self._get_all(f"{GRAPH}/sites/{site}/lists/{lid}/items?expand=fields&$top=200")
+                store.replace_list("log", {}, logs)
+                counts["log"] = len(logs)
+            except Exception:
+                pass                      # log list missing/unreadable: skip
+            src = Hub(division=self.division)          # live hub folder (read)
+            dst = self._localstore_mod.hub_logs_dir(self.division["id"])
+            if os.path.isdir(src.logs):
+                shutil.copytree(src.logs, dst, dirs_exist_ok=True,
+                                ignore=shutil.ignore_patterns("*.tmp", "~*"))
+            store.mark_snapshot(self.account_name or "")
+            return {"counts": counts, **store.info()}
+        finally:
+            self._force_live = False
+            self._reset_caches()
+
+    def _create_item(self, key: str, fields: dict) -> None:
+        if self._local:
+            self._ls().add(key, fields)
+            return
+        site = self._ensure_site()
+        lid = self._ensure_log_list() if key == "log" else self._list_id(key)
+        self._req("POST", f"{GRAPH}/sites/{site}/lists/{lid}/items", json={"fields": fields})
+
     def set_division(self, div_id: str) -> dict:
         """Switch tenant. Keeps the sign-in (same user/tenant); drops every cache that
         is specific to the previous division's site, lists, and devices."""
         self.division = self._div_mod.find(self.registry, div_id)
         self._apply_division()
+        self._store = None
         self._site_id = None
         self._list_ids = {}
         self._col_maps = {}
@@ -376,6 +459,8 @@ class GraphClient:
 
     # ---- site + list resolution ------------------------------------------
     def _ensure_site(self) -> str:
+        if self._local:
+            return "local"
         if self._site_id:
             return self._site_id
         host = self.cfg.get("sharepoint_hostname", "nucor.sharepoint.com")
@@ -387,6 +472,8 @@ class GraphClient:
         return self._site_id
 
     def _list_id(self, key: str) -> str:
+        if self._local:
+            return "local:" + key
         if key in self._list_ids:
             return self._list_ids[key]
         site = self._ensure_site()
@@ -409,6 +496,9 @@ class GraphClient:
     def _col_map(self, key: str) -> dict[str, str]:
         """displayName(lower) -> internal name, for the given list."""
         if key in self._col_maps:
+            return self._col_maps[key]
+        if self._local:
+            self._col_maps[key] = self._ls().colmap(key)
             return self._col_maps[key]
         site = self._ensure_site()
         cols = self._get_all(
@@ -1112,16 +1202,20 @@ class GraphClient:
     def lookup_model_spec(self, model: str) -> dict | None:
         if not model:
             return None
-        site = self._ensure_site()
-        model_q = model.strip().replace("'", "''")
-        url = (f"{GRAPH}/sites/{site}/lists/{self._list_id('model_specs')}/items"
-               f"?expand=fields&$filter=fields/Title eq '{model_q}'")
-        try:
-            hits = self._get(url).get("value", [])
-        except GraphError:
-            # Unindexed Title falls back to a client-side scan.
-            hits = [i for i in self._items_raw("model_specs")
+        def scan():
+            return [i for i in self._items_raw("model_specs")
                     if (i.get("fields", {}).get("Title") or "").strip().lower() == model.strip().lower()]
+        if self._local:
+            hits = scan()
+        else:
+            site = self._ensure_site()
+            model_q = model.strip().replace("'", "''")
+            url = (f"{GRAPH}/sites/{site}/lists/{self._list_id('model_specs')}/items"
+                   f"?expand=fields&$filter=fields/Title eq '{model_q}'")
+            try:
+                hits = self._get(url).get("value", [])
+            except GraphError:
+                hits = scan()      # unindexed Title: client-side scan
         if not hits:
             return None
         f = hits[0]["fields"]
@@ -1130,14 +1224,14 @@ class GraphClient:
         return {"model": f.get("Title", model), "cpu": f.get(cpu_key, ""), "ram": f.get(ram_key, "")}
 
     def add_model_spec(self, model: str, cpu: str, ram: str) -> None:
-        site = self._ensure_site()
         fields = self._fields_for("model_specs", {"serial": model, "cpu": cpu, "ram": ram})
         fields.setdefault("Title", model)
-        self._req("POST", f"{GRAPH}/sites/{site}/lists/{self._list_id('model_specs')}/items",
-                  json={"fields": fields})
+        self._create_item("model_specs", fields)
 
     # ---- generic list items ----------------------------------------------
     def _items_raw(self, key: str) -> list[dict]:
+        if self._local:
+            return self._ls().items(key)
         site = self._ensure_site()
         return self._get_all(
             f"{GRAPH}/sites/{site}/lists/{self._list_id(key)}/items?expand=fields&$top=500"
@@ -1216,7 +1310,6 @@ class GraphClient:
 
     # ---- writes -----------------------------------------------------------
     def add_new_stock(self, data: dict) -> None:
-        site = self._ensure_site()
         fields = self._fields_for("new_stock", {
             "serial": data.get("serial"),
             "manufacturer": data.get("manufacturer"),
@@ -1230,11 +1323,9 @@ class GraphClient:
             "date_added": _dt.date.today().isoformat(),
         })
         fields.setdefault("Title", data.get("serial"))
-        self._req("POST", f"{GRAPH}/sites/{site}/lists/{self._list_id('new_stock')}/items",
-                  json={"fields": fields})
+        self._create_item("new_stock", fields)
 
     def add_in_use(self, data: dict) -> None:
-        site = self._ensure_site()
         fields = self._fields_for("in_use", {
             "serial": data.get("serial"),
             "device_name": data.get("device_name"),
@@ -1252,25 +1343,32 @@ class GraphClient:
             "mfa": data.get("mfa"),
         })
         fields.setdefault("Title", data.get("serial"))
-        self._req("POST", f"{GRAPH}/sites/{site}/lists/{self._list_id('in_use')}/items",
-                  json={"fields": fields})
+        self._create_item("in_use", fields)
 
     def delete_item(self, key: str, item_id: str) -> None:
+        if self._local:
+            self._ls().delete(key, item_id)
+            return
         site = self._ensure_site()
         self._req("DELETE", f"{GRAPH}/sites/{site}/lists/{self._list_id(key)}/items/{item_id}")
 
     def update_item(self, key: str, item_id: str, friendly_values: dict) -> None:
         """PATCH selected fields on an existing item (logical field -> value)."""
-        site = self._ensure_site()
         fields = self._fields_for(key, friendly_values)
         if not fields:
             return
+        if self._local:
+            self._ls().patch(key, item_id, fields)
+            return
+        site = self._ensure_site()
         self._req("PATCH",
                   f"{GRAPH}/sites/{site}/lists/{self._list_id(key)}/items/{item_id}/fields",
                   json=fields)
 
     # ---- audit log --------------------------------------------------------
     def _ensure_log_list(self) -> str:
+        if self._local:
+            return "local:log"
         if "log" in self._list_ids:
             return self._list_ids["log"]
         site = self._ensure_site()
@@ -1311,21 +1409,22 @@ class GraphClient:
                 actor: str = "", details: str = "") -> None:
         """Write an audit entry. Never raises - logging must not block the action."""
         try:
-            site = self._ensure_site()
-            lid = self._ensure_log_list()
             when = _dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
             fields = {"Title": f"{action} {serial}".strip(), "Action": action, "Serial": serial,
                       "Model": model, "Actor": actor, "Details": details, "LoggedAt": when}
-            self._req("POST", f"{GRAPH}/sites/{site}/lists/{lid}/items", json={"fields": fields})
+            self._create_item("log", fields)
         except Exception:
             pass
 
     def get_log(self, top: int = 300) -> list[dict]:
-        site = self._ensure_site()
-        lid = self._ensure_log_list()
-        items = self._get_all(
-            f"{GRAPH}/sites/{site}/lists/{lid}/items?expand=fields&$top=200"
-        )
+        if self._local:
+            items = self._ls().items("log")
+        else:
+            site = self._ensure_site()
+            lid = self._ensure_log_list()
+            items = self._get_all(
+                f"{GRAPH}/sites/{site}/lists/{lid}/items?expand=fields&$top=200"
+            )
         rows = []
         for it in items:
             f = it.get("fields", {})
