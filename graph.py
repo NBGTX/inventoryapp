@@ -208,6 +208,8 @@ class GraphClient:
         self._master_at = 0.0
         self._reg_at = 0.0           # monotonic time of the last central registry read
         self._div_changed = False    # refresh_registry moved the active division (caller must drop hub caches)
+        self._grp_cache = None       # my Entra group ids (lowercase), for group-based division access
+        self._grp_at = 0.0
         self._has_dir_read = False           # did the token include Directory.Read.All?
         self._has_auditlog_read = False      # did the token include AuditLog.Read.All?
         self._has_authmethod_read = False    # did the token include UserAuthenticationMethod.Read.All?
@@ -311,6 +313,74 @@ class GraphClient:
         raw = (self.master_settings().get("super_admins") or {}).get("value", "")
         admins |= {a.strip().lower() for a in raw.replace(";", ",").split(",") if a.strip()}
         return me in admins
+
+    # ---- super admin management + directory type-ahead --------------------------
+    _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+    def super_admin_list(self) -> dict:
+        """Current super admins: the editable ones (Master Settings row) and the config.json bootstrap ones."""
+        self._require_division_admin()
+        raw = (self.master_settings(force=True).get("super_admins") or {}).get("value", "")
+        listed = []
+        for a in raw.replace(";", ",").split(","):
+            a = a.strip().lower()
+            if a and a not in listed:
+                listed.append(a)
+        boot = [a.strip().lower() for a in (self._base_cfg.get("super_admins") or []) if isinstance(a, str) and a.strip()]
+        return {"admins": listed, "bootstrap": boot, "me": (self.account_upn or "").strip().lower()}
+
+    def save_super_admins(self, admins: list) -> list:
+        """Replace the editable super-admin list. You cannot remove yourself (no lock-out)."""
+        info = self.super_admin_list()
+        clean = []
+        for a in admins or []:
+            a = str(a).strip().lower()
+            if not a:
+                continue
+            if not self._EMAIL_RE.match(a):
+                raise GraphError(f"'{a}' is not a sign-in email address.")
+            if a not in clean:
+                clean.append(a)
+        if info["me"] not in clean and info["me"] not in info["bootstrap"]:
+            raise GraphError("You cannot remove yourself from the super admins (you would lose access).")
+        self.set_setting("super_admins", ", ".join(clean), secret=False,
+                         description="Super admins: comma-separated sign-in emails (edited in the app)")
+        return clean
+
+    def directory_lookup(self, query: str, kind: str = "user", limit: int = 8) -> list:
+        """Type-ahead over Entra: people (name / sign-in / mail starts with) or groups (name starts with).
+        Needs User.Read.All / Directory.Read.All (already consented). Returns small dicts only."""
+        q = (query or "").strip()
+        if len(q) < 2:
+            return []
+        qq = q.replace("'", "''")
+        hdr = {"ConsistencyLevel": "eventual"}
+        if kind == "group":
+            gflt = "startswith(displayName,'" + qq + "')"
+            url = (f"{GRAPH}/groups?$filter={quote(gflt)}"
+                   f"&$select=id,displayName,description&$top={int(limit)}&$count=true")
+            rows = self._req("GET", url, headers=hdr).json().get("value", [])
+            return [{"kind": "group", "id": g.get("id", ""), "name": g.get("displayName") or "",
+                     "detail": (g.get("description") or "")[:70]} for g in rows]
+        flt = (f"startswith(displayName,'{qq}') or startswith(userPrincipalName,'{qq}') or startswith(mail,'{qq}')")
+        url = (f"{GRAPH}/users?$filter={quote(flt)}&$select=id,displayName,userPrincipalName,companyName"
+               f"&$top={int(limit)}&$count=true")
+        rows = self._req("GET", url, headers=hdr).json().get("value", [])
+        return [{"kind": "user", "id": u.get("id", ""), "name": u.get("displayName") or "",
+                 "upn": (u.get("userPrincipalName") or "").lower(), "detail": u.get("companyName") or ""} for u in rows]
+
+    def _my_group_ids(self) -> set:
+        """Ids (lowercase) of the Entra groups the signed-in user belongs to (nested too). Cached 10 min."""
+        import time as _t
+        if self._grp_cache is not None and _t.monotonic() - self._grp_at < 600:
+            return self._grp_cache
+        try:
+            rows = self._get_all(f"{GRAPH}/me/transitiveMemberOf/microsoft.graph.group?$select=id&$top=999")
+            ids = {str(r.get("id") or "").lower() for r in rows if r.get("id")}
+        except Exception:
+            ids = self._grp_cache or set()        # keep the last good answer; never fail open
+        self._grp_cache, self._grp_at = ids, _t.monotonic()
+        return ids
 
     def set_setting(self, key: str, value: str, secret: bool | None = None, description: str | None = None) -> None:
         """Create/update one master setting. Super admins only; SharePoint enforces the same."""
@@ -506,7 +576,8 @@ class GraphClient:
                 acl = json.loads(g("Access JSON") or "[]")
                 if not isinstance(acl, list):
                     raise ValueError("not a list")
-                base["access"] = [str(a).strip().lower() for a in acl if str(a).strip()]
+                base["access"] = [(str(a).strip() if str(a).strip().lower().startswith("group:") else str(a).strip().lower())
+                                  for a in acl if str(a).strip()]
             except Exception:
                 base["access"] = ["!invalid-access-list"]
             merged[did] = base
@@ -586,7 +657,14 @@ class GraphClient:
             clean = lambda v: [str(x).strip() for x in (v or []) if str(x).strip()]
             sites.append({"code": code, "name": str(s.get("name") or code).strip(),
                           "city_prefixes": clean(s.get("city_prefixes")), "device_prefixes": clean(s.get("device_prefixes"))})
-        access = [str(a).strip().lower() for a in d.get("access") or [] if str(a).strip()]
+        access = []
+        for a in d.get("access") or []:
+            a = str(a).strip()
+            if not a:
+                continue
+            a = a if a.lower().startswith("group:") else a.lower()      # groups keep their display name
+            if a not in access:
+                access.append(a)
         cmap = self._col_map("divisions")
 
         def col(x):
@@ -632,9 +710,17 @@ class GraphClient:
         me = (self.account_upn or "").strip().lower()
         out = []
         sa = self.is_super_admin()
+        groups = None                                  # fetched lazily, only if some ACL names a group
         for d in self.registry:
             acl = d.get("access") or []
-            if sa or not acl or "*" in acl or (me and me in acl):
+            ok = sa or not acl or "*" in acl or bool(me and me in acl)
+            if not ok:
+                gids = [str(e)[6:].split("|")[0].strip().lower() for e in acl if str(e).lower().startswith("group:")]
+                if gids:
+                    if groups is None:
+                        groups = self._my_group_ids()
+                    ok = any(g in groups for g in gids)
+            if ok:
                 out.append(d)
         return out           # may be empty: the caller shows "no division available to your account"
 

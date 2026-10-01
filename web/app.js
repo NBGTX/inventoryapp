@@ -360,6 +360,75 @@ const Divisions = {
   },
 };
 
+/* ---- Entra type-ahead picker (people or groups) ---------------------------- */
+const DirPicker = {
+  /* mount(hostId, kind, onPick, placeholder): an input that searches Entra as you type. */
+  mount(hostId, kind, onPick, placeholder) {
+    const host = document.getElementById(hostId);
+    if (!host) return;
+    host.innerHTML = `<div class="dp"><input class="dp-in" autocomplete="off" placeholder="${attr(placeholder || (kind === "group" ? "Search groups…" : "Search people (name or sign-in)…"))}"><div class="dp-list hidden"></div></div>`;
+    const inp = host.querySelector(".dp-in"), list = host.querySelector(".dp-list");
+    let timer = null, seq = 0, items = [];
+    const hide = () => list.classList.add("hidden");
+    const run = async () => {
+      const q = inp.value.trim(), my = ++seq;
+      if (q.length < 2) return hide();
+      const r = await Backend.call("user_lookup", q, kind);
+      if (my !== seq) return;                       // a newer keystroke superseded this answer
+      items = (r && r.ok && r.results) || [];
+      list.innerHTML = items.length
+        ? items.map((x, i) => `<div class="dp-item" data-i="${i}"><b>${esc(x.name || x.upn)}</b><span>${esc(x.kind === "group" ? (x.detail || "group") : (x.upn + (x.detail ? " · " + x.detail : "")))}</span></div>`).join("")
+        : `<div class="dp-none">No match</div>`;
+      list.classList.remove("hidden");
+    };
+    inp.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(run, 250); });
+    inp.addEventListener("blur", () => setTimeout(hide, 180));
+    list.addEventListener("mousedown", e => {
+      const el = e.target.closest(".dp-item");
+      if (!el) return;
+      e.preventDefault();
+      const it = items[+el.dataset.i];
+      inp.value = ""; hide();
+      if (it) onPick(it);
+    });
+  },
+};
+
+/* ---- super admins: who may open Master settings / Divisions ------------------ */
+const SuperAdmins = {
+  st: { admins: [], bootstrap: [], me: "" },
+  async load() {
+    const r = await Backend.call("get_super_admins");
+    if (r && r.ok && r.super_admin !== false) this.st = { admins: r.admins || [], bootstrap: r.bootstrap || [], me: r.me || "" };
+    this.render();
+  },
+  render() {
+    const host = document.getElementById("saChips");
+    if (!host) return;
+    const st = this.st, all = [...new Set([...st.bootstrap, ...st.admins])];
+    host.innerHTML = all.map(a => {
+      const boot = st.bootstrap.includes(a) && !st.admins.includes(a);
+      const lock = boot || (a === st.me && !st.bootstrap.includes(a));
+      return `<span class="dp-chip" title="${attr(boot ? "Set in config.json — edit that file to remove" : "")}">${esc(a)}${a === st.me ? " <i>(you)</i>" : ""}${boot ? " <i>config</i>" : ""}${lock ? "" : ` <button onclick="SuperAdmins.remove('${attr(a)}')" title="Remove">&times;</button>`}</span>`;
+    }).join("") || "<span class='muted'>None</span>";
+    DirPicker.mount("saPicker", "user", it => this.add(it.upn), "Add a super admin: type a name or sign-in (e.g. adm.sanderson)…");
+  },
+  async persist(list, okMsg) {
+    const r = await Backend.call("save_super_admins", list);
+    if (!r || !r.ok) { App.toast((r && r.error) || "Could not save.", true); return false; }
+    this.st.admins = r.admins || list;
+    this.render();
+    App.toast(okMsg);
+    return true;
+  },
+  async add(upn) {
+    upn = (upn || "").toLowerCase();
+    if (!upn || [...this.st.admins, ...this.st.bootstrap].includes(upn)) return App.toast("Already a super admin.");
+    await this.persist([...this.st.admins, upn], "Added " + upn);
+  },
+  async remove(upn) { await this.persist(this.st.admins.filter(a => a !== upn), "Removed " + upn); },
+};
+
 /* ---- master settings (super admin, above divisions) ----------------------- */
 const MasterSettings = {
   async refresh() {
@@ -379,11 +448,16 @@ const MasterSettings = {
       `<div class="overlay"><div class="modal" style="width:640px;max-width:94vw;">
         <div class="modal-head"><h3>Master settings (all divisions)</h3><button onclick="MasterSettings.close()">&times;</button></div>
         <div class="modal-body">
+          <h4 style="margin:0 0 6px">Super admins</h4>
+          <p style="margin:0 0 8px;color:var(--muted);font-size:12.5px;">People who can open this screen and manage divisions. Use the sign-in account people actually use (for example <b>adm.name.azure@nucor.onmicrosoft.com</b>). You can't remove yourself.</p>
+          <div id="saChips" class="dp-chips"></div><div id="saPicker" style="margin:6px 0 16px"></div>
+          <h4 style="margin:0 0 6px">Settings</h4>
           <p style="margin-top:0;color:var(--muted);font-size:13px;">Stored in the central Master Settings list. Secret values are never shown here. Anyone who can run the app can use them.</p>
           <table class="ms-table"><tr><th>Setting</th><th>Value</th><th></th></tr>${rows || "<tr><td colspan='3'>No settings yet.</td></tr>"}</table>
         </div>
         <div class="modal-foot"><button class="ghost" onclick="DivisionAdmin.open()">Divisions…</button><button class="ghost" onclick="MasterSettings.edit(-1)">Add setting</button><button class="primary" onclick="MasterSettings.close()">Close</button></div>
       </div></div>`;
+    SuperAdmins.load();
   },
   close() { document.getElementById("modalRoot").innerHTML = ""; },
   async edit(i) {
@@ -452,8 +526,10 @@ const DivisionAdmin = {
           ${f("dvEmpTable", "Employee table (e.g. dbo.SAP_Interface)", d.employee_table)}
           ${f("dvHost", "Old SharePoint host (migration source, optional)", d.sharepoint_hostname)}
           ${f("dvPath", "Old SharePoint site path (migration source, optional)", d.site_path)}
-          <div class="field"><label>Who can see this division (emails, one per line; empty = everyone, * = everyone)</label>
-            <textarea id="dvAccess" rows="3" style="width:100%;box-sizing:border-box;background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);">${esc((d.access || []).join("\n"))}</textarea></div>
+          <div class="field"><label>Who can see this division <span class="muted">(empty = everyone; super admins always see all)</span></label>
+            <div id="dvAccChips" class="dp-chips"></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><div id="dvAccUser" style="flex:1;min-width:230px"></div><div id="dvAccGroup" style="flex:1;min-width:230px"></div></div>
+            <p class="muted" style="margin:6px 0 0;font-size:12px">App-side gate: it controls what the app shows. People with access to the SharePoint site can still open the lists directly.</p></div>
           <div class="field"><label><input type="checkbox" id="dvEnabled" ${d.enabled ? "checked" : ""}> Visible (untick to hide this division)</label></div>
           <h4 style="margin:14px 0 6px">Sites</h4>
           <p style="margin:0 0 6px;color:var(--muted);font-size:12.5px;">Code = short tag shown in the app. City prefix = how a user's Entra city maps to the site. Device prefix = start of the device name (comma separated).</p>
@@ -462,14 +538,31 @@ const DivisionAdmin = {
         </div>
         <div class="modal-foot"><button class="ghost" onclick="DivisionAdmin.open()">Cancel</button><button class="primary" onclick="DivisionAdmin.save()">Save</button></div>
       </div></div>`;
+    this.renderAccess();
   },
+  accLabel(a) {
+    if (/^group:/i.test(a)) return { t: "group", name: a.slice(6).split("|").slice(1).join("|") || a.slice(6).split("|")[0] };
+    return { t: "user", name: a === "*" ? "Everyone" : a };
+  },
+  renderAccess() {
+    const host = document.getElementById("dvAccChips");
+    if (!host) return;
+    const acc = this.cur.access || [];
+    host.innerHTML = acc.map((a, i) => { const l = this.accLabel(a);
+      return `<span class="dp-chip ${l.t}">${l.t === "group" ? "👥 " : ""}${esc(l.name)} <button onclick="DivisionAdmin.delAccess(${i})" title="Remove">&times;</button></span>`; }).join("")
+      || "<span class='muted'>Everyone can see it</span>";
+    DirPicker.mount("dvAccUser", "user", it => this.addAccess(it.upn), "Add a person (name or sign-in)…");
+    DirPicker.mount("dvAccGroup", "group", it => this.addAccess("group:" + it.id + "|" + it.name), "Add an Entra group…");
+  },
+  addAccess(v) { this.collect(); const a = this.cur.access = this.cur.access || []; if (!a.includes(v)) a.push(v); this.renderAccess(); },
+  delAccess(i) { this.collect(); this.cur.access.splice(i, 1); this.renderAccess(); },
   collect() {
     const v = id => (document.getElementById(id).value || "").trim(), d = this.cur;
     const list = t => t.split(",").map(x => x.trim()).filter(Boolean);
     d.id = v("dvId").toLowerCase(); d.name = v("dvName"); d.company_name = v("dvCompany"); d.intune_category = v("dvCat");
     d.ad_domain = v("dvAd"); d.sql_server = v("dvSql");
     d.timesheet_db = v("dvTsDb"); d.timesheet_table = v("dvTsTable"); d.employee_db = v("dvEmpDb"); d.employee_table = v("dvEmpTable"); d.sharepoint_hostname = v("dvHost"); d.site_path = v("dvPath");
-    d.access = v("dvAccess").split(/[\n,;]+/).map(x => x.trim()).filter(Boolean);
+    /* d.access is edited live by the chips below; nothing to read from the DOM */
     d.enabled = document.getElementById("dvEnabled").checked;
     d.sites = [...document.querySelectorAll("tr.dv-site")].map(tr => ({
       code: tr.querySelector(".dv-code").value.trim().toUpperCase(), name: tr.querySelector(".dv-sname").value.trim(),
@@ -4517,6 +4610,21 @@ const Hub = {
 
 /* ---- mock additions for the hub + dashboard (browser preview only) ------- */
 Object.assign(Mock, {
+  /* directory type-ahead + super admins - mirrors Api.user_lookup / get_super_admins / save_super_admins */
+  _sa: ["demo@nucor.com"],
+  async user_lookup(q, kind) {
+    const people = [{ kind: "user", id: "u1", name: "Sims Anderson (Azure Admin)", upn: "adm.sanderson.azure@nucor.onmicrosoft.com", detail: "Nucor Business Technology" },
+                    { kind: "user", id: "u2", name: "Joshua Udy", upn: "joshua.udy@nucor.com", detail: "NBG - Terrell" },
+                    { kind: "user", id: "u3", name: "Blake Stevenson", upn: "blake.stevenson@nucor.com", detail: "Nucor Business Technology" }];
+    const groups = [{ kind: "group", id: "g1", name: "NBG Hub Users", detail: "App users" }, { kind: "group", id: "g2", name: "NBGTX IT", detail: "Terrell IT" }];
+    const t = (q || "").toLowerCase();
+    return { ok: true, results: (kind === "group" ? groups : people).filter(x => (x.name + (x.upn || "")).toLowerCase().includes(t)) };
+  },
+  async get_super_admins() { return { ok: true, super_admin: true, admins: [...this._sa], bootstrap: ["demo@nucor.com"], me: "demo@nucor.com" }; },
+  async save_super_admins(list) {
+    if (!list.includes("demo@nucor.com")) return { ok: false, error: "You cannot remove yourself from the super admins (you would lose access)." };
+    this._sa = list; return { ok: true, admins: list };
+  },
   async get_flags() { return { ok: true, auto_sync: true }; },
   /* division admin - mirrors Api.get_division_admin / save_division */
   _dv: [

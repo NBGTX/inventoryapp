@@ -119,6 +119,33 @@ class Api:
                 self._hub = Hub(division=gc.division)
         return self._hub
 
+    # ---- super admins + directory type-ahead (super admin) ----------------------
+    def user_lookup(self, query: str, kind: str = "user") -> dict:
+        """Entra type-ahead for the admin screens (people or groups). Non-admins get no results."""
+        try:
+            gc = self._client()
+            if not gc.is_super_admin():
+                return {"ok": True, "results": []}
+            return {"ok": True, "results": gc.directory_lookup(query, "group" if kind == "group" else "user")}
+        except Exception as e:
+            return self._fail(e)
+
+    def get_super_admins(self) -> dict:
+        try:
+            gc = self._client()
+            if not gc.is_super_admin():
+                return {"ok": True, "super_admin": False}
+            return {"ok": True, "super_admin": True, **gc.super_admin_list()}
+        except Exception as e:
+            return self._fail(e)
+
+    def save_super_admins(self, admins: list) -> dict:
+        """Replace the editable super-admin list (super admin only; you cannot remove yourself)."""
+        try:
+            return {"ok": True, "admins": self._client().save_super_admins(admins or [])}
+        except Exception as e:
+            return self._fail(e)
+
     # ---- division admin (super admin) ----------------------------------------
     def get_division_admin(self) -> dict:
         try:
