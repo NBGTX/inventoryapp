@@ -205,7 +205,7 @@
         <p><b>Sign in required.</b> Sign in with your Nucor account to load inventory.</p>
         <button class="primary" onclick="App.signIn()">Sign in</button>
       </div>
-      <div id="errBanner" class="banner err hidden"><p id="errText"></p><button class="ghost" onclick="App.reload()">Retry</button></div>
+      <div id="errBanner" class="banner err hidden"><p id="errText"></p><button class="ghost" onclick="Ui.refreshing(this, () => App.reload(), 'Devices')">Retry</button></div>
 
       <div class="toprow">
         <div><h2>Devices</h2><p>Live view of new stock and assigned machines.</p></div>
@@ -312,7 +312,7 @@
     <section class="appview" id="appview-upgrades">
       <div class="pagehead">
         <div><h2>Upgrade List</h2><p>Devices waiting for a hardware upgrade, in priority order.</p></div>
-        <button class="ghost" onclick="Upgrade.load()">↻ Refresh</button>
+        <button class="ghost" id="upRefresh" onclick="Upgrade.refresh(this)">↻ Refresh</button>
       </div>
       <div class="help-slot" data-help="upgrades"></div>
       <div class="up-tabs" id="upTabs"></div>

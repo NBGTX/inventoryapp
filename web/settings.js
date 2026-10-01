@@ -212,6 +212,8 @@ const Settings = {
       `<div class="set-rail-title">${esc(g.title)}</div>` + g.items.map(([id, label]) =>
         `<button class="set-rail-item${id === this.tab ? " active" : ""}" onclick="Settings.go('${id}')">${esc(label)}</button>`).join("")).join("");
   },
+  /* "Discard changes": reload the saved version of the section and say so */
+  async discard(tab) { this.dirty = false; await this.show(tab); App.toast("Changes discarded: showing the saved version."); },
   async go(tab) {
     if (tab === this.tab && !this.dirty) return;
     if (this.dirty && !confirm("You have unsaved changes on this page. Leave without saving?")) return;
@@ -329,7 +331,7 @@ const Settings = {
        <div class="set-acc"><div id="acUser"></div><div id="acGroup"></div>${o.super_admin ? `<button class="ghost" type="button" onclick="Settings.acAdd('*')">+ Everyone</button>` : ""}</div>
        <p class="muted" style="font-size:12px;margin-top:12px">Tip: add an Entra group once, then manage membership in Entra instead of here. You cannot remove your own admin rights.
        This controls what the app shows; people with access to the SharePoint site can still open the lists directly.</p>`,
-      `<button class="ghost" onclick="Settings.show('access')">Discard changes</button><button class="primary" id="setSave" onclick="Settings.saveOwn(['access'])" disabled>Save access</button>`));
+      `<button class="ghost" onclick="Settings.discard('access')">Discard changes</button><button class="primary" id="setSave" onclick="Settings.saveOwn(['access'])" disabled>Save access</button>`));
     this.acRender();
   },
   acRender() {
@@ -348,14 +350,14 @@ const Settings = {
     this.pane("settings", SetUI.card("Sites", "Each site has a short code. The prefixes tell the app which site a user (by Entra city) or a device (by name) belongs to.",
       `${o.can_edit ? "" : `<div class="cfg-warn">Read-only here (Local data mode or no central site).</div>`}<div id="seSites"></div>
        <p class="muted" style="margin-top:12px;font-size:12px">Changing a code regroups devices on the dashboard and lists; existing records keep their old code until a sync updates them.</p>`,
-      `<button class="ghost" onclick="Settings.show('sites')">Discard changes</button><button class="primary" id="setSave" onclick="Settings.saveOwn(['sites'])" disabled>Save sites</button>`));
+      `<button class="ghost" onclick="Settings.discard('sites')">Discard changes</button><button class="primary" id="setSave" onclick="Settings.saveOwn(['sites'])" disabled>Save sites</button>`));
     SitesEditor.render("seSites", o, () => this.markDirty());
   },
   async sqlTab() {
     const o = await this.ownLoad(); if (!o) return;
     this.pane("settings", SetUI.card("Directory & SQL", "Where this division's timesheet and employee data live. Used by BG Tools &rarr; Timesheet and the AD lookups.",
       `${o.can_edit ? "" : `<div class="cfg-warn">Read-only here (Local data mode or no central site).</div>`}<div id="seSql"></div>`,
-      `<button class="ghost" onclick="Settings.show('sql')">Discard changes</button><button class="primary" id="setSave" onclick="Settings.saveOwn(['ad_domain','sql_server','timesheet_db','timesheet_table','employee_db','employee_table'])" disabled>Save</button>`));
+      `<button class="ghost" onclick="Settings.discard('sql')">Discard changes</button><button class="primary" id="setSave" onclick="Settings.saveOwn(['ad_domain','sql_server','timesheet_db','timesheet_table','employee_db','employee_table'])" disabled>Save</button>`));
     SqlEditor.render("seSql", o, () => this.markDirty());
   },
   async saveOwn(keys) {
@@ -411,7 +413,7 @@ const Settings = {
       (r.custom ? "" : "Showing the built-in lists; saving makes them yours."),
       `<h4 style="margin:0 0 6px">Other BG brands <span class="muted" style="font-weight:400">(told apart by email domain)</span></h4><div id="scBrands"></div>
        <h4 style="margin:18px 0 6px">Other divisions <span class="muted" style="font-weight:400">(told apart by Entra company name; every division in this app is added automatically)</span></h4><div id="scDivs"></div>`,
-      `<button class="ghost" onclick="Settings.show('scopes')">Discard changes</button><button class="primary" id="setSave" onclick="Settings.scSave()" disabled>Save scopes</button>`));
+      `<button class="ghost" onclick="Settings.discard('scopes')">Discard changes</button><button class="primary" id="setSave" onclick="Settings.scSave()" disabled>Save scopes</button>`));
     this.scDraw();
   },
   scDraw() {
@@ -494,7 +496,7 @@ const Settings = {
         <tbody>${this.ra.sections.map(row).join("")}</tbody></table>
        <p class="muted" style="font-size:12px;margin-top:12px">Applies to every division. Changing the time zone and the General page stays with division admins.
        Model departments and NBT Sites data is shared day-to-day data: this only controls whether the settings page for it is shown.</p>`,
-      `<button class="ghost" onclick="Settings.show('roles')">Discard changes</button><button class="primary" id="setSave" onclick="Settings.raSave()" disabled>Save role access</button>`));
+      `<button class="ghost" onclick="Settings.discard('roles')">Discard changes</button><button class="primary" id="setSave" onclick="Settings.raSave()" disabled>Save role access</button>`));
   },
   raToggle(role, id, on) {
     const m = this.ra.matrix[role], i = m.indexOf(id);

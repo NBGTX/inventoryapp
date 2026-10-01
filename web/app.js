@@ -83,6 +83,23 @@ const Resume = {
   },
 };
 
+/* Refresh-style buttons must SAY something: a re-read often returns the same numbers, which looks like "nothing happened".
+   Ui.refreshing(button, work, "Upgrade list") shows a spinner, ignores a second click, then confirms with the time. */
+const Ui = {
+  async refreshing(btn, work, what) {
+    if (!btn) { await work(); return; }
+    if (btn.dataset.busy) return;
+    btn.dataset.busy = "1";
+    const old = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="busy-spin"></span> Refreshing…';
+    let ok = true;
+    try { await work(); } catch (e) { ok = false; App.toast("Refresh failed: " + String((e && e.message) || e), true); }
+    finally { btn.disabled = false; btn.innerHTML = old; delete btn.dataset.busy; }
+    if (ok) App.toast((what ? what + " " : "") + "refreshed " + new Date().toLocaleTimeString(undefined, Tz.o({ hour: "numeric", minute: "2-digit", second: "2-digit" })) + ".");
+  },
+};
+
 const Backend = {
   real: false,
   async call(method, ...args) {
@@ -1034,6 +1051,10 @@ const App = {
     btn.disabled = true; btn.textContent = "Syncing…";
     const r = await Backend.call("run_sync");
     if (!r.ok) { btn.disabled = false; btn.textContent = "↻ Sync now"; return this.error(r.error || "Sync failed."); }
+    if (r.locked) {
+      btn.disabled = false; btn.textContent = "↻ Sync now";
+      return this.toast("Another sync is already running" + (r.locked.by ? " (" + r.locked.by + ")" : "") + ". Try again in a minute.", true);
+    }
     await this.reload();
     const n = (r.moved || []).length, u = r.refreshed || 0, d = r.deduped || 0;
     this.toast(n || u || d
@@ -1646,7 +1667,11 @@ const Sites = {
       </div>`;
   },
 
-  reload() { const f = document.getElementById("siteFrame"); if (f) f.src = f.src; },
+  reload() {
+    const f = document.getElementById("siteFrame");
+    if (f) { f.src = f.src; App.toast("Reloading " + ((this.current && this.current.name) || "the page") + "…"); }
+    else App.toast("Nothing is open to reload.");
+  },
 
   _openNative(s) {
     Backend.call("open_url_window", s.url, s.name).then(r => {
@@ -1727,16 +1752,9 @@ const Dashboard = {
 
   /* The Refresh button: re-read everything and SAY so. The numbers often do not change, so without feedback it looked dead. */
   async refresh() {
-    const b = document.getElementById("dashRefresh");
-    if (b) { b.disabled = true; b.innerHTML = '<span class="busy-spin"></span> Refreshing…'; }
-    try {
-      await this.load();
-      SyncLine.refresh();
-      App.toast("Dashboard refreshed " + new Date().toLocaleTimeString(undefined, Tz.o({ hour: "numeric", minute: "2-digit", second: "2-digit" })) + ".");
-    } finally {
-      if (b) { b.disabled = false; b.textContent = "↻ Refresh"; }
-    }
+    await Ui.refreshing(document.getElementById("dashRefresh"), async () => { await this.load(); SyncLine.refresh(); }, "Dashboard");
   },
+
 
   async load() {
     const host = document.getElementById("dashHost");
@@ -3186,6 +3204,8 @@ const Upgrade = {
     return { serial: r.serial || s, device_name: r.device_name || "", model: r.model || "",
              user: r.user || "", site: r.site_tag || "", site_tag: r.site_tag || "" };
   },
+
+  refresh(btn) { return Ui.refreshing(btn, () => this.load(), "Upgrade list"); },
 
   async load() {
     try {
