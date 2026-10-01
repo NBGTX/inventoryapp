@@ -100,24 +100,32 @@ class Api:
             with self._busy_lock:
                 self._busy -= 1
 
+    _init_lock = threading.RLock()       # JS fires many Api calls at once at launch: build the client / hub exactly once
+
     def _client(self):
         if self._gc is None:
-            self._gc = self._GraphClient()
+            with self._init_lock:
+                if self._gc is None:
+                    self._gc = self._GraphClient()
         return self._gc
 
     def _hubc(self):
         if self._hub is None:
-            from hub import Hub  # lazy import
-            gc = self._client()
-            if gc.data_mode == "local":
-                import localstore
-                self._hub = Hub(logs_folder=localstore.hub_logs_dir(gc.division["id"]), division=gc.division)
-            elif gc._central:
-                from hubstore import SharePointHubStore   # central site: hub data lives in SharePoint rows
-                self._hub = Hub(division=gc.division, store=SharePointHubStore(gc))
-            else:
-                self._hub = Hub(division=gc.division)
+            with self._init_lock:
+                if self._hub is None:
+                    self._hub = self._build_hub()
         return self._hub
+
+    def _build_hub(self):
+        from hub import Hub  # lazy import
+        gc = self._client()
+        if gc.data_mode == "local":
+            import localstore
+            return Hub(logs_folder=localstore.hub_logs_dir(gc.division["id"]), division=gc.division)
+        if gc._central:
+            from hubstore import SharePointHubStore   # central site: hub data lives in SharePoint rows
+            return Hub(division=gc.division, store=SharePointHubStore(gc))
+        return Hub(division=gc.division)
 
     # ---- super admins + directory type-ahead (super admin) ----------------------
     def user_lookup(self, query: str, kind: str = "user") -> dict:

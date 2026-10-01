@@ -337,3 +337,28 @@ class RoleAccessMatrix(unittest.TestCase):
         gc = make_client(central=False)
         gc.account_upn = "anyone@nucor.com"
         self.assertEqual(gc.allowed_sections(), [s for s, _ in sc.SECTIONS])
+
+
+class ApiInitRace(unittest.TestCase):
+    def test_many_threads_get_one_graph_client(self):
+        import threading
+        import time
+        made = []
+
+        class Slow:
+            def __init__(self):
+                time.sleep(0.05)
+                made.append(self)
+
+        api = app.Api()
+        api._GraphClient = Slow
+        seen, barrier = [], threading.Barrier(8)
+
+        def go():
+            barrier.wait()
+            seen.append(api._client())
+        ts = [threading.Thread(target=go) for _ in range(8)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        self.assertEqual(len(made), 1)
+        self.assertEqual(len({id(x) for x in seen}), 1)
