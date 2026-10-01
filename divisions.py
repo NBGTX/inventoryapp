@@ -114,7 +114,8 @@ def hub_folder_name(d: dict) -> str:
 
 # ---- per-user selection (local to the machine; not shared) -------------------
 def _sel_path() -> str:
-    base = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "NBGW Hub")
+    import paths
+    base = paths.user_dir()
     return os.path.join(base, "division.txt")
 
 

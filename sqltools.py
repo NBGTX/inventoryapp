@@ -20,7 +20,7 @@ param([string]$InFile)
 $ErrorActionPreference = "Stop"
 function Fail($m) { Write-Output (@{ __error__ = $m } | ConvertTo-Json -Compress); exit 0 }
 try { $cfg = Get-Content -Raw -LiteralPath $InFile | ConvertFrom-Json } catch { Fail "bad input" }
-$cs = "Server=$($cfg.server);Database=$($cfg.db);Integrated Security=True;TrustServerCertificate=True;Connect Timeout=15;Application Name=NBGW Hub"
+$cs = "Server=$($cfg.server);Database=$($cfg.db);Integrated Security=True;TrustServerCertificate=True;Connect Timeout=15;Application Name=NBG Hub"
 $cn = New-Object System.Data.SqlClient.SqlConnection $cs
 try {
   $cn.Open()

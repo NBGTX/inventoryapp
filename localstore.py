@@ -1,7 +1,7 @@
 """Local data mode: a read-only snapshot of production kept in per-user SQLite.
 
 Lets the app run (including launch-time sync) with every SharePoint-list and hub
-write going to this machine only. Lives under %LOCALAPPDATA%\\NBGW Hub\\local\\<division>\\
+write going to this machine only. Lives under %LOCALAPPDATA%\\NBG Hub\\local\\<division>\\
 - never in the synced/shared folder and never in the repo.
 
   local.db       lists snapshot: cols (column map per list) + items (Graph-shaped rows)
@@ -16,7 +16,9 @@ import re
 import sqlite3
 import uuid
 
-_BASE = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "NBGW Hub")
+import paths
+
+_BASE = paths.user_dir()
 
 
 def _safe(s: str) -> str:

@@ -1,4 +1,4 @@
-# CLAUDE.md — NBGW Hub
+# CLAUDE.md — NBG Hub
 
 Windows desktop app for NBGW Systems/IT (Nucor Buildings Group West; sites LTR = Lathrop CA, BRI = Brigham City UT). Full context: **HANDOFF.md** (read §0, §11 before non-trivial change). Open risks and stale docs: **ROADMAP.md**.
 
@@ -33,14 +33,14 @@ python -m http.server 8810 --directory web   # SAFE: Mock backend, no network wr
 python app.py                                # REAL: writes production within seconds (Rule 2)
 python sync.py                               # dry-run Intune→In Use reconcile
 python poc\inspect_lists.py                  # SharePoint column names (read-only)
-Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue; powershell -ExecutionPolicy Bypass -File build.ps1   # → dist\NBGW Hub.exe
+Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue; powershell -ExecutionPolicy Bypass -File build.ps1   # → dist\NBG Hub.exe
 ```
 
 Build: `build.ps1:30` hardcodes python path; needs `config.json`; close app first; PyInstaller logs to stderr (no `$ErrorActionPreference='Stop'`); delete `build\` first. Release steps: HANDOFF.
 
 ## Rules (must follow)
 
-1. **Never open, print, log or commit secrets.** `config.json` has `lenovo_client_id` (real secret): read key names only. Token cache: `%LOCALAPPDATA%\NBGW Hub\.token_cache.bin`. Never hardcode keys.
+1. **Never open, print, log or commit secrets.** `config.json` has `lenovo_client_id` (real secret): read key names only. Token cache: `%LOCALAPPDATA%\NBG Hub\.token_cache.bin`. Never hardcode keys.
 2. **No production writes without explicit approval:** running `python app.py` or the exe (launch runs `run_sync` → `enrich_inventory` → `boneyard_sweep` with commit on), `sync.py --commit`, any call to `Api` write methods, `hub.save_*`, `gc.add_*`/`update_item`/`delete_item`, `ts_unlock`. Prefer Mock, dry-run flags (`commit=False`, `dry_run=True`), read-only probes.
 3. **Bump version every build:** `version.py` `APP_VERSION`, `version.txt` (`filevers`/`prodvers` + `FileVersion`/`ProductVersion`), Mock strings (`web/app.js` ~line 41). Format `YYYY.MM.DD`, then `.2`, `.3`.
 4. **Every new `Api` method needs a Mock twin** in `web/app.js` (`const Mock` ~20-279, or `Object.assign(Mock, …)` ~4305-4564). Missing Python method silently falls back to Mock.

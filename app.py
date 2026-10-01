@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NBGW Inventory - desktop app entry point (reads Intune + SharePoint via Graph).
+NBG Hub - desktop app entry point (reads Intune + SharePoint via Graph).
 
 A pywebview shell that renders the Command Center UI (web/) and exposes a Python
 API to the page. Each user signs in with their own Nucor account (MSAL public
@@ -8,7 +8,7 @@ client, PKCE, no secret). Inventory lives in the three SharePoint lists; serial
 lookups use Intune (with a Lenovo/Dell vendor fallback for un-enrolled devices).
 
 Run:      python app.py
-Build:    build.ps1 -> dist/NBGW Inventory.exe (double-click; config.json sits beside it)
+Build:    build.ps1 -> dist/NBG Hub.exe (double-click; config.json sits beside it)
 """
 from __future__ import annotations
 
@@ -413,7 +413,7 @@ class Api:
 
     def site_navigate(self, url: str, title: str = "") -> dict:
         """Navigate the MAIN window to an NBT site full-window (top-level, so
-        sign-in works — an iframe can't). A "Back to NBGW Hub" button is injected
+        sign-in works — an iframe can't). A "Back to NBG Hub" button is injected
         on load (see main()) to return without a separate pop-out window."""
         try:
             import webview
@@ -915,7 +915,7 @@ class Api:
             return {"ok": False, "error": "Bad fiscal year/week."}
         if not emp:
             return {"ok": False, "error": "No employee id."}
-        actor = (self._actor() or "NBGW Hub")[:60]
+        actor = (self._actor() or "NBG Hub")[:60]
         if self._client().data_mode == "local":
             return {"ok": False, "error": "Local data mode: Timesheet unlock writes to the production SQL "
                                           "server, so it is disabled. Switch to Live to unlock."}
@@ -1611,7 +1611,7 @@ _BACK_JS = r"""
     if(!document.body || document.getElementById('__nbgwBack')) return;
     var b=document.createElement('button');
     b.id='__nbgwBack';
-    b.textContent='← Back to NBGW Hub';
+    b.textContent='← Back to NBG Hub';
     b.style.cssText='position:fixed;top:10px;left:10px;z-index:2147483647;background:#006325;color:#fff;border:none;border-radius:8px;padding:9px 14px;font:600 13px "Segoe UI",sans-serif;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.45)';
     b.onmouseenter=function(){b.style.background='#00782d';};
     b.onmouseleave=function(){b.style.background='#006325';};
@@ -1644,7 +1644,7 @@ def main() -> None:
 
     api = Api()
     window = webview.create_window(
-        "NBGW Hub",
+        "NBG Hub",
         url=_asset("web", "index.html"),
         js_api=api,
         width=1500,

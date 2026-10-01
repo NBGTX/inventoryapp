@@ -115,7 +115,8 @@ else:
 # when the app is installed read-only under C:\Program Files. Keep it per-user in
 # LOCALAPPDATA (this also means each user's tokens stay on their own machine and
 # never end up in a shared/synced folder next to the exe).
-_USER_DIR = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "NBGW Hub")
+import paths
+_USER_DIR = paths.user_dir()
 try:
     os.makedirs(_USER_DIR, exist_ok=True)
 except Exception:

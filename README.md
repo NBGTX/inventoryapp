@@ -1,8 +1,8 @@
-# NBGW Hub
+# NBG Hub
 
 A Windows desktop app for the **NBGW Systems/IT team** at Nucor Buildings Group West (**LTR** = Lathrop, CA; **BRI** = Brigham City, UT). It combines the team's computer inventory, endpoint-provisioning checklists, and a set of admin tools in one signed-in window.
 
-It's built with **Python 3.12 + pywebview (Edge WebView2)** and shipped as a single `NBGW Hub.exe` built by PyInstaller. Each user signs in with their **own Nucor account**: Entra ID via MSAL, public client, PKCE. **No secret is stored in the app code.**
+It's built with **Python 3.12 + pywebview (Edge WebView2)** and shipped as a single `NBG Hub.exe` built by PyInstaller. Each user signs in with their **own Nucor account**: Entra ID via MSAL, public client, PKCE. **No secret is stored in the app code.**
 
 | Document | For |
 |---|---|
@@ -124,7 +124,7 @@ There are **no automated tests yet**. See the roadmap in HANDOFF §14.
 # 2. Point build.ps1 line 30 ($py) at YOUR python.exe (it is hardcoded to the previous developer's path).
 # 3. Clean build (PyInstaller can reuse a stale cache):
 Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
-powershell -ExecutionPolicy Bypass -File build.ps1        # -> dist\NBGW Hub.exe  (+ dist\config.json)
+powershell -ExecutionPolicy Bypass -File build.ps1        # -> dist\NBG Hub.exe  (+ dist\config.json)
 ```
 
 About the build:
@@ -134,7 +134,7 @@ About the build:
 
 **Release** (current practice):
 1. Close the app (a running exe is locked).
-2. Copy `dist\NBGW Hub.exe` into the synced SharePoint library `…\Nucor\Systems Home - Inventory Desktop App\dist\`. The team runs the exe from there, and the shared data sits beside it in `SystemsData\_EndpointHub\`.
+2. Copy `dist\NBG Hub.exe` into the synced SharePoint library `…\Nucor\Systems Home - Inventory Desktop App\dist\`. The team runs the exe from there, and the shared data sits beside it in `SystemsData\_EndpointHub\`.
 3. Check the version in the sidebar, then open **Versions in use** (click the version line) to see who is running which build.
 
 **Security warnings on the exe:**
@@ -197,6 +197,6 @@ A desktop app only runs when someone opens it. Today every client syncs on launc
   - `tenant_id` and `client_id` are identifiers.
   - The one real secret, `lenovo_client_id`, lives only in the gitignored `config.json`. That file currently ships inside the shared `dist\` folder; see HANDOFF §11 and §15.
 - **Corporate TLS inspection.** `graph.py` calls `truststore.inject_into_ssl()` so HTTPS verifies against the Windows certificate store, which holds the proxy's root CA. Verification is never disabled (`verify=False` is never used).
-- **Token cache.** Stored at `%LOCALAPPDATA%\NBGW Hub\.token_cache.bin`, currently **not** DPAPI-protected. Hardening to-do: `msal-extensions`.
+- **Token cache.** Stored at `%LOCALAPPDATA%\NBG Hub\.token_cache.bin`, currently **not** DPAPI-protected. Hardening to-do: `msal-extensions`.
 - **Configuration PIN.** It's a UI lock only, not access control.
 - **Known issues and roadmap.** See HANDOFF §11 (ranked issues: Boneyard false positives, config reseed, full-window site bridge exposure, boot race, shared-file locking) and §14.

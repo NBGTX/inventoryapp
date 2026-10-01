@@ -1,4 +1,4 @@
-"""On-prem Active Directory lookups for the NBGW Hub.
+"""On-prem Active Directory lookups for the NBG Hub.
 
 Used by the dashboard's "No Intune check-in" drill to show where a stale device
 still LIVES (AD vs Entra vs Intune), which helps decide whether it needs cleanup.
