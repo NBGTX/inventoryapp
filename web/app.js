@@ -329,6 +329,9 @@ const Divisions = {
         const d = this.list.find(x => x.id === this.current);
         // defence in depth: a site code ends up in HTML attributes / CSS classes, so only plain tags are accepted
         if (d) this.sites = (d.sites || []).filter(s => /^[A-Za-z0-9]{2,6}$/.test(String(s.code)));
+        this._err = "";
+      } else if (r && r.error) {
+        this._err = r.error;                     // shown by startup() once the user is signed in
       }
     } catch (e) { /* keep fallback */ }
     App.state.siteTags = this.codes();
@@ -443,7 +446,12 @@ const App = {
 
   async startup() {
     // The first division read can run before sign-in finished (empty list, blank name): redo it now that we are signed in.
-    if (!Divisions.list.length) { await Divisions.load(); await Tz.load(); Settings.refreshAccess(); }
+    if (!Divisions.list.length) {
+      await Divisions.load();
+      if (!Divisions.list.length) { await new Promise(r => setTimeout(r, 1500)); await Divisions.load(); }
+      await Tz.load(); Settings.refreshAccess();
+      if (!Divisions.list.length && Divisions._err) this.toast("Divisions: " + Divisions._err, true);
+    }
     this.renderCached();       // 1) instant: show last-known data from local cache
     await this.reload();       // 2) fast: re-read the SharePoint lists and repaint
     // 3) background: Intune sync (moves + backfill). Deferred a few seconds so it
