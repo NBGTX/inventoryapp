@@ -1689,6 +1689,19 @@ function withTimeout(promise, ms, label) {
 const Dashboard = {
   _inv() { return (this._data && this._data.inventory) || {}; },
 
+  /* The Refresh button: re-read everything and SAY so. The numbers often do not change, so without feedback it looked dead. */
+  async refresh() {
+    const b = document.getElementById("dashRefresh");
+    if (b) { b.disabled = true; b.innerHTML = '<span class="busy-spin"></span> Refreshing…'; }
+    try {
+      await this.load();
+      SyncLine.refresh();
+      App.toast("Dashboard refreshed " + new Date().toLocaleTimeString(undefined, Tz.o({ hour: "numeric", minute: "2-digit", second: "2-digit" })) + ".");
+    } finally {
+      if (b) { b.disabled = false; b.textContent = "↻ Refresh"; }
+    }
+  },
+
   async load() {
     const host = document.getElementById("dashHost");
     if (this._loading) return;              // a load is already in flight; don't stack

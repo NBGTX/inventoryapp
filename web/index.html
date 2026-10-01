@@ -68,7 +68,7 @@
     <section class="appview active" id="appview-dashboard">
       <div class="pagehead">
         <div><h2>Dashboard</h2><p>Setups and inventory at a glance. <span id="syncLine" class="sync-line"></span></p></div>
-        <button class="ghost" onclick="Dashboard.load()">↻ Refresh</button>
+        <button class="ghost" id="dashRefresh" onclick="Dashboard.refresh()">↻ Refresh</button>
       </div>
       <div id="dashHost"><div class="empty">Loading…</div></div>
     </section>
