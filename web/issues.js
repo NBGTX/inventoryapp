@@ -77,8 +77,8 @@ const Attach = {
 
 const Issues = {
   list: [], meta: { triage: false, me: "", statuses: [] }, cur: null, detail: null,
-  f: { status: "open", type: "", mine: false, q: "", sort: "updated" },
-  STATUS_LABEL: { open: "Open", planned: "Planned", in_progress: "In progress", done: "Done", wont_do: "Won't do" },
+  f: { status: "active", type: "", mine: false, q: "", sort: "updated" },
+  STATUS_LABEL: { new: "New", open: "Open", planned: "Planned", in_progress: "In progress", done: "Done", wont_do: "Won't do" },
 
   async load() {
     const host = document.getElementById("issuesHost");
@@ -86,7 +86,7 @@ const Issues = {
     if (!this.list.length && !this.cur) host.innerHTML = `<div class="empty">Loading…</div>`;
     const r = await Backend.call("issues_list");
     if (!r || !r.ok) { host.innerHTML = `<div class="empty">${esc((r && r.error) || "Could not load the issues.")}<div style="margin-top:10px"><button class="rowbtn" onclick="Issues.load()">↻ Retry</button></div></div>`; return; }
-    this.list = r.issues; this.meta = { triage: !!r.triage, me: r.me || "", statuses: r.statuses || [] };
+    this.list = r.issues; Badges.seenIssues(); this.meta = { triage: !!r.triage, me: r.me || "", statuses: r.statuses || [] };
     if (this.cur) return this.open(this.cur, true);
     this.renderList();
   },
@@ -105,7 +105,7 @@ const Issues = {
   icon(t) { return t === "feature" ? "💡" : "🐞"; },
   filtered() {
     const f = this.f, q = f.q.toLowerCase().trim(), me = (this.meta.me || "").toLowerCase();
-    let rows = this.list.filter(i => (f.status === "all" || i.status === f.status) && (!f.type || i.type === f.type) && (!f.mine || i.mine)
+    let rows = this.list.filter(i => (f.status === "all" || (f.status === "active" ? !["done", "wont_do"].includes(i.status) : i.status === f.status)) && (!f.type || i.type === f.type) && (!f.mine || i.mine)
       && (!q || (i.title + " " + i.short + " " + ((i.reporter || {}).name || "") + " " + ((i.division || {}).name || "")).toLowerCase().includes(q)));
     const by = { updated: (a, b) => b.updated_at.localeCompare(a.updated_at), newest: (a, b) => b.created_at.localeCompare(a.created_at),
                  votes: (a, b) => b.votes - a.votes || b.updated_at.localeCompare(a.updated_at), comments: (a, b) => b.comments - a.comments };
@@ -114,9 +114,9 @@ const Issues = {
   renderList() {
     this.cur = null; this.detail = null;
     const host = document.getElementById("issuesHost");
-    const count = s => s === "all" ? this.list.length : this.list.filter(i => i.status === s).length;
-    const chips = ["open", "planned", "in_progress", "done", "wont_do", "all"].map(s =>
-      `<button class="iss-chip${this.f.status === s ? " on" : ""}" onclick="Issues.set('status','${s}')">${s === "all" ? "All" : this.STATUS_LABEL[s]} <span>${count(s)}</span></button>`).join("");
+    const count = s => s === "all" ? this.list.length : s === "active" ? this.list.filter(i => !["done", "wont_do"].includes(i.status)).length : this.list.filter(i => i.status === s).length;
+    const chips = ["active", "new", "open", "planned", "in_progress", "done", "wont_do", "all"].map(s =>
+      `<button class="iss-chip${this.f.status === s ? " on" : ""}" onclick="Issues.set('status','${s}')">${s === "all" ? "All" : s === "active" ? "Active" : this.STATUS_LABEL[s]} <span>${count(s)}</span></button>`).join("");
     const rows = this.filtered();
     host.innerHTML = `
       <div class="iss-bar">${chips}</div>

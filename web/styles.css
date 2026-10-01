@@ -886,3 +886,9 @@ button.primary[data-busy] .busy-spin{border-color:rgba(255,255,255,.35);border-t
 body.signed-out .appview{display:none!important;}
 body.signed-out .signin-gate{display:flex;}
 body.signed-out #signinBanner{display:none!important;}
+
+/* ---- sidebar count badges ---- */
+.nav-badge{margin-left:auto;min-width:20px;height:20px;padding:0 7px;border-radius:10px;background:var(--amber);color:#1b1b1b;font-size:11.5px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;}
+.nav-badge.hidden{display:none;}
+.navitem.active .nav-badge{background:#fff;color:var(--med);}
+.iss-st.new{background:rgba(224,165,65,.2);border-color:var(--amber);color:var(--amber);}

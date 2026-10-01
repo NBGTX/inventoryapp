@@ -11,7 +11,7 @@ import datetime as _dt
 import re
 import uuid
 
-STATUSES = [("open", "Open"), ("planned", "Planned"), ("in_progress", "In progress"), ("done", "Done"), ("wont_do", "Won't do")]
+STATUSES = [("new", "New"), ("open", "Open"), ("planned", "Planned"), ("in_progress", "In progress"), ("done", "Done"), ("wont_do", "Won't do")]
 STATUS_IDS = [s for s, _ in STATUSES]
 CLOSED = {"done", "wont_do"}
 TYPES = ["bug", "feature"]
@@ -102,7 +102,7 @@ def new_issue(kind: str, title: str, detail: str, reporter: dict, division: dict
     iid = "iss-" + _dt.datetime.now().strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:6]
     return {
         "id": iid, "type": kind, "title": clean_text(title, "title", True), "detail": clean_text(detail, "detail"),
-        "status": "open", "reporter": reporter, "division": {"id": division.get("id", ""), "name": division.get("name", "")},
+        "status": "new", "reporter": reporter, "division": {"id": division.get("id", ""), "name": division.get("name", "")},
         "version": version, "created_at": now, "updated_at": now, "assignee": None,
         "votes": [], "watchers": [], "comments": [],
         "history": [{"at": now, "by": reporter.get("name", ""), "action": "created", "detail": f"{kind} reported"}],
@@ -112,7 +112,7 @@ def new_issue(kind: str, title: str, detail: str, reporter: dict, division: dict
 def summary(issue: dict, me: str = "") -> dict:
     me = (me or "").lower()
     return {"id": issue["id"], "short": short_id(issue["id"]), "type": issue.get("type", "bug"), "title": issue.get("title", ""),
-            "status": issue.get("status", "open"), "reporter": issue.get("reporter") or {}, "division": issue.get("division") or {},
+            "status": issue.get("status", "new"), "reporter": issue.get("reporter") or {}, "division": issue.get("division") or {},
             "created_at": issue.get("created_at", ""), "updated_at": issue.get("updated_at", ""),
             "assignee": issue.get("assignee"), "votes": len(issue.get("votes") or []),
             "comments": len(issue.get("comments") or []), "files": len(all_attachments(issue)),

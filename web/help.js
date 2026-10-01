@@ -43,6 +43,7 @@ const Help = {
           <li><b>Data: Live / Local</b> (sidebar): <b>Live</b> is real production data. <b>Local</b> is a private copy on this PC: you can test freely and nothing reaches SharePoint. Click it to switch or to pull a fresh copy.</li>
           <li><b>Spinner chip above your name</b>: a long job (sync, software pull, MFA) is still running. You can move to other pages meanwhile.</li>
           <li><b>"Saving…" pill</b> at the top: a save is in progress. Wait for it to finish before closing the app.</li>
+          <li><b>Number badges</b> on a menu item: something there needs attention. On <b>Issues</b>, super admins see how many issues are still <b>New</b> (not triaged); everyone else sees how many of their own or watched issues have news since they last opened the page. The badge clears when you open the page (for super admins it clears as each New issue is triaged).</li>
           <li><b>Version</b> (bottom of the sidebar): click it to see which version each person is running. A yellow or red version means an update is available or required.</li>
           <li><b>Report bug / feature</b>: opens a short form that files an issue on the shared Issues board.</li>
           <li><b>Settings</b>: what you see there depends on your role. Everyone sees General; division admins see more; super admins also see the Platform section.</li>
@@ -104,13 +105,13 @@ const Help = {
         <p>Click <b>+ New issue</b> (or <b>Report bug / feature</b> at the bottom of the sidebar). Choose bug or feature request, give it a short title and describe it: what you did, what you expected and what happened. Add <b>pictures or files</b> if they help: click <b>Choose files</b>, drag them into the window, or press <b>Ctrl+V</b> while typing to paste a screenshot straight from the clipboard (Windows key + Shift + S takes one). Pictures (png, jpg, gif, webp, bmp), pdf, txt, log and csv are accepted, up to 5 files and 5 MB each; other kinds are refused. Check it before you submit, because you cannot edit it afterwards (you can still add comments, with files). Everyone using the app can read it, so do not paste passwords or personal data.</p>
         <h5>Finding and following</h5>
         <ul>
-          <li>The chips filter by <b>status</b>; the search box matches the title, the id (like #A3F9C1), the reporter and the division. <b>Mine</b> shows issues you reported or that are assigned to you.</li>
+          <li>The chips filter by <b>status</b> (<b>Active</b> is everything not Done or Won't do); the search box matches the title, the id (like #A3F9C1), the reporter and the division. <b>Mine</b> shows issues you reported or that are assigned to you.</li>
           <li>Click an issue to read it. Pictures show under the description and in the comments; click one to enlarge it, and click any other file to download it. A 📎 on the list means the issue has files.</li>
           <li><b>Comment</b> to add detail or ask a question; <b>Vote</b> (👍) if you hit it too, which helps decide what to fix first; <b>Watch</b> to get e-mails about it (commenting also watches it).</li>
         </ul>
         <h5>Statuses</h5>
         <ul>
-          <li><b>Open</b>: new, not looked at yet. <b>Planned</b>: accepted, will be done. <b>In progress</b>: someone is working on it. <b>Done</b>: finished. <b>Won't do</b>: closed without a change (the comments say why).</li>
+          <li><b>New</b>: just filed, nobody has looked at it yet (every issue starts here). <b>Open</b>: seen and accepted as real, not scheduled yet. <b>Planned</b>: accepted, will be done. <b>In progress</b>: someone is working on it. <b>Done</b>: finished. <b>Won't do</b>: closed without a change (the comments say why).</li>
           <li>An issue is <b>read-only once it is filed</b>. Everyone follows it with <b>comments</b> (add detail, answer questions, say you are affected too), votes and watching.</li>
           <li>Only <b>super admins</b> can edit an issue's title, description or type, change its status, assign people and delete it. If you need your wording changed, comment and a super admin will edit it.</li>
         </ul>

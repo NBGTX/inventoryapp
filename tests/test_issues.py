@@ -21,7 +21,7 @@ class Pure(unittest.TestCase):
     def test_new_issue_validates_and_cleans(self):
         me = issues.person("A@Nucor.com", "A B")
         d = issues.new_issue("bug", "  Title\x00 here ", "detail", me, {"id": "nbgtx", "name": "TX"}, "2026.10.01")
-        self.assertEqual((d["title"], d["status"], d["reporter"]["upn"], d["division"]["id"]), ("Title here", "open", "a@nucor.com", "nbgtx"))
+        self.assertEqual((d["title"], d["status"], d["reporter"]["upn"], d["division"]["id"]), ("Title here", "new", "a@nucor.com", "nbgtx"))
         with self.assertRaises(issues.IssueError):
             issues.new_issue("idea", "x", "", me, {})
         with self.assertRaises(issues.IssueError):
@@ -134,6 +134,55 @@ class Delivery(unittest.TestCase):
         self.assertEqual(sc.check_value("notify_webhook_url", "https://flow.example.com/x"), "https://flow.example.com/x")
         with self.assertRaises(ValueError):
             sc.check_value("notify_webhook_url", "http://flow.example.com/x")
+
+
+class Counts(unittest.TestCase):
+    def setUp(self):
+        self.gc = make_client(extra={"super_admins": ["boss@nucor.com"]})
+        FakeSite(self.gc)
+        self.gc.sign_in = lambda interactive=False: ""
+        self.dir = tempfile.mkdtemp()
+        self._orig = hubmod.platform_hub_for
+        hubmod.platform_hub_for = lambda gc: Hub(logs_folder=self.dir, division={"id": "_platform", "name": "P", "legacy_data": False, "sites": []})
+        self.api = app.Api()
+        self.api._gc = self.gc
+        self.api._sync_notify = True
+        self._od = notify.deliver
+        notify.deliver = lambda *a, **k: {"sent": 0, "via": "", "error": ""}
+
+    def tearDown(self):
+        hubmod.platform_hub_for = self._orig
+        notify.deliver = self._od
+
+    def as_(self, upn, name=""):
+        self.gc.account_upn, self.gc.account_name = upn, name or upn
+
+    def test_new_issues_start_as_new_and_leave_the_count_when_triaged(self):
+        self.as_("tech@nucor.com", "Tech")
+        a = self.api.issue_create("bug", "One")["issue"]
+        self.api.issue_create("feature", "Two")
+        self.assertEqual(a["status"], "new")
+        self.as_("boss@nucor.com", "Boss")
+        self.assertEqual(self.api.issue_counts("")["new"], 2)
+        self.assertTrue(self.api.issue_counts("")["triage"])
+        self.api.issue_update(a["id"], {"status": "open"})
+        self.assertEqual(self.api.issue_counts("")["new"], 1)
+        self.assertIn("new", [s["id"] for s in self.api.issues_list()["statuses"]])
+
+    def test_everyone_else_counts_news_on_their_own_issues_not_their_own_actions(self):
+        self.as_("tech@nucor.com", "Tech")
+        iid = self.api.issue_create("bug", "Mine")["issue"]["id"]
+        self.api.issue_create("bug", "Not involved")
+        before = "2000-01-01T00:00:00Z"
+        self.assertEqual(self.api.issue_counts(before)["updates"], 0)                            # I made it myself: no news
+        self.as_("boss@nucor.com", "Boss")
+        self.api.issue_comment(iid, "looking at it")
+        self.as_("tech@nucor.com", "Tech")
+        r = self.api.issue_counts(before)
+        self.assertEqual((r["updates"], r["triage"]), (1, False))
+        self.assertEqual(self.api.issue_counts("2999-01-01T00:00:00Z")["updates"], 0)            # already seen
+        self.api.issue_comment(iid, "thanks")                                                    # my own follow-up is not news
+        self.assertEqual(self.api.issue_counts("2999-01-01T00:00:00Z")["updates"], 0)
 
 
 class Board(unittest.TestCase):

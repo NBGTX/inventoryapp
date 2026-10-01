@@ -411,6 +411,27 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    def issue_counts(self, since: str = "") -> dict:
+        """Numbers for the sidebar badge on Issues. `new` = issues nobody has triaged yet (the badge for super admins);
+        `updates` = issues you reported, are assigned or watch that changed since `since` (ISO time) by someone else
+        (the badge for everyone else)."""
+        try:
+            me = self._issue_user()
+            gc = self._client()
+            new = updates = 0
+            for d in self._issue_hub().list_issues():
+                if d.get("status") == "new":
+                    new += 1
+                involved = me["upn"] in (d.get("watchers") or []) or me["upn"] in ((d.get("reporter") or {}).get("upn"), (d.get("assignee") or {}).get("upn"))
+                if involved and since and (d.get("updated_at") or "") > since:
+                    last = max([(c.get("at", ""), c.get("upn", ""), c.get("by", "")) for c in d.get("comments") or []]
+                               + [(h.get("at", ""), "", h.get("by", "")) for h in d.get("history") or [] if h.get("action") != "notify"] or [("", "", "")])
+                    if last[1] != me["upn"] and last[2] != me["name"]:
+                        updates += 1
+            return {"ok": True, "new": new, "updates": updates, "triage": gc.is_super_admin()}
+        except Exception as e:
+            return self._fail(e)
+
     def issue_get(self, issue_id: str) -> dict:
         try:
             import issues

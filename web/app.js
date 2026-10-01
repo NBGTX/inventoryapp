@@ -1390,6 +1390,38 @@ const LogView = {
    ========================================================================== */
 
 /* ---- left-nav ------------------------------------------------------------ */
+/* ---- sidebar count badges ------------------------------------------------------------
+   One place decides what each badge counts. Add an entry to Badges.SOURCES, a <span class="nav-badge" id="badge-NAME"> in the
+   menu item, and the badge appears. A source returns a number (0 = hidden). Refreshed at start, every minute, on window focus,
+   and after the relevant actions. */
+const Badges = {
+  SOURCES: {
+    issues: async () => {
+      const seenKey = "nbg_issues_seen_" + ((App.state && App.state.account) || "");
+      let since = ""; try { since = localStorage.getItem(seenKey) || ""; } catch (e) {}
+      const r = await Backend.call("issue_counts", since);
+      if (!r || !r.ok) return 0;
+      return r.triage ? r.new : r.updates;          // super admins: untriaged issues. Everyone else: news on their own issues.
+    },
+  },
+  set(name, n) {
+    const el = document.getElementById("badge-" + name);
+    if (!el) return;
+    el.textContent = n > 99 ? "99+" : String(n);
+    el.classList.toggle("hidden", !(n > 0));
+    el.title = n + (name === "issues" ? " issue" + (n === 1 ? "" : "s") + " need attention" : "");
+  },
+  async refresh() {
+    if (document.body.classList.contains("signed-out")) return;
+    for (const [name, fn] of Object.entries(this.SOURCES)) { try { this.set(name, await fn()); } catch (e) { /* a badge never breaks the page */ } }
+  },
+  /* the person has now seen what changed on Issues */
+  seenIssues() {
+    try { localStorage.setItem("nbg_issues_seen_" + ((App.state && App.state.account) || ""), new Date().toISOString().slice(0, 19) + "Z"); } catch (e) {}
+    this.refresh();
+  },
+};
+
 /* ---- division time zone: all displayed times use it (blank = this PC's own zone) ---- */
 const Tz = {
   id: "", prefs: null,
@@ -1426,7 +1458,7 @@ const Nav = {
     if (view === "projecthub") ProjectHub.load();
     if (view === "bgtools") BGTools.load();
     if (view === "settings") Settings.load();
-    if (view === "issues") Issues.load();
+    if (view === "issues") { Issues.load(); Badges.seenIssues(); }
     if (view === "dashboard") SyncLine.refresh();
   },
 };
@@ -4922,7 +4954,7 @@ Object.assign(Mock, {
     { id: "iss-demo-1", type: "bug", title: "Hot spares window shows the wrong site", detail: "Opened from the dashboard tile, the LTR column is empty.", status: "open", reporter: { upn: "demo@nucor.com", name: "Demo User" }, division: { id: "nbgw", name: "NBGW" }, version: "2026.10.01", created_at: "2026-10-01T12:00:00Z", updated_at: "2026-10-01T15:00:00Z", assignee: null, votes: ["a@x.com"], watchers: ["demo@nucor.com"], comments: [{ id: "c1", by: "Sims", upn: "s@x.com", at: "2026-10-01T15:00:00Z", text: "Reproduced. Looking." }], history: [{ at: "2026-10-01T12:00:00Z", by: "Demo User", action: "created", detail: "bug reported" }] },
     { id: "iss-demo-2", type: "feature", title: "Export the Upgrade list to Excel", detail: "", status: "planned", reporter: { upn: "a@x.com", name: "Blake" }, division: { id: "nbgtx", name: "NBG - Terrell" }, version: "2026.10.01", created_at: "2026-09-30T09:00:00Z", updated_at: "2026-09-30T09:00:00Z", assignee: { upn: "dev@x.com", name: "Dev" }, votes: [], watchers: [], comments: [], history: [{ at: "2026-09-30T09:00:00Z", by: "Blake", action: "created", detail: "feature reported" }] }],
   _sum(d) { return { id: d.id, short: "#" + d.id.slice(-6).toUpperCase(), type: d.type, title: d.title, status: d.status, reporter: d.reporter, division: d.division, created_at: d.created_at, updated_at: d.updated_at, assignee: d.assignee, votes: d.votes.length, comments: d.comments.length, files: (d.attachments || []).length + d.comments.reduce((n, c) => n + (c.attachments || []).length, 0), voted: d.votes.includes("demo@nucor.com"), watching: d.watchers.includes("demo@nucor.com"), mine: d.reporter.upn === "demo@nucor.com" }; },
-  async issues_list() { return { ok: true, issues: this._issues.map(d => this._sum(d)), triage: true, me: "demo@nucor.com", statuses: [["open", "Open"], ["planned", "Planned"], ["in_progress", "In progress"], ["done", "Done"], ["wont_do", "Won't do"]].map(([id, label]) => ({ id, label })) }; },
+  async issues_list() { return { ok: true, issues: this._issues.map(d => this._sum(d)), triage: true, me: "demo@nucor.com", statuses: [["new", "New"], ["open", "Open"], ["planned", "Planned"], ["in_progress", "In progress"], ["done", "Done"], ["wont_do", "Won't do"]].map(([id, label]) => ({ id, label })) }; },
   async issue_get(id) { const d = this._issues.find(x => x.id === id); return d ? { ok: true, issue: JSON.parse(JSON.stringify(d)), summary: this._sum(d), triage: true, can_edit: true } : { ok: false, error: "That issue no longer exists." }; },
   _files: {},
   async issue_attachment(id, att) { const f = this._files[id + "/" + att]; return f ? { ok: true, ...f } : { ok: false, error: "That file no longer exists." }; },
@@ -4932,7 +4964,7 @@ Object.assign(Mock, {
   },
   async issue_create(kind, title, detail, files) {
     if (!(title || "").trim()) return { ok: false, error: "Add a short title." };
-    const d = { id: "iss-" + Date.now(), type: kind, title: title.trim(), detail: detail || "", status: "open", reporter: { upn: "demo@nucor.com", name: "Demo User" }, division: { id: "nbgw", name: "NBGW" }, version: "2026.10.01", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), assignee: null, votes: [], watchers: ["demo@nucor.com"], comments: [], history: [{ at: new Date().toISOString(), by: "Demo User", action: "created", detail: kind + " reported" }] };
+    const d = { id: "iss-" + Date.now(), type: kind, title: title.trim(), detail: detail || "", status: "new", reporter: { upn: "demo@nucor.com", name: "Demo User" }, division: { id: "nbgw", name: "NBGW" }, version: "2026.10.01", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), assignee: null, votes: [], watchers: ["demo@nucor.com"], comments: [], history: [{ at: new Date().toISOString(), by: "Demo User", action: "created", detail: kind + " reported" }] };
     if (files && files.length) d.attachments = this._keep(d.id, files);
     this._issues.unshift(d); return { ok: true, issue: this._sum(d) };
   },
@@ -4954,6 +4986,7 @@ Object.assign(Mock, {
   async get_issue_notifications() { return { ok: true, super_admin: true, subscribers: JSON.parse(JSON.stringify(this._subs)), events: ["new", "status", "comment"], webhook_set: false, can_mail: false }; },
   async save_issue_subscribers(list) { this._subs = list; return { ok: true, subscribers: list }; },
   async issue_notify_test() { return { ok: false, error: "No way to send e-mail is set up yet (add a notification webhook in Settings > Integrations)." }; },
+  async issue_counts() { return { ok: true, new: this._issues.filter(d => d.status === "new").length, updates: 1, triage: true }; },
   async get_update_info() { return { ok: true, current: "2026.10.01", latest: "", min: "", update_available: false, update_required: false }; },
   async get_my_role() { return { ok: true, role: "super", sections: ["models", "links", "access", "sites", "sql", "perms", "storage"] }; },
   async get_role_access() {
@@ -5306,6 +5339,9 @@ async function _boot(real) {
   App.init(real, st);
   setInterval(refreshShared, 45000);
   window.addEventListener("focus", refreshShared);
+  setInterval(() => Badges.refresh(), 60000);
+  window.addEventListener("focus", () => Badges.refresh());
+  setTimeout(() => Badges.refresh(), 2500);
 }
 window.addEventListener("pywebviewready", () => _boot(true));
 window.addEventListener("load", () => setTimeout(() => { if (!_started) _boot(false); }, 300));
