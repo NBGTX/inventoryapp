@@ -160,6 +160,16 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    def get_flags(self) -> dict:
+        """UI switches. auto_sync=False (env NBG_NO_AUTOSYNC=1 or config.json "auto_sync": false) stops the
+        launch-time background sync, so opening the app to look around writes nothing."""
+        try:
+            off = os.environ.get("NBG_NO_AUTOSYNC", "").strip() not in ("", "0", "false", "False")
+            cfg_off = self._client()._base_cfg.get("auto_sync") is False
+            return {"ok": True, "auto_sync": not (off or cfg_off)}
+        except Exception as e:
+            return self._fail(e)
+
     # ---- data mode: live production vs local snapshot sandbox --------------
     def get_data_mode(self) -> dict:
         try:

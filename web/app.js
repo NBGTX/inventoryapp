@@ -521,7 +521,9 @@ const App = {
     await this.reload();       // 2) fast: re-read the SharePoint lists and repaint
     // 3) background: Intune sync (moves + backfill). Deferred a few seconds so it
     // doesn't hammer Graph alongside the dashboard/devices reads during first paint.
-    setTimeout(() => this.backgroundSync(), 4000);
+    const fl = await Backend.call("get_flags");
+    if (!fl || fl.auto_sync !== false) setTimeout(() => this.backgroundSync(), 4000);
+    else { const b = document.getElementById("syncBtn"); if (b) b.title = "Auto-sync is off (NBG_NO_AUTOSYNC / config auto_sync=false). Click to sync."; }
   },
 
   renderCached() {
@@ -4509,6 +4511,7 @@ const Hub = {
 
 /* ---- mock additions for the hub + dashboard (browser preview only) ------- */
 Object.assign(Mock, {
+  async get_flags() { return { ok: true, auto_sync: true }; },
   /* division admin - mirrors Api.get_division_admin / save_division */
   _dv: [
     { id: "nbgw", name: "NBGW - Nucor Buildings Group West", company_name: "Nucor Buildings Group West", intune_category: "NBGW", sharepoint_hostname: "nucor.sharepoint.com", site_path: "/sites/NBGW/systems", ad_domain: "bg.nucorsteel.local", sql_server: "BGBRISQL07", enabled: true, access: [],
