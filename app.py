@@ -93,8 +93,33 @@ class Api:
     def _hubc(self):
         if self._hub is None:
             from hub import Hub  # lazy import
-            self._hub = Hub()
+            self._hub = Hub(division=self._client().division)
         return self._hub
+
+    # ---- divisions (tenants) ----------------------------------------------
+    def get_divisions(self) -> dict:
+        """Divisions the registry offers + the active one (UI switcher)."""
+        try:
+            import divisions
+            gc = self._client()
+            return {"ok": True, "current": gc.division["id"],
+                    "divisions": [divisions.public(d) for d in gc.registry]}
+        except Exception as e:
+            return self._fail(e)
+
+    def switch_division(self, div_id: str) -> dict:
+        """Make `div_id` the active division. Local-only (no production writes): resets
+        the Graph/Hub caches so the next call reads the new division's site and data."""
+        try:
+            import divisions
+            gc = self._client()
+            if div_id not in [d["id"] for d in gc.registry]:
+                return {"ok": False, "error": f"Unknown division: {div_id}"}
+            gc.set_division(div_id)
+            self._hub = None
+            return {"ok": True, "current": div_id, "division": divisions.public(gc.division)}
+        except Exception as e:
+            return self._fail(e)
 
     @staticmethod
     def _fail(e: Exception) -> dict:
@@ -922,7 +947,7 @@ class Api:
         dout = [{"label": (d.get("label") or d.get("company") or ""), "company": (d.get("company") or "").strip()}
                 for d in divs if isinstance(d, dict) and d.get("company")]
         return {"ok": True, "locations": out, "divisions": dout,
-                "nbgw_company": self._PERM_COMPANY_DEFAULT}
+                "nbgw_company": self._division_company()}
 
     def bg_user_search(self, query: str, domain: str = "", company: str = "") -> dict:
         """Find teammates by name in Entra (handles 'First Last' vs 'Last, First').
@@ -1005,7 +1030,12 @@ class Api:
     # @nucor.com — so neither the department nor the email domain can isolate NBGW.
     # Entra `companyName` can: every NBGW teammate is "Nucor Buildings Group West".
     # Overridable per shared baseline doc ("company") if ever needed.
-    _PERM_COMPANY_DEFAULT = "Nucor Buildings Group West"
+    def _division_company(self) -> str:
+        """Entra companyName of the active division (scopes people queries)."""
+        try:
+            return self._client().division["company_name"]
+        except Exception:
+            return "Nucor Buildings Group West"
     _PERM_MIN_MEMBERS = 5    # a "majority" baseline off fewer people isn't meaningful
 
     def _perm_doc(self) -> dict:
@@ -1018,7 +1048,7 @@ class Api:
         except (TypeError, ValueError):
             thr = self._PERM_THRESHOLD_DEFAULT
         thr = min(max(thr, 0.0), 1.0)
-        company = (raw.get("company") or self._PERM_COMPANY_DEFAULT).strip()
+        company = (raw.get("company") or self._division_company()).strip()
         depts = raw.get("departments") if isinstance(raw.get("departments"), dict) else {}
         return {"keyword": kw, "threshold": thr, "company": company, "departments": depts}
 
@@ -1434,18 +1464,19 @@ class Api:
             except Exception:
                 dept_map = {}
             stock_by_dept = {}
-            stock_by_dept_site = {}   # dept -> {"LTR": n, "BRI": n, "Other": n}
+            div_sites = set(__import__("divisions").site_codes(self._client().division))
+            stock_by_dept_site = {}   # dept -> {<site code>: n, "Other": n}
             for r in new_stock:
                 dep = dept_map.get((r.get("model") or "").strip()) or "Unassigned"
                 stock_by_dept[dep] = stock_by_dept.get(dep, 0) + 1
                 site = (r.get("site_tag") or "").strip().upper()
-                skey = site if site in ("LTR", "BRI") else "Other"
+                skey = site if site in div_sites else "Other"
                 d = stock_by_dept_site.setdefault(dep, {})
                 d[skey] = d.get(skey, 0) + 1
             # devices whose primary user is NOT at an NBGW site (LTR/BRI): their
             # resolved "site" is an office location elsewhere. Surfaced on the dashboard
             # with a drill-down.
-            nbgw_sites = {"LTR", "BRI"}
+            nbgw_sites = div_sites
             not_nbgw, by_office = [], {}
             for r in in_use:
                 site = (r.get("site_tag") or "").strip()

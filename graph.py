@@ -158,6 +158,12 @@ def _bytes_to_gb(value) -> str:
 class GraphClient:
     def __init__(self, config: dict | None = None):
         self.cfg = config or load_config()
+        import divisions
+        self._div_mod = divisions
+        self._base_cfg = dict(self.cfg)
+        self.registry = divisions.load_registry(self._base_cfg)
+        self.division = divisions.find(self.registry, divisions.load_selection())
+        self._apply_division()
         self._token: str | None = None
         self._token_exp: float = 0.0         # unix expiry of the in-memory access token
         self._sign_lock = threading.Lock()   # serialize token refresh across threads
@@ -177,6 +183,38 @@ class GraphClient:
         self._devmap_cache: dict | None = None  # {SERIAL: {..intune fields..}} bulk device map
         self._devmap_at = 0.0                # monotonic time of the last device-map pull
         self._loc_cache: dict[str, dict] = {}  # UPN(lower)/dev id -> {..}, to avoid re-querying
+
+    # ---- division (tenant) ------------------------------------------------
+    def _apply_division(self) -> None:
+        """Overlay the active division on the base config so every existing
+        `self.cfg.get(...)` reads that division's site, lists, category, AD, SQL."""
+        d = self.division
+        cfg = dict(self._base_cfg)
+        cfg.update({"sharepoint_hostname": d.get("sharepoint_hostname") or cfg.get("sharepoint_hostname"),
+                    "site_path": d.get("site_path") or cfg.get("site_path"),
+                    "lists": d.get("lists") or cfg.get("lists") or {},
+                    "intune_device_category": d.get("intune_category") or cfg.get("intune_device_category"),
+                    "ad_domain": d.get("ad_domain") or cfg.get("ad_domain"),
+                    "timesheet_sql_server": d.get("sql_server") or cfg.get("timesheet_sql_server")})
+        self.cfg = cfg
+
+    def set_division(self, div_id: str) -> dict:
+        """Switch tenant. Keeps the sign-in (same user/tenant); drops every cache that
+        is specific to the previous division's site, lists, and devices."""
+        self.division = self._div_mod.find(self.registry, div_id)
+        self._apply_division()
+        self._site_id = None
+        self._list_ids = {}
+        self._col_maps = {}
+        self._resolved = {}
+        self._dept_cache = {}
+        self._mfa_cache = None
+        self._mfa_cache_at = 0.0
+        self._devmap_cache = None
+        self._devmap_at = 0.0
+        self._loc_cache = {}
+        self._div_mod.save_selection(self.division["id"])
+        return self.division
 
     # ---- auth -------------------------------------------------------------
     def _cache(self) -> msal.SerializableTokenCache:
@@ -838,16 +876,9 @@ class GraphClient:
                 "generated_at": _dt.datetime.now().astimezone().isoformat()}
 
     # ---- Intune: NBGW fleet (populate/refresh In Use) --------------------
-    @staticmethod
-    def _site_from_name(device_name: str) -> str:
-        """Infer the site tag from the device naming convention.
-        LTR covers Lathrop plus the CCN and MOD device prefixes; BRI = Brigham."""
-        n = (device_name or "").upper()
-        if n.startswith(("BGLTR", "BGCCN", "BGMOD")):
-            return "LTR"
-        if n.startswith("BGBRI"):
-            return "BRI"
-        return ""
+    def _site_from_name(self, device_name: str) -> str:
+        """Infer the site tag from the device naming convention (division's device prefixes)."""
+        return self._div_mod.site_from_name(self.division, device_name)
 
     def my_location(self) -> dict:
         """The SIGNED-IN user's own city/office. Uses /me — covered by the basic
@@ -858,15 +889,9 @@ class GraphClient:
         except Exception:
             return {}
 
-    @staticmethod
-    def _city_to_site(city: str) -> str:
-        """Map a user's city to a site: Lathrop -> LTR, Brigham (City) -> BRI."""
-        c = (city or "").strip().lower()
-        if c.startswith("lathrop"):
-            return "LTR"
-        if c.startswith("brigham"):
-            return "BRI"
-        return ""
+    def _city_to_site(self, city: str) -> str:
+        """Map a user's city to a site code (division's city prefixes)."""
+        return self._div_mod.city_to_site(self.division, city)
 
     def _device_owner(self, aad_device_id: str) -> dict | None:
         """For a co-managed/hybrid device whose Intune record has no user, the real

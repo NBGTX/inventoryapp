@@ -4303,6 +4303,15 @@ const Hub = {
 
 /* ---- mock additions for the hub + dashboard (browser preview only) ------- */
 Object.assign(Mock, {
+  /* divisions (tenants) - mirrors Api.get_divisions / switch_division */
+  _divCur: "nbgw",
+  async get_divisions() {
+    return { ok: true, current: this._divCur, divisions: [
+      { id: "nbgw", name: "NBGW - Nucor Buildings Group West", company_name: "Nucor Buildings Group West", sites: [{ code: "LTR", name: "Lathrop, CA" }, { code: "BRI", name: "Brigham City, UT" }] },
+      { id: "nbgtx", name: "NBGTX - NBG Terrell", company_name: "NBG - Terrell", sites: [{ code: "TER", name: "Terrell, TX" }] },
+    ] };
+  },
+  async switch_division(id) { this._divCur = id; return { ok: true, current: id }; },
   _hubConfig: null,
   _hubSetups: [
     { id: "computer-demo-01", type: "computer", dept: "Shop", subject: "NBGW-DEMO-01", tech: "Demo User", checks: { "0_0": true, "0_1": true }, notes: {}, done: 4, total: 20, pct: 20, status: "in-progress", createdAt: "2026-07-20T15:00:00Z", updatedAt: "2026-07-21T16:00:00Z", updatedBy: "Demo User" },

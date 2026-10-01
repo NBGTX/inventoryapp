@@ -70,7 +70,7 @@ def _config_logs_folder() -> str | None:
 class Hub:
     """The shared-folder Endpoint Hub store. All methods are cheap file IO."""
 
-    def __init__(self, logs_folder: str | None = None):
+    def __init__(self, logs_folder: str | None = None, division: dict | None = None):
         # Resolve the shared data root. A configured `logs_folder` may use
         # environment variables (e.g. %ONEDRIVE%) and, crucially, may be RELATIVE —
         # in which case it resolves against the .exe's folder. That lets a single
@@ -90,7 +90,9 @@ class Hub:
             # was a LOCAL per-user path, so each machine kept its own separate list.
             self.logs = os.path.join(_app_dir(), "SystemsData")
             self.logs_source = "default"
-        self.hub = os.path.join(self.logs, "_EndpointHub")
+        import divisions
+        self.division = division or divisions.load_registry({})[0]
+        self.hub = os.path.join(self.logs, divisions.hub_folder_name(self.division))
         self.setups_dir = os.path.join(self.hub, "setups")
         self.changes_dir = os.path.join(self.hub, "changes")
         self.feedback_dir = os.path.join(self.hub, "feedback")
@@ -119,12 +121,11 @@ class Hub:
     def _safe(name: str) -> str:
         return re.sub(r'[\\/:*?"<>|]', "_", name or "_")
 
-    @staticmethod
-    def _site_bucket(site: str) -> str:
-        """Group a device's site the same way the Upgrade UI's tabs do:
-        LTR / BRI / Other (anything else, including blank)."""
-        s = (site or "").strip().upper()
-        return "LTR" if s == "LTR" else "BRI" if s == "BRI" else "Other"
+    def _site_bucket(self, site: str) -> str:
+        """Group a device's site the way the Upgrade UI's tabs do: a division site
+        code, or Other (anything else, including blank)."""
+        import divisions
+        return divisions.site_bucket(self.division, site)
 
     @staticmethod
     def _write(path: str, text: str) -> None:
