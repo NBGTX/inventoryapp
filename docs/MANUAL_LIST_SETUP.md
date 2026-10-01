@@ -3,7 +3,7 @@
 Site: **NBG Hub Data** (dedicated site; URL goes in config.json under `central.site_path`)
 You need: site Owner. File needed: `docs\CentralLists_Import.xlsx` (in this repo).
 
-You will make 6 lists from the Excel file and 1 document library by hand. Plan about 30 minutes.
+You will make 7 lists from the Excel file and 1 document library by hand. Plan about 30 minutes.
 
 ## Step 1. Go to Site contents
 
@@ -13,7 +13,7 @@ You will make 6 lists from the Excel file and 1 document library by hand. Plan a
 
 Shortcut: add `/_layouts/15/viewlsts.aspx` to the end of the site address.
 
-## Step 2. Make a list from the Excel file (repeat 6 times)
+## Step 2. Make a list from the Excel file (repeat 7 times)
 
 Do these one at a time, in this order. The list name must be typed exactly as shown.
 
@@ -25,6 +25,7 @@ Do these one at a time, in this order. The list name must be typed exactly as sh
 | T_ModelSpecs | `Inventory - Model Specs` |
 | T_ActivityLog | `Inventory - Activity Log` |
 | T_HubItems | `Inventory - Hub Items` |
+| T_MasterSettings | `Inventory - Master Settings` |
 
 For each one:
 1. On **Site contents**, click **+ New** > **List**.
@@ -44,6 +45,7 @@ The import makes every column single-line text. These must hold long text:
 | Inventory - Divisions | Sites JSON, Access JSON |
 | Inventory - Activity Log | Details |
 | Inventory - Hub Items | Payload |
+| Inventory - Master Settings | Value |
 
 For each list:
 1. Open the list. Click the **gear icon** > **List settings**.
@@ -70,11 +72,22 @@ Do this on: New Stock, In Use, Activity Log, Hub Items (also index **Kind** on H
 4. Repeat for `Kind` and `Item Id`.
 5. Index **Division**: gear icon > **Library settings** > **Indexed columns** > **Create a new index**.
 
+## Step 5b. Lock down Master Settings (important)
+
+Only Owners may change it; everyone else may only read it.
+1. Open `Inventory - Master Settings`. Click the **gear icon** > **List settings**.
+2. Click **Permissions for this list**.
+3. Click **Stop Inheriting Permissions**, then **OK**.
+4. Tick the **Members** group (and any other non-owner group) > **Edit User Permissions** > untick Edit/Contribute, tick **Read** > **OK**.
+5. Leave **Owners** with Full Control. Make sure the group of app users (for example "NBG Hub Users") has **Read**.
+
+Settings stored here (Title = key): `lenovo_client_id` (Secret = Yes) and `super_admins` (comma-separated emails). The app does not need them yet; add them when the app update ships.
+
 ## Step 6. Check
 
-- Site contents shows 6 lists plus the library, named exactly as above.
+- Site contents shows 7 lists plus the library, named exactly as above.
 - `Inventory - Divisions` has one row (`nbgw`).
-- The other 5 lists are empty (example rows deleted).
+- The other lists are empty (example rows deleted).
 - Column names are spelled exactly like the Excel headers (the app silently ignores a column it cannot find).
 - Everyone who will use the app has **Contribute** on the site (gear icon > Site permissions).
 
