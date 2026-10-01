@@ -100,6 +100,7 @@ class Hub:
         self.config_path = os.path.join(self.hub, "nbgw-endpoint-hub-config.json")
         self.model_dept_path = os.path.join(self.hub, "nbgw-model-departments.json")
         self.sites_path = os.path.join(self.hub, "nbgw-nbt-sites.json")
+        self.prefs_path = os.path.join(self.hub, "nbgw-division-prefs.json")
         self.upgrades_path = os.path.join(self.hub, "nbgw-upgrade-list.json")
         self.upgrade_log_path = os.path.join(self.hub, "nbgw-upgrade-log.json")
         self.software_path = os.path.join(self.hub, "nbgw-software-inventory.json")
@@ -316,6 +317,29 @@ class Hub:
         try:
             self._write(os.path.join(self.changes_dir, cn),
                         json.dumps(change, ensure_ascii=False))
+        except Exception:
+            pass
+
+    # ---- division preferences (time zone ...) -----------------------------
+    # {timezone: "America/Chicago"}. Editable by any app user of the division and by super admins.
+    def get_prefs(self) -> dict:
+        if self._exists(self.prefs_path):
+            try:
+                d = self._read_json(self.prefs_path)
+                return d if isinstance(d, dict) else {}
+            except Exception:
+                return {}
+        return {}
+
+    def save_prefs(self, data: dict, meta: dict | None = None) -> None:
+        meta = meta or {}
+        self._write(self.prefs_path, json.dumps(data or {}, indent=2, ensure_ascii=False))
+        change = {"when": _now_iso(), "user": _user(), "machine": _machine(),
+                  "action": meta.get("action", "save"), "target": meta.get("target", "Division preferences"),
+                  "detail": meta.get("detail", "")}
+        cn = f"{_stamp()}-{self._safe(_user())}-{uuid.uuid4().hex[:6]}.json"
+        try:
+            self._write(os.path.join(self.changes_dir, cn), json.dumps(change, ensure_ascii=False))
         except Exception:
             pass
 

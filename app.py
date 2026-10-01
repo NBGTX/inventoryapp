@@ -126,7 +126,7 @@ class Api:
             gc = self._client()
             if not gc.is_super_admin():
                 return {"ok": True, "results": []}
-            return {"ok": True, "results": gc.directory_lookup(query, "group" if kind == "group" else "user")}
+            return {"ok": True, "results": gc.directory_lookup(query, kind if kind in ("group", "company") else "user")}
         except Exception as e:
             return self._fail(e)
 
@@ -176,15 +176,122 @@ class Api:
                 rows.append({"key": k, "secret": v["secret"], "description": v["description"],
                              "is_set": bool(v["value"]),
                              "value": ("" if v["secret"] else v["value"])})
-            return {"ok": True, "super_admin": True, "settings": rows}
+            import settings_catalog as sc
+            known = {c["key"] for c in sc.CATALOG}
+            cur = gc.master_settings()
+            cat = []
+            for c in sc.CATALOG:
+                v = cur.get(c["key"]) or {}
+                cat.append({**c, "is_set": bool(v.get("value")), "value": "" if c["secret"] else v.get("value", "")})
+            return {"ok": True, "super_admin": True, "settings": rows, "catalog": cat,
+                    "other": [r for r in rows if r["key"] not in known and r["key"] != "super_admins"]}
         except Exception as e:
             return self._fail(e)
 
     def set_master_setting(self, key: str, value: str, secret: bool = False, description: str = "") -> dict:
         """Create/update one master setting (super admin only). Value is never logged."""
         try:
+            import settings_catalog as sc
+            known = sc.entry((key or "").strip())
+            if known:                                   # catalog settings: fixed secrecy/description, validated value
+                value = sc.check_value(known["key"], value)
+                secret, description = known["secret"], known["label"]
             self._client().set_setting(key, value, secret=bool(secret), description=description or "")
             return {"ok": True}
+        except Exception as e:
+            return self._fail(e)
+
+    def _stale_limit(self) -> int:
+        try:
+            import settings_catalog
+            return settings_catalog.number(self._client(), "stale_checkin_days")
+        except Exception:
+            return 30
+
+    # ---- division preferences: time zone (any user of the division; super admins too) ----
+    def get_division_prefs(self) -> dict:
+        try:
+            import settings_catalog as sc
+            gc = self._client()
+            tz = (self._hubc().get_prefs().get("timezone") or "").strip()
+            tz = tz if sc.valid_timezone(tz) else ""
+            dflt = (gc.get_setting("default_timezone") or "").strip()
+            dflt = dflt if sc.valid_timezone(dflt) else ""
+            return {"ok": True, "timezone": tz, "default": dflt, "effective": tz or dflt, "zones": sc.zones()}
+        except Exception as e:
+            return self._fail(e)
+
+    def save_division_prefs(self, timezone: str = "") -> dict:
+        try:
+            import settings_catalog as sc
+            tz = (timezone or "").strip()
+            if tz and not sc.valid_timezone(tz):
+                return {"ok": False, "error": "Pick a time zone from the list."}
+            hub = self._hubc()
+            prefs = hub.get_prefs()
+            prefs["timezone"] = tz
+            hub.save_prefs(prefs, {"action": "save", "target": "Division preferences",
+                                   "detail": "time zone = " + (tz or "(default)")})
+            return {"ok": True, "timezone": tz}
+        except Exception as e:
+            return self._fail(e)
+
+    # ---- tenant settings: the active division's own sites / AD / timesheet SQL ---------
+    def get_own_division(self) -> dict:
+        try:
+            gc = self._client()
+            d = gc.division
+            keys = ("sites", "ad_domain", "sql_server", "timesheet_db", "timesheet_table", "employee_db", "employee_table")
+            return {"ok": True, "id": d["id"], "name": d.get("name", ""), "company_name": d.get("company_name", ""),
+                    "intune_category": d.get("intune_category", ""), "super_admin": gc.is_super_admin(),
+                    "can_edit": bool(gc._central) and gc.data_mode != "local",
+                    **{k: (d.get(k) if k == "sites" else (d.get(k) or "")) for k in keys}}
+        except Exception as e:
+            return self._fail(e)
+
+    def save_own_division(self, data: dict) -> dict:
+        """Save the tenant-level fields of the active division (any user of it; role gating comes later)."""
+        try:
+            self._client().save_own_division(data or {})
+            return {"ok": True}
+        except Exception as e:
+            return self._fail(e)
+
+    # ---- pickers for the division editor (super admin; read-only) ----------------
+    def intune_categories(self) -> dict:
+        try:
+            gc = self._client()
+            if not gc.is_super_admin():
+                return {"ok": True, "categories": []}
+            return {"ok": True, "categories": gc.intune_categories()}
+        except Exception as e:
+            return self._fail(e)
+
+    _SQL_SERVER_RE = re.compile(r"^[A-Za-z0-9_.\\-]+$")
+    _SQL_DB_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+    def sql_discover(self, server: str, database: str = "") -> dict:
+        """Read-only: databases on a server, or tables of one database. Fills the editor's dropdowns."""
+        try:
+            gc = self._client()
+            srv, db = (server or "").strip(), (database or "").strip()
+            own = (gc.division.get("sql_server") or "").strip().lower()
+            if not gc.is_super_admin() and not (srv and srv.lower() == own):
+                return {"ok": True, "items": []}            # tenants may browse only their own division's server
+            if not self._SQL_SERVER_RE.match(srv):
+                return {"ok": False, "error": "Server name has unexpected characters."}
+            if db and not self._SQL_DB_RE.match(db):
+                return {"ok": False, "error": "Database name has unexpected characters."}
+            from sqltools import run
+            if db:
+                r = run(srv, db, "SELECT TABLE_SCHEMA + '.' + TABLE_NAME AS n FROM INFORMATION_SCHEMA.TABLES "
+                                 "WHERE TABLE_TYPE = 'BASE TABLE' ORDER BY 1")
+            else:
+                r = run(srv, "master", "SELECT name AS n FROM sys.databases WHERE HAS_DBACCESS(name) = 1 "
+                                       "AND database_id > 4 ORDER BY name")
+            if "__error__" in r:
+                return {"ok": False, "error": r["__error__"]}
+            return {"ok": True, "items": [str(x.get("n") or "") for x in r.get("rows", []) if x.get("n")]}
         except Exception as e:
             return self._fail(e)
 
@@ -740,7 +847,7 @@ class Api:
                 "os_install": irec.get("os_install") or sprec.get("os_install") or "",
                 "last_checkin": last_checkin, "warranty": sprec.get("warranty") or "",
                 "compliance": compliance,
-                "stale": bool(stale_days is not None and stale_days > 30),
+                "stale": bool(stale_days is not None and stale_days > self._stale_limit()),
                 "stale_days": stale_days,
                 "noncompliant": compliance.lower() not in ("", "compliant", "unknown", "configmanager"),
                 "found_in": found,

@@ -206,10 +206,8 @@ def enrich_in_use(gc: GraphClient, commit: bool = True, cap: int | None = None) 
     API key arrives. Returns {enriched, sites, remaining, errors}.
     """
     if cap is None:
-        try:
-            cap = int(gc.cfg.get("intune_enrich_per_sync", 75) or 75)
-        except (ValueError, TypeError):
-            cap = 75
+        import settings_catalog
+        cap = settings_catalog.number(gc, "intune_enrich_per_sync")
     enriched = sites = users = candidates = ulooks = mfas = 0
     errors = []
     # MFA registration report: pulled at most ONCE per run and only if some row

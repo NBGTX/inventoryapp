@@ -377,7 +377,7 @@ const DirPicker = {
       if (my !== seq) return;                       // a newer keystroke superseded this answer
       items = (r && r.ok && r.results) || [];
       list.innerHTML = items.length
-        ? items.map((x, i) => `<div class="dp-item" data-i="${i}"><b>${esc(x.name || x.upn)}</b><span>${esc(x.kind === "group" ? (x.detail || "group") : (x.upn + (x.detail ? " · " + x.detail : "")))}</span></div>`).join("")
+        ? items.map((x, i) => `<div class="dp-item" data-i="${i}"><b>${esc(x.name || x.upn)}</b><span>${esc(x.kind === "group" ? (x.detail || "group") : x.kind === "company" ? (x.detail || "") : ((x.upn || "") + (x.detail ? " · " + x.detail : "")))}</span></div>`).join("")
         : `<div class="dp-none">No match</div>`;
       list.classList.remove("hidden");
     };
@@ -394,193 +394,6 @@ const DirPicker = {
   },
 };
 
-/* ---- super admins: who may open Master settings / Divisions ------------------ */
-const SuperAdmins = {
-  st: { admins: [], bootstrap: [], me: "" },
-  async load() {
-    const r = await Backend.call("get_super_admins");
-    if (r && r.ok && r.super_admin !== false) this.st = { admins: r.admins || [], bootstrap: r.bootstrap || [], me: r.me || "" };
-    this.render();
-  },
-  render() {
-    const host = document.getElementById("saChips");
-    if (!host) return;
-    const st = this.st, all = [...new Set([...st.bootstrap, ...st.admins])];
-    host.innerHTML = all.map(a => {
-      const boot = st.bootstrap.includes(a) && !st.admins.includes(a);
-      const lock = boot || (a === st.me && !st.bootstrap.includes(a));
-      return `<span class="dp-chip" title="${attr(boot ? "Set in config.json — edit that file to remove" : "")}">${esc(a)}${a === st.me ? " <i>(you)</i>" : ""}${boot ? " <i>config</i>" : ""}${lock ? "" : ` <button onclick="SuperAdmins.remove('${attr(a)}')" title="Remove">&times;</button>`}</span>`;
-    }).join("") || "<span class='muted'>None</span>";
-    DirPicker.mount("saPicker", "user", it => this.add(it.upn), "Add a super admin: type a name or sign-in (e.g. adm.sanderson)…");
-  },
-  async persist(list, okMsg) {
-    const r = await Backend.call("save_super_admins", list);
-    if (!r || !r.ok) { App.toast((r && r.error) || "Could not save.", true); return false; }
-    this.st.admins = r.admins || list;
-    this.render();
-    App.toast(okMsg);
-    return true;
-  },
-  async add(upn) {
-    upn = (upn || "").toLowerCase();
-    if (!upn || [...this.st.admins, ...this.st.bootstrap].includes(upn)) return App.toast("Already a super admin.");
-    await this.persist([...this.st.admins, upn], "Added " + upn);
-  },
-  async remove(upn) { await this.persist(this.st.admins.filter(a => a !== upn), "Removed " + upn); },
-};
-
-/* ---- master settings (super admin, above divisions) ----------------------- */
-const MasterSettings = {
-  async refresh() {
-    const r = await Backend.call("get_master_settings");
-    const b = document.getElementById("msBtn");
-    if (b) b.classList.toggle("hidden", !(r && r.ok && r.super_admin));
-  },
-  async open() {
-    const r = await Backend.call("get_master_settings");
-    if (!r || !r.ok || !r.super_admin) return App.toast((r && r.error) || "Super admin only.", true);
-    const rows = r.settings.map((x, i) => `<tr>
-        <td>${esc(x.key)}${x.secret ? " <span class='ms-tag'>secret</span>" : ""}</td>
-        <td>${x.secret ? (x.is_set ? "•••••• (set)" : "(not set)") : esc(x.value)}</td>
-        <td><button class="ghost" onclick="MasterSettings.edit(${i})">Change</button></td></tr>`).join("");
-    this._rows = r.settings;
-    document.getElementById("modalRoot").innerHTML =
-      `<div class="overlay"><div class="modal" style="width:640px;max-width:94vw;">
-        <div class="modal-head"><h3>Master settings (all divisions)</h3><button onclick="MasterSettings.close()">&times;</button></div>
-        <div class="modal-body">
-          <h4 style="margin:0 0 6px">Super admins</h4>
-          <p style="margin:0 0 8px;color:var(--muted);font-size:12.5px;">People who can open this screen and manage divisions. Use the sign-in account people actually use (for example <b>adm.name.azure@nucor.onmicrosoft.com</b>). You can't remove yourself.</p>
-          <div id="saChips" class="dp-chips"></div><div id="saPicker" style="margin:6px 0 16px"></div>
-          <h4 style="margin:0 0 6px">Settings</h4>
-          <p style="margin-top:0;color:var(--muted);font-size:13px;">Stored in the central Master Settings list. Secret values are never shown here. Anyone who can run the app can use them.</p>
-          <table class="ms-table"><tr><th>Setting</th><th>Value</th><th></th></tr>${rows || "<tr><td colspan='3'>No settings yet.</td></tr>"}</table>
-        </div>
-        <div class="modal-foot"><button class="ghost" onclick="DivisionAdmin.open()">Divisions…</button><button class="ghost" onclick="MasterSettings.edit(-1)">Add setting</button><button class="primary" onclick="MasterSettings.close()">Close</button></div>
-      </div></div>`;
-    SuperAdmins.load();
-  },
-  close() { document.getElementById("modalRoot").innerHTML = ""; },
-  async edit(i) {
-    const cur = i >= 0 ? this._rows[i] : { key: "", secret: false, description: "" };
-    const key = i >= 0 ? cur.key : prompt("Setting key (e.g. lenovo_client_id):");
-    if (!key) return;
-    const secret = i >= 0 ? cur.secret : confirm("Is this a secret (value hidden in this screen)?\nOK = secret, Cancel = normal.");
-    const value = prompt("New value for " + key + (secret ? " (will not be shown again; leave blank to keep the current value)" : "") + ":", secret ? "" : (cur.value || ""));
-    if (value === null) return;
-    if (secret && i >= 0 && value === "") return App.toast("Left unchanged.");
-    const r = await Backend.call("set_master_setting", key.trim(), value, secret, cur.description || "");
-    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
-    App.toast("Saved " + key);
-    this.open();
-  },
-};
-
-/* ---- division admin (super admin): add / edit divisions ------------------- */
-const DivisionAdmin = {
-  rows: [], cur: null,
-  async open() {
-    const r = await Backend.call("get_division_admin");
-    if (!r || !r.ok || !r.super_admin) return App.toast((r && r.error) || "Super admin only.", true);
-    this.rows = r.divisions;
-    const list = this.rows.map((d, i) => `<tr><td>${esc(d.name)}</td><td>${esc(d.id)}</td><td>${d.enabled ? "Yes" : "Hidden"}</td>
-      <td><button class="ghost" onclick="DivisionAdmin.edit(${i})">Edit</button></td></tr>`).join("");
-    document.getElementById("modalRoot").innerHTML =
-      `<div class="overlay"><div class="modal" style="width:680px;max-width:94vw;">
-        <div class="modal-head"><h3>Divisions</h3><button onclick="DivisionAdmin.close()">&times;</button></div>
-        <div class="modal-body">
-          <p style="margin-top:0;color:var(--muted);font-size:13px;">Stored in the central Divisions list. Changes show up for users within about 5 minutes (or on restart).</p>
-          <table class="ms-table"><tr><th>Name</th><th>Id</th><th>Visible</th><th></th></tr>${list || "<tr><td colspan='4'>No divisions yet.</td></tr>"}</table>
-        </div>
-        <div class="modal-foot"><button class="ghost" onclick="DivisionAdmin.edit(-1)">Add division</button><button class="primary" onclick="DivisionAdmin.close()">Close</button></div>
-      </div></div>`;
-  },
-  close() { document.getElementById("modalRoot").innerHTML = ""; },
-  edit(i) {
-    this.cur = i >= 0 ? JSON.parse(JSON.stringify(this.rows[i])) :
-      { id: "", name: "", company_name: "", intune_category: "", sharepoint_hostname: "nucor.sharepoint.com", site_path: "",
-        ad_domain: "", sql_server: "", timesheet_db: "", timesheet_table: "", employee_db: "", employee_table: "",
-        sites: [{ code: "", name: "", city_prefixes: [], device_prefixes: [] }], access: [], enabled: true, _new: true };
-    this.form();
-  },
-  form() {
-    const d = this.cur, f = (id, label, val, extra) => `<div class="field"><label>${label}</label><input id="${id}" value="${attr(val || "")}" ${extra || ""}></div>`;
-    const siteRows = d.sites.map((s, k) => `<tr class="dv-site">
-        <td><input class="dv-code" value="${attr(s.code)}" placeholder="TER" style="width:70px"></td>
-        <td><input class="dv-sname" value="${attr(s.name)}" placeholder="Terrell, TX"></td>
-        <td><input class="dv-city" value="${attr((s.city_prefixes || []).join(", "))}" placeholder="terrell"></td>
-        <td><input class="dv-dev" value="${attr((s.device_prefixes || []).join(", "))}" placeholder="BGTER, BGTRL"></td>
-        <td><button class="ghost" onclick="DivisionAdmin.delSite(${k})">&times;</button></td></tr>`).join("");
-    document.getElementById("modalRoot").innerHTML =
-      `<div class="overlay"><div class="modal" style="width:760px;max-width:96vw;">
-        <div class="modal-head"><h3>${d._new ? "Add division" : "Edit " + esc(d.name)}</h3><button onclick="DivisionAdmin.open()">&times;</button></div>
-        <div class="modal-body" style="max-height:72vh;overflow:auto;">
-          ${f("dvId", "Id (short, lowercase — cannot change later)", d.id, d._new ? "" : "disabled")}
-          ${f("dvName", "Display name", d.name)}
-          ${f("dvCompany", "Entra company name (exact — people are scoped by it)", d.company_name)}
-          ${f("dvCat", "Intune device category (exact)", d.intune_category)}
-          ${f("dvAd", "AD domain (optional)", d.ad_domain)}
-          ${f("dvSql", "Timesheet SQL server (optional)", d.sql_server)}
-          ${f("dvTsDb", "Timesheet database (e.g. NBSTimesheet)", d.timesheet_db)}
-          ${f("dvTsTable", "Timesheet week-lock table (e.g. dbo.WeekLocked)", d.timesheet_table)}
-          ${f("dvEmpDb", "Employee database (e.g. NBSEmployeeInfo)", d.employee_db)}
-          ${f("dvEmpTable", "Employee table (e.g. dbo.SAP_Interface)", d.employee_table)}
-          ${f("dvHost", "Old SharePoint host (migration source, optional)", d.sharepoint_hostname)}
-          ${f("dvPath", "Old SharePoint site path (migration source, optional)", d.site_path)}
-          <div class="field"><label>Who can see this division <span class="muted">(empty = super admins only)</span></label>
-            <div id="dvAccChips" class="dp-chips"></div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><div id="dvAccUser" style="flex:1;min-width:230px"></div><div id="dvAccGroup" style="flex:1;min-width:230px"></div><button class="ghost" type="button" onclick="DivisionAdmin.addAccess('*')" title="Everyone who can run the app sees this division">+ Everyone</button></div>
-            <p class="muted" style="margin:6px 0 0;font-size:12px">App-side gate: it controls what the app shows. People with access to the SharePoint site can still open the lists directly.</p></div>
-          <div class="field"><label><input type="checkbox" id="dvEnabled" ${d.enabled ? "checked" : ""}> Visible (untick to hide this division)</label></div>
-          <h4 style="margin:14px 0 6px">Sites</h4>
-          <p style="margin:0 0 6px;color:var(--muted);font-size:12.5px;">Code = short tag shown in the app. City prefix = how a user's Entra city maps to the site. Device prefix = start of the device name (comma separated).</p>
-          <table class="ms-table"><tr><th>Code</th><th>Name</th><th>City starts with</th><th>Device name starts with</th><th></th></tr>${siteRows}</table>
-          <button class="ghost" style="margin-top:8px" onclick="DivisionAdmin.addSite()">+ Add site</button>
-        </div>
-        <div class="modal-foot"><button class="ghost" onclick="DivisionAdmin.open()">Cancel</button><button class="primary" onclick="DivisionAdmin.save()">Save</button></div>
-      </div></div>`;
-    this.renderAccess();
-  },
-  accLabel(a) {
-    if (/^group:/i.test(a)) return { t: "group", name: a.slice(6).split("|").slice(1).join("|") || a.slice(6).split("|")[0] };
-    return { t: "user", name: a === "*" ? "Everyone" : a };
-  },
-  renderAccess() {
-    const host = document.getElementById("dvAccChips");
-    if (!host) return;
-    const acc = this.cur.access || [];
-    host.innerHTML = acc.map((a, i) => { const l = this.accLabel(a);
-      return `<span class="dp-chip ${l.t}">${l.t === "group" ? "👥 " : ""}${esc(l.name)} <button onclick="DivisionAdmin.delAccess(${i})" title="Remove">&times;</button></span>`; }).join("")
-      || "<span class='muted'>Nobody yet: only super admins can see this division</span>";
-    DirPicker.mount("dvAccUser", "user", it => this.addAccess(it.upn), "Add a person (name or sign-in)…");
-    DirPicker.mount("dvAccGroup", "group", it => this.addAccess("group:" + it.id + "|" + it.name), "Add an Entra group…");
-  },
-  addAccess(v) { this.collect(); const a = this.cur.access = this.cur.access || []; if (!a.includes(v)) a.push(v); this.renderAccess(); },
-  delAccess(i) { this.collect(); this.cur.access.splice(i, 1); this.renderAccess(); },
-  collect() {
-    const v = id => (document.getElementById(id).value || "").trim(), d = this.cur;
-    const list = t => t.split(",").map(x => x.trim()).filter(Boolean);
-    d.id = v("dvId").toLowerCase(); d.name = v("dvName"); d.company_name = v("dvCompany"); d.intune_category = v("dvCat");
-    d.ad_domain = v("dvAd"); d.sql_server = v("dvSql");
-    d.timesheet_db = v("dvTsDb"); d.timesheet_table = v("dvTsTable"); d.employee_db = v("dvEmpDb"); d.employee_table = v("dvEmpTable"); d.sharepoint_hostname = v("dvHost"); d.site_path = v("dvPath");
-    /* d.access is edited live by the chips below; nothing to read from the DOM */
-    d.enabled = document.getElementById("dvEnabled").checked;
-    d.sites = [...document.querySelectorAll("tr.dv-site")].map(tr => ({
-      code: tr.querySelector(".dv-code").value.trim().toUpperCase(), name: tr.querySelector(".dv-sname").value.trim(),
-      city_prefixes: list(tr.querySelector(".dv-city").value), device_prefixes: list(tr.querySelector(".dv-dev").value) }));
-    return d;
-  },
-  addSite() { this.collect().sites.push({ code: "", name: "", city_prefixes: [], device_prefixes: [] }); this.form(); },
-  delSite(k) { this.collect().sites.splice(k, 1); this.form(); },
-  async save() {
-    const d = this.collect();
-    const r = await Backend.call("save_division", { ...d, sites: d.sites.filter(s => s.code) });
-    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
-    App.toast("Saved " + d.name);
-    await Divisions.load();
-    this.open();
-  },
-};
-
 const App = {
   state: {
     tab: "stock", stock: [], use: [], boneyard: [], account: null, siteTags: ["LTR", "BRI"],
@@ -593,7 +406,8 @@ const App = {
     this.loadVersion();
     await Divisions.load();
     DataMode.refresh();
-    MasterSettings.refresh();
+    Settings.refreshAccess();
+    await Tz.load();
     document.getElementById("tableWrap").addEventListener("click", e => {
       const b = e.target.closest("button[data-action]");
       if (!b) return;
@@ -1377,7 +1191,7 @@ const LogView = {
     if (!r.ok) { body.innerHTML = `<p style="color:var(--red)">${esc(r.error || "Could not load log.")}</p>`; return; }
     const rows = r.entries || [];
     if (!rows.length) { body.innerHTML = `<div class="empty">No activity logged yet.</div>`; return; }
-    const fmt = w => { const d = new Date(w); return isNaN(d) ? esc(w) : d.toLocaleString(); };
+    const fmt = w => { const d = new Date(w); return isNaN(d) ? esc(w) : Tz.dt(w); };
     const tag = a => a === "Added" ? "b-instock" : a === "Deployed" ? "b-inuse" : "";
     body.innerHTML = `<table><thead><tr><th>When</th><th>Action</th><th>Serial</th><th>Model</th><th>Who</th><th>Details</th></tr></thead><tbody>` +
       rows.map(e => `<tr>
@@ -1396,6 +1210,18 @@ const LogView = {
    ========================================================================== */
 
 /* ---- left-nav ------------------------------------------------------------ */
+/* ---- division time zone: all displayed times use it (blank = this PC's own zone) ---- */
+const Tz = {
+  id: "",
+  async load() {
+    try { const r = await Backend.call("get_division_prefs"); this.id = (r && r.ok && r.effective) || ""; } catch (e) { this.id = ""; }
+  },
+  o(opts) { return this.id ? { ...opts, timeZone: this.id } : opts; },
+  dt(v) { const d = new Date(v); return isNaN(d) ? "" : d.toLocaleString(undefined, this.o({})); },
+  date(v, opts) { const d = new Date(v); return isNaN(d) ? "" : d.toLocaleDateString(undefined, this.o(opts || {})); },
+  time(v) { const d = new Date(v); return isNaN(d) ? "" : d.toLocaleTimeString(undefined, this.o({ hour: "numeric", minute: "2-digit" })); },
+};
+
 const Nav = {
   go(view) {
     document.querySelectorAll(".appview").forEach(el => el.classList.remove("active"));
@@ -1409,6 +1235,7 @@ const Nav = {
     if (view === "software") Software.load();
     if (view === "projecthub") ProjectHub.load();
     if (view === "bgtools") BGTools.load();
+    if (view === "settings") Settings.load();
   },
 };
 
@@ -1820,7 +1647,7 @@ const Dashboard = {
       const pct = typeof l.pct === "number" ? l.pct : (l.total ? Math.round(l.done / l.total * 100) : 0);
       const done = l.status === "complete";
       const when = l.updatedAt || l.createdAt;
-      const whenTxt = when ? new Date(when).toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + new Date(when).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "";
+      const whenTxt = when ? Tz.date(when, { month: "short", day: "numeric" }) + " " + Tz.time(when) : "";
       return `<div class="h-row clickable" data-sid="${attr(l.id)}">
         <span class="htag ${l.type === "user" ? "user" : "computer"}">${l.type === "user" ? "User" : "Computer"}</span>
         <span class="who">${esc(l.subject || "(unnamed)")}</span>
@@ -1946,7 +1773,7 @@ const Dashboard = {
     }).join("") || `<div class="empty" style="padding:14px">No in-stock devices for ${f}.</div>`;
     const rc = inv.reserved_count || 0;
     const reservedNote = rc ? `<p class="sub-note reserved-note" id="deptReservedNote" style="margin:6px 0 0">🔒 ${rc} reserved for an active setup — held out of these counts. <a href="#" onclick="Dashboard.drillReserved();return false;">View</a></p>` : "";
-    return `<div class="chart-card" id="deptCard"><h4>In Stock By Department <button class="card-link" onclick="Depts.open()">Configure ›</button></h4>
+    return `<div class="chart-card" id="deptCard"><h4>In Stock By Department <button class="card-link" onclick="Settings.open('models')">Configure ›</button></h4>
       ${legend}
       <div class="bars">${rows}</div>
       <p class="sub-note" style="margin:14px 0 0">Deployable pool by department${f !== "all" ? ` · ${f} only` : ", split by site"}. Click a site to filter.</p>${reservedNote}</div>`;
@@ -3378,7 +3205,7 @@ const Depts = {
   TABS: [{ id: "models", label: "Model departments" }, { id: "sites", label: "NBT Sites" }, { id: "perms", label: "Group baselines" }, { id: "storage", label: "Storage" }],
   activeTab: "models",
   _sel: new Set(),
-  _unlocked: false,   // PIN gate, per app session
+  _page: false,       // true while rendering inside the Settings page
 
   async load() {
     try {
@@ -3409,9 +3236,16 @@ const Depts = {
     if (!this.loaded) await this.load();
     await Sites.load();
     await this._pbLoad();
-    this._reqTab = tab || "models";
-    if (!Depts._unlocked) { this._renderPin(); return; }
-    this._enter(this._reqTab);
+    this._enter(tab || "models");          // no PIN any more: access will be gated by role later
+  },
+
+  /* Settings page: render the tab into #setPane instead of a modal */
+  async openPage(tab) {
+    this._page = true;
+    if (!this.loaded) await this.load();
+    await Sites.load();
+    await this._pbLoad();
+    this._enter(tab || "models");
   },
 
   async _pbLoad() {
@@ -3438,28 +3272,6 @@ const Depts = {
 
   tab(name) { this.activeTab = name; this._sel = new Set(); this._search = ""; this._filterDept = ""; this._render(); },
 
-  // ---- PIN gate --------------------------------------------------------
-  _renderPin() {
-    document.getElementById("modalRoot").innerHTML =
-      `<div class="overlay"><div class="modal" style="width:380px;max-width:94vw;">
-        <div class="modal-head"><h3>Configuration locked</h3><button onclick="Depts.close()">&times;</button></div>
-        <div class="modal-body">
-          <p class="sub-note" style="margin:0 0 12px">Enter the configuration PIN to make changes.</p>
-          <input id="cfgPin" type="password" inputmode="numeric" autocomplete="off" class="dept-search" placeholder="PIN"
-            style="width:100%" onkeydown="if(event.key==='Enter'){event.preventDefault();Depts._checkPin();}">
-          <p id="cfgPinErr" class="site-hint" style="color:var(--red);display:none;margin-top:8px">Incorrect PIN.</p>
-        </div>
-        <div class="modal-foot"><button class="ghost" onclick="Depts.close()">Cancel</button><button class="primary" onclick="Depts._checkPin()">Unlock</button></div>
-      </div></div>`;
-    setTimeout(() => { const p = document.getElementById("cfgPin"); if (p) p.focus(); }, 40);
-  },
-
-  _checkPin() {
-    const v = (document.getElementById("cfgPin").value || "").trim();
-    if (v === String(Sites.pin || "1700")) { Depts._unlocked = true; this._enter(this._reqTab || "models"); }
-    else { const e = document.getElementById("cfgPinErr"); if (e) e.style.display = ""; }
-  },
-
   _render() {
     const tabBar = this.TABS.map(t =>
       `<button class="ctab${t.id === this.activeTab ? " active" : ""}" onclick="Depts.tab('${t.id}')">${esc(t.label)}</button>`).join("");
@@ -3468,13 +3280,21 @@ const Depts = {
     else if (this.activeTab === "sites") { body = this._sitesBody(); foot = this._sitesFoot(); }
     else if (this.activeTab === "perms") { body = this._permsBody(); foot = this._permsFoot(); }
     else if (this.activeTab === "storage") { body = this._storageBody(); foot = ""; }
-    document.getElementById("modalRoot").innerHTML =
-      `<div class="overlay"><div class="modal" style="width:820px;max-width:94vw;">
-        <div class="modal-head"><h3>Configuration</h3><button onclick="Depts.close()">&times;</button></div>
-        <div class="config-tabs">${tabBar}</div>
-        <div class="modal-body" style="max-height:68vh;overflow:auto;">${body}</div>
-        ${foot}
-      </div></div>`;
+    if (this._page) {
+      const pane = document.getElementById("setPane");
+      if (!pane || pane.dataset.owner !== "depts") return;        // the user moved to another settings tab
+      const t = this.TABS.find(x => x.id === this.activeTab);
+      pane.innerHTML = `<div class="set-card"><div class="set-card-head"><h3>${esc(t ? t.label : "")}</h3></div>
+        <div class="set-card-body">${body}</div>${foot}</div>`;
+    } else {
+      document.getElementById("modalRoot").innerHTML =
+        `<div class="overlay"><div class="modal" style="width:820px;max-width:94vw;">
+          <div class="modal-head"><h3>Configuration</h3><button onclick="Depts.close()">&times;</button></div>
+          <div class="config-tabs">${tabBar}</div>
+          <div class="modal-body" style="max-height:68vh;overflow:auto;">${body}</div>
+          ${foot}
+        </div></div>`;
+    }
     if (this.activeTab === "models") { this._renderChips(); this._updateSelCount(); }
     else if (this.activeTab === "sites") { this._renderCatChips(); }
     else if (this.activeTab === "storage") { this._loadStorage(); }
@@ -3863,9 +3683,7 @@ const Depts = {
           <th>Name</th><th>URL</th><th>Category</th><th>Opens as</th><th></th></tr></thead>
         <tbody id="siteRows">${rows}</tbody></table>
       <button class="ghost" style="margin-top:12px" onclick="Depts.addSite()">+ Add site</button>
-      <div class="cfg-pin-row"><label>Configuration PIN</label>
-        <input id="cfgPinSet" class="cfg-in" value="${attr(this._sPin || "")}" inputmode="numeric" oninput="Depts._sPinEdit(this)">
-        <span class="site-hint">Required to open Configuration.</span></div>`;
+      `;
   },
 
   _sitesFoot() {
@@ -3929,7 +3747,10 @@ const Depts = {
     }
   },
 
-  close() { document.getElementById("modalRoot").innerHTML = ""; },
+  close() {
+    if (this._page) { this._enter(this.activeTab); return; }       // page: Cancel/Done = reload the tab's saved state
+    document.getElementById("modalRoot").innerHTML = "";
+  },
 };
 
 /* ---- Endpoint Hub (setup runbooks) --------------------------------------- */
@@ -4297,7 +4118,7 @@ const Hub = {
       ${s.dept ? `<div><b>Department:</b> ${esc(s.dept)}</div>` : ""}
       <div><b>Technician:</b> ${esc(s.tech || "—")}</div>
       ${s.serviceTag ? `<div><b>Service tag / Asset #:</b> ${esc(s.serviceTag)}</div>` : ""}
-      <div><b>Date:</b> ${d.toLocaleString()}</div><div><b>Status:</b> ${statusTxt}</div>
+      <div><b>Date:</b> ${Tz.dt(d)}</div><div><b>Status:</b> ${statusTxt}</div>
       <div><b>Completion:</b> ${done} of ${total} (${pct}%)</div>
       ${s.setupNotes ? `<div><b>Notes:</b> ${esc(s.setupNotes)}</div>` : ""}</div>
       <table>${rows}</table><div class="ft">Generated by NBG Hub</div></body></html>`;
@@ -4313,7 +4134,7 @@ const Hub = {
       host.innerHTML = "";
       this._setups.slice(0, 20).forEach(l => {
         const when = l.updatedAt || l.createdAt;
-        const whenTxt = when ? new Date(when).toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + new Date(when).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "";
+        const whenTxt = when ? Tz.date(when, { month: "short", day: "numeric" }) + " " + Tz.time(when) : "";
         const pct = typeof l.pct === "number" ? l.pct : (l.total ? Math.round(l.done / l.total * 100) : 0);
         const done = l.status === "complete";
         const row = document.createElement("div"); row.className = "h-row";
@@ -4338,7 +4159,7 @@ const Hub = {
       if (!changes.length) { chost.innerHTML = `<div class="empty">No checklist changes recorded yet.</div>`; return; }
       chost.innerHTML = "";
       changes.slice(0, 8).forEach(c => {
-        const when = c.when ? new Date(c.when).toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + new Date(c.when).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "";
+        const when = c.when ? Tz.date(c.when, { month: "short", day: "numeric" }) + " " + Tz.time(c.when) : "";
         const row = document.createElement("div"); row.className = "change-row";
         row.innerHTML = `<span class="act">${esc(c.action || "change")}</span>
           <span>${esc(c.target || "")}${c.detail ? " — " + esc(c.detail) : ""}</span>
@@ -4368,7 +4189,7 @@ const Hub = {
       if (!items.length) { host.innerHTML = `<div class="empty">Nothing reported yet.</div>`; return; }
       host.innerHTML = "";
       items.slice(0, 50).forEach(f => {
-        const when = f.at ? new Date(f.at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
+        const when = f.at ? Tz.date(f.at, { month: "short", day: "numeric", year: "numeric" }) : "";
         const row = document.createElement("div"); row.className = "fb-row";
         row.innerHTML = `<span class="ft ${f.type === "bug" ? "bug" : "feature"}">${f.type === "bug" ? "Bug" : "Feature"}</span>
           <div class="fbody"><div class="fbtitle">${esc(f.title || "")}</div>
@@ -4617,8 +4438,9 @@ Object.assign(Mock, {
                     { kind: "user", id: "u2", name: "Joshua Udy", upn: "joshua.udy@nucor.com", detail: "NBG - Terrell" },
                     { kind: "user", id: "u3", name: "Blake Stevenson", upn: "blake.stevenson@nucor.com", detail: "Nucor Business Technology" }];
     const groups = [{ kind: "group", id: "g1", name: "NBG Hub Users", detail: "App users" }, { kind: "group", id: "g2", name: "NBGTX IT", detail: "Terrell IT" }];
+    const cos = [{ kind: "company", id: "NBG - Terrell", name: "NBG - Terrell", detail: "12+ people" }, { kind: "company", id: "Nucor Buildings Group West", name: "Nucor Buildings Group West", detail: "80+ people" }, { kind: "company", id: "Nucor Business Technology", name: "Nucor Business Technology", detail: "30+ people" }];
     const t = (q || "").toLowerCase();
-    return { ok: true, results: (kind === "group" ? groups : people).filter(x => (x.name + (x.upn || "")).toLowerCase().includes(t)) };
+    return { ok: true, results: (kind === "group" ? groups : kind === "company" ? cos : people).filter(x => (x.name + (x.upn || "")).toLowerCase().includes(t)) };
   },
   async get_super_admins() { return { ok: true, super_admin: true, admins: [...this._sa], bootstrap: ["demo@nucor.com"], me: "demo@nucor.com" }; },
   async save_super_admins(list) {
@@ -4640,15 +4462,60 @@ Object.assign(Mock, {
     if (i >= 0) this._dv[i] = d; else this._dv.push(d);
     return { ok: true };
   },
-  /* master settings - mirrors Api.get_master_settings / set_master_setting */
-  _ms: [{ key: "lenovo_client_id", secret: true, is_set: true, value: "", description: "Lenovo warranty API key" },
-        { key: "super_admins", secret: false, is_set: true, value: "demo@nucor.com", description: "Comma-separated emails" }],
-  async get_master_settings() { return { ok: true, super_admin: true, settings: this._ms }; },
-  async set_master_setting(key, value, secret, description) {
-    const x = this._ms.find(r => r.key === key);
-    if (x) { x.is_set = !!value; x.value = secret ? "" : value; }
-    else this._ms.push({ key, secret: !!secret, is_set: !!value, value: secret ? "" : value, description: description || "" });
+  /* master settings - mirrors Api.get_master_settings / set_master_setting (catalog = settings_catalog.py) */
+  _tzs: [["America/New_York", "Eastern (US & Canada)"], ["America/Chicago", "Central (US & Canada)"], ["America/Denver", "Mountain (US & Canada)"],
+         ["America/Phoenix", "Arizona (no daylight saving)"], ["America/Los_Angeles", "Pacific (US & Canada)"], ["America/Anchorage", "Alaska"],
+         ["Pacific/Honolulu", "Hawaii"], ["America/Halifax", "Atlantic (Canada)"], ["America/Mexico_City", "Central Mexico"], ["UTC", "UTC"]],
+  _cat: [
+    { key: "lenovo_client_id", group: "Vendor APIs", label: "Lenovo warranty API client ID", kind: "secret", secret: true, status: "active", help: "Lets the app look up Lenovo warranty dates and specs by serial number. Stored hidden; it is never shown again after you save it." },
+    { key: "dell_client_id", group: "Vendor APIs", label: "Dell TechDirect client ID", kind: "secret", secret: true, status: "planned", help: "For Dell warranty and spec lookups. Stored now so it is ready; the lookup itself is not wired up yet." },
+    { key: "dell_client_secret", group: "Vendor APIs", label: "Dell TechDirect client secret", kind: "secret", secret: true, status: "planned", help: "Pairs with the Dell client ID." },
+    { key: "hp_client_id", group: "Vendor APIs", label: "HP warranty API client ID", kind: "secret", secret: true, status: "planned", help: "For HP warranty lookups. Stored now so it is ready; the lookup itself is not wired up yet." },
+    { key: "hp_client_secret", group: "Vendor APIs", label: "HP warranty API client secret", kind: "secret", secret: true, status: "planned", help: "Pairs with the HP client ID." },
+    { key: "default_timezone", group: "Regional", label: "Default time zone", kind: "choice", secret: false, status: "active", help: "Used by every division that has not picked its own time zone. Blank = each PC's own time zone." },
+    { key: "intune_enrich_per_sync", group: "Sync", label: "Vendor lookups per sync run", kind: "number", secret: false, min: 0, max: 500, default: 75, status: "active", help: "How many devices get a Lenovo/Dell/HP spec lookup in one sync. Lower = gentler on vendor APIs, slower to fill in." },
+    { key: "stale_checkin_days", group: "Sync", label: "Flag devices not seen for (days)", kind: "number", secret: false, min: 1, max: 365, default: 30, status: "active", help: "Intune devices with no check-in for longer than this are flagged stale." }],
+  _ms: { lenovo_client_id: "SECRET", super_admins: "demo@nucor.com", legacy_thing: "old value" },
+  async get_master_settings() {
+    const cat = this._cat.map(c => ({ ...c, options: c.kind === "choice" ? this._tzs.map(([id, label]) => ({ id, label })) : undefined,
+      is_set: !!this._ms[c.key], value: c.secret ? "" : (this._ms[c.key] || "") }));
+    const known = new Set(this._cat.map(c => c.key));
+    const other = Object.keys(this._ms).filter(k => !known.has(k) && k !== "super_admins").map(k => ({ key: k, secret: false, is_set: true, value: this._ms[k], description: "" }));
+    return { ok: true, super_admin: true, settings: [], catalog: cat, other };
+  },
+  async set_master_setting(key, value, secret) {
+    const c = this._cat.find(x => x.key === key);
+    if (c && c.kind === "number" && value !== "") {
+      const n = Number(value);
+      if (!Number.isInteger(n) || n < c.min || n > c.max) return { ok: false, error: `${c.label} must be between ${c.min} and ${c.max}.` };
+    }
+    this._ms[key] = value;
     return { ok: true };
+  },
+  /* division preferences + tenant settings - mirrors Api.get_division_prefs / save_division_prefs / get_own_division / save_own_division */
+  _prefs: { timezone: "" },
+  async get_division_prefs() {
+    const d = this._ms.default_timezone || "";
+    return { ok: true, timezone: this._prefs.timezone, default: d, effective: this._prefs.timezone || d, zones: this._tzs.map(([id, label]) => ({ id, label })) };
+  },
+  async save_division_prefs(tz) { this._prefs.timezone = tz || ""; return { ok: true, timezone: tz || "" }; },
+  async get_own_division() {
+    const d = this._dv.find(x => x.id === this._divCur) || this._dv[0];
+    return { ok: true, id: d.id, name: d.name, company_name: d.company_name, intune_category: d.intune_category, super_admin: true, can_edit: true,
+      sites: JSON.parse(JSON.stringify(d.sites || [])), ad_domain: d.ad_domain || "", sql_server: d.sql_server || "",
+      timesheet_db: d.timesheet_db || "", timesheet_table: d.timesheet_table || "", employee_db: d.employee_db || "", employee_table: d.employee_table || "" };
+  },
+  async save_own_division(data) {
+    const d = this._dv.find(x => x.id === this._divCur) || this._dv[0];
+    for (const c of (data.sites || [])) if (!/^[A-Za-z0-9]{2,6}$/.test(c.code || "")) return { ok: false, error: `Site code '${c.code || ""}': 2-6 letters or digits.` };
+    for (const k of ["sites", "ad_domain", "sql_server", "timesheet_db", "timesheet_table", "employee_db", "employee_table"]) if (k in data) d[k] = data[k];
+    return { ok: true };
+  },
+  async intune_categories() { return { ok: true, categories: ["NBGTX", "NBGW", "Shared Devices"] }; },
+  async sql_discover(server, db) {
+    await new Promise(r => setTimeout(r, 250));
+    if (!server) return { ok: false, error: "Server name has unexpected characters." };
+    return { ok: true, items: db ? ["dbo.WeekLocked", "dbo.SAP_Interface", "dbo.Employees"] : ["NBSTimesheet", "NBSEmployeeInfo"] };
   },
   /* data mode - mirrors Api.get_data_mode / pull_prod_snapshot / set_data_mode */
   _dm: { mode: "live", snap: "" },

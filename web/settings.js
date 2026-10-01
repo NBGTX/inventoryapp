@@ -1,0 +1,435 @@
+/* ---- Settings page --------------------------------------------------------
+   One page, left rail of sections, no pop-ups.
+     THIS DIVISION (tenant)  General + time zone | Sites | Directory & SQL | Model departments | NBT Sites | Group baselines | Storage
+     PLATFORM (super admin)  Divisions | Super admins | Integrations & options
+   The tenant sections edit the ACTIVE division only. Role gating comes later; today every app user of the
+   division can open the tenant sections and only super admins see the platform ones.
+   Model departments / NBT Sites / Group baselines / Storage are rendered by Depts (page mode, see app.js).
+   Loaded after app.js: it reuses esc(), attr(), Backend, App.toast, DirPicker, Divisions, Tz, Depts. */
+
+/* ---- small shared widgets ------------------------------------------------- */
+const SetUI = {
+  card(title, sub, body, foot) {
+    return `<div class="set-card"><div class="set-card-head"><h3>${esc(title)}</h3>${sub ? `<p>${sub}</p>` : ""}</div>
+      <div class="set-card-body">${body}</div>${foot ? `<div class="modal-foot">${foot}</div>` : ""}</div>`;
+  },
+  /* <select> that always contains the current value, even when it is not in the option list */
+  select(id, opts, val, onchange, placeholder, disabled) {
+    const list = opts.slice();
+    if (val && !list.some(o => o.id === val)) list.unshift({ id: val, label: val });
+    return `<select id="${id}" ${disabled ? "disabled" : ""} ${onchange ? `onchange="${onchange}"` : ""}>` +
+      (placeholder !== undefined ? `<option value="">${esc(placeholder)}</option>` : "") +
+      list.map(o => `<option value="${attr(o.id)}"${o.id === val ? " selected" : ""}>${esc(o.label)}</option>`).join("") + `</select>`;
+  },
+  pill(kind, text) { return `<span class="set-pill ${kind}">${esc(text)}</span>`; },
+};
+
+/* chip list with an add box (Enter / comma / leaving the box adds) */
+const ChipInput = {
+  _s: {},
+  mount(hostId, values, onChange, placeholder) {
+    const host = document.getElementById(hostId);
+    if (!host) return;
+    this._s[hostId] = { values, onChange };
+    const draw = () => {
+      host.innerHTML = `<div class="ci"><span class="ci-chips">${values.map((v, i) =>
+        `<span class="dp-chip">${esc(v)} <button type="button" data-i="${i}" title="Remove">&times;</button></span>`).join("")}</span>
+        <input class="ci-in" placeholder="${attr(placeholder || "type and press Enter")}"></div>`;
+      host.querySelectorAll("button[data-i]").forEach(b => b.onclick = () => { values.splice(+b.dataset.i, 1); onChange(values); draw(); });
+      const inp = host.querySelector(".ci-in");
+      const add = () => {
+        inp.value.split(",").map(x => x.trim()).filter(Boolean).forEach(x => { if (!values.includes(x)) values.push(x); });
+        if (inp.value.trim()) { inp.value = ""; onChange(values); draw(); host.querySelector(".ci-in").focus(); }
+      };
+      inp.onkeydown = e => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); add(); } };
+      inp.onblur = add;
+    };
+    draw();
+  },
+};
+
+/* ---- site editor (shared by the tenant tab and the platform division editor) ---------------- */
+const SitesEditor = {
+  m: null, host: "", onDirty: () => {},
+  render(hostId, m, onDirty) {
+    this.m = m; this.host = hostId; this.onDirty = onDirty || (() => {});
+    const host = document.getElementById(hostId);
+    if (!host) return;
+    if (!m.sites) m.sites = [];
+    host.innerHTML = (m.sites.map((s, k) => `<div class="set-site">
+        <div class="set-site-top">
+          <div class="field"><label>Code</label><input value="${attr(s.code)}" maxlength="6" placeholder="TER" style="text-transform:uppercase" oninput="SitesEditor.set(${k},'code',this.value.toUpperCase())"></div>
+          <div class="field" style="flex:1"><label>Name</label><input value="${attr(s.name)}" placeholder="Terrell, TX" oninput="SitesEditor.set(${k},'name',this.value)"></div>
+          <button class="ghost" type="button" title="Remove this site" onclick="SitesEditor.del(${k})">Remove</button>
+        </div>
+        <div class="set-site-grid">
+          <div class="field"><label>User city starts with <span class="muted">(Entra city &rarr; this site)</span></label><div id="${hostId}-c${k}"></div></div>
+          <div class="field"><label>Device name starts with <span class="muted">(e.g. BGTER)</span></label><div id="${hostId}-d${k}"></div></div>
+        </div></div>`).join("") || `<div class="empty" style="padding:16px">No sites yet.</div>`) +
+      `<button class="ghost" type="button" style="margin-top:10px" onclick="SitesEditor.add()">+ Add site</button>`;
+    m.sites.forEach((s, k) => {
+      s.city_prefixes = s.city_prefixes || []; s.device_prefixes = s.device_prefixes || [];
+      ChipInput.mount(`${hostId}-c${k}`, s.city_prefixes, () => this.onDirty(), "city, Enter");
+      ChipInput.mount(`${hostId}-d${k}`, s.device_prefixes, () => this.onDirty(), "prefix, Enter");
+    });
+  },
+  set(k, f, v) { this.m.sites[k][f] = v; this.onDirty(); },
+  add() { this.m.sites.push({ code: "", name: "", city_prefixes: [], device_prefixes: [] }); this.onDirty(); this.render(this.host, this.m, this.onDirty); },
+  del(k) { this.m.sites.splice(k, 1); this.onDirty(); this.render(this.host, this.m, this.onDirty); },
+};
+
+/* ---- directory + SQL editor (shared) -------------------------------------------------------- */
+const SqlEditor = {
+  m: null, host: "", onDirty: () => {}, dbs: null, tables: {}, manual: false, busy: false, err: "",
+  render(hostId, m, onDirty) {
+    if (this.m !== m) { this.dbs = null; this.tables = {}; this.manual = false; this.err = ""; }
+    this.m = m; this.host = hostId; this.onDirty = onDirty || (() => {});
+    const host = document.getElementById(hostId);
+    if (!host) return;
+    const pick = (field, label, list, ph) => {
+      const v = m[field] || "";
+      return `<div class="field"><label>${label}</label>` + (this.manual
+        ? `<input value="${attr(v)}" oninput="SqlEditor.set('${field}',this.value)">`
+        : SetUI.select("sqe-" + field, (list || []).map(x => ({ id: x, label: x })), v, `SqlEditor.set('${field}',this.value)`, ph)) + `</div>`;
+    };
+    const dbOpts = this.dbs || [];
+    host.innerHTML = `
+      <div class="field"><label>SQL Server <span class="muted">(host or host\\instance)</span></label>
+        <div style="display:flex;gap:8px"><input id="sqe-server" value="${attr(m.sql_server || "")}" oninput="SqlEditor.set('sql_server',this.value)" placeholder="BGBRISQL07">
+          <button class="ghost" type="button" onclick="SqlEditor.load()" ${this.busy ? "disabled" : ""}>${this.busy ? "Loading…" : "Load databases"}</button></div>
+        ${this.err ? `<p class="set-err">${esc(this.err)}</p>` : ""}
+        <p class="muted" style="margin:6px 0 0;font-size:12px">Loads the list from the server (read-only) so you pick names instead of typing them.
+          <a href="#" onclick="SqlEditor.toggleManual();return false">${this.manual ? "Use the pick lists" : "Type names by hand"}</a></p></div>
+      <div class="set-grid2">
+        ${pick("timesheet_db", "Timesheet database", dbOpts, this.dbs ? "Choose…" : "Load databases first")}
+        ${pick("timesheet_table", "Week-lock table", this.tables[m.timesheet_db] || [], this.tables[m.timesheet_db] ? "Choose…" : "Pick a database first")}
+        ${pick("employee_db", "Employee database", dbOpts, this.dbs ? "Choose…" : "Load databases first")}
+        ${pick("employee_table", "Employee table", this.tables[m.employee_db] || [], this.tables[m.employee_db] ? "Choose…" : "Pick a database first")}
+      </div>
+      <p class="muted" style="margin:10px 0 0;font-size:12px">Leave all four blank if this division has no timesheet tool. <a href="#" onclick="SqlEditor.clear();return false">Clear all four</a></p>
+      <div class="field"><label>Active Directory domain <span class="muted">(optional, e.g. bg.nucorsteel.local)</span></label>
+        <input value="${attr(m.ad_domain || "")}" oninput="SqlEditor.set('ad_domain',this.value)"></div>`;
+  },
+  set(f, v) {
+    this.m[f] = v.trim(); this.onDirty();
+    if (f === "timesheet_db" || f === "employee_db") { this.m[f === "timesheet_db" ? "timesheet_table" : "employee_table"] = ""; this.loadTables(v); }
+  },
+  toggleManual() { this.manual = !this.manual; this.render(this.host, this.m, this.onDirty); },
+  clear() { ["timesheet_db", "timesheet_table", "employee_db", "employee_table"].forEach(k => this.m[k] = ""); this.onDirty(); this.render(this.host, this.m, this.onDirty); },
+  async load() {
+    const srv = (document.getElementById("sqe-server").value || "").trim();
+    if (!srv) { this.err = "Enter the SQL server first."; return this.render(this.host, this.m, this.onDirty); }
+    this.busy = true; this.err = ""; this.render(this.host, this.m, this.onDirty);
+    const r = await Backend.call("sql_discover", srv, "");
+    this.busy = false;
+    if (!r || !r.ok) this.err = (r && r.error) || "Could not read the server.";
+    else if (!r.items.length) this.err = "No databases visible to your account on that server.";
+    else { this.dbs = r.items; await Promise.all([this.m.timesheet_db, this.m.employee_db].filter(Boolean).map(d => this.loadTables(d, true))); }
+    this.render(this.host, this.m, this.onDirty);
+  },
+  async loadTables(db, quiet) {
+    if (!db || this.tables[db] || !this.m.sql_server) return;
+    const r = await Backend.call("sql_discover", this.m.sql_server, db);
+    if (r && r.ok) this.tables[db] = r.items;
+    else if (!quiet) this.err = (r && r.error) || "Could not read the tables.";
+    if (!quiet) this.render(this.host, this.m, this.onDirty);
+  },
+};
+
+/* ---- the page ------------------------------------------------------------------------------- */
+const Settings = {
+  su: false, tab: "general", dirty: false, own: null, prefs: null,
+  async refreshAccess() {
+    const r = await Backend.call("get_master_settings");
+    this.su = !!(r && r.ok && r.super_admin);
+  },
+  open(tab) { if (tab) this.tab = tab; Nav.go("settings"); },
+  groups() {
+    return [
+      { title: Divisions.label(), items: [["general", "General"], ["sites", "Sites"], ["sql", "Directory & SQL"],
+        ["models", "Model departments"], ["links", "NBT Sites"], ["perms", "Group baselines"], ["storage", "Storage"]] },
+      ...(this.su ? [{ title: "Platform (super admin)", items: [["divisions", "Divisions"], ["admins", "Super admins"], ["integrations", "Integrations & options"]] }] : []),
+    ];
+  },
+  async load() {
+    await this.refreshAccess();
+    const valid = this.groups().some(g => g.items.some(i => i[0] === this.tab));
+    if (!valid) this.tab = "general";
+    document.querySelectorAll(".side-config[data-view]").forEach(b => b.classList.toggle("active", b.dataset.view === "settings"));
+    document.getElementById("setSub").textContent = "Settings for " + Divisions.label() + (this.su ? " and the whole platform." : ".");
+    this.dirty = false;
+    this.rail();
+    await this.show(this.tab, true);
+  },
+  rail() {
+    document.getElementById("setRail").innerHTML = this.groups().map(g =>
+      `<div class="set-rail-title">${esc(g.title)}</div>` + g.items.map(([id, label]) =>
+        `<button class="set-rail-item${id === this.tab ? " active" : ""}" onclick="Settings.go('${id}')">${esc(label)}</button>`).join("")).join("");
+  },
+  async go(tab) {
+    if (tab === this.tab && !this.dirty) return;
+    if (this.dirty && !confirm("You have unsaved changes on this page. Leave without saving?")) return;
+    this.tab = tab; this.dirty = false; this.rail();
+    await this.show(tab);
+  },
+  markDirty() { this.dirty = true; const b = document.getElementById("setSave"); if (b) b.disabled = false; },
+  pane(owner, html) {
+    const p = document.getElementById("setPane");
+    p.dataset.owner = owner;
+    if (html !== undefined) p.innerHTML = html;
+    return p;
+  },
+  async show(tab, force) {
+    Depts._page = false;
+    this.pane("settings", `<div class="empty">Loading…</div>`);
+    const dep = { models: "models", links: "sites", perms: "perms", storage: "storage" }[tab];
+    if (dep) { this.pane("depts"); Depts._page = true; await Depts.openPage(dep); return; }
+    const fn = { general: "general", sites: "sitesTab", sql: "sqlTab", divisions: "divisions", admins: "admins", integrations: "integrations" }[tab];
+    try { await this[fn](); } catch (e) { this.pane("settings", `<div class="empty">Could not open this section: ${esc(String(e && e.message || e))}</div>`); }
+  },
+
+  /* ---- General: facts + time zone ---- */
+  async general() {
+    const [o, p] = await Promise.all([Backend.call("get_own_division"), Backend.call("get_division_prefs")]);
+    if (!o || !o.ok) return this.pane("settings", `<div class="empty">${esc((o && o.error) || "Could not read this division.")}</div>`);
+    this.own = o; this.prefs = (p && p.ok) ? p : { timezone: "", default: "", effective: "", zones: [] };
+    const zl = this.prefs.zones, zlabel = id => (zl.find(z => z.id === id) || {}).label || id;
+    const def = this.prefs.default ? zlabel(this.prefs.default) : "this PC's own time zone";
+    const sites = (o.sites || []).map(s => `<span class="dp-chip">${esc(s.code)} <i>${esc(s.name || "")}</i></span>`).join("") || `<span class="muted">none yet</span>`;
+    const fact = (k, v) => `<div class="set-fact"><span>${k}</span><b>${v || "<i class='muted'>not set</i>"}</b></div>`;
+    this.pane("settings",
+      SetUI.card("About this division", this.su ? "Identity is changed under <b>Platform &rarr; Divisions</b>." : "Identity (name, Entra company, Intune category) is managed by a super admin.",
+        `<div class="set-facts">${fact("Name", esc(o.name))}${fact("Id", esc(o.id))}${fact("Entra company", esc(o.company_name))}${fact("Intune category", esc(o.intune_category))}</div>
+         <div style="margin-top:12px"><span class="muted" style="font-size:12px">Sites</span><div class="dp-chips" style="margin-top:6px">${sites}</div></div>`) +
+      SetUI.card("Time zone", "Every date and time in the app for this division is shown in this zone.",
+        `<div class="field" style="max-width:420px"><label>Time zone for ${esc(Divisions.label())}</label>
+           ${SetUI.select("tzSel", zl.map(z => ({ id: z.id, label: z.label })), this.prefs.timezone, "Settings.tzPreview()", "Use the default (" + def + ")")}</div>
+         <p id="tzPrev" class="muted" style="margin:10px 0 0"></p>`,
+        `<button class="primary" id="setSave" onclick="Settings.saveTz()" disabled>Save time zone</button>`));
+    document.getElementById("tzSel").addEventListener("change", () => this.markDirty());
+    this.tzPreview();
+  },
+  tzPreview() {
+    const v = document.getElementById("tzSel").value || this.prefs.default || "";
+    const el = document.getElementById("tzPrev");
+    if (!el) return;
+    let t = "";
+    try { t = new Date().toLocaleString(undefined, v ? { timeZone: v, dateStyle: "medium", timeStyle: "short" } : { dateStyle: "medium", timeStyle: "short" }); } catch (e) { t = ""; }
+    el.textContent = "Right now that is: " + t;
+  },
+  async saveTz() {
+    const r = await Backend.call("save_division_prefs", document.getElementById("tzSel").value);
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+    this.dirty = false;
+    await Tz.load();
+    App.toast("Time zone saved.");
+    this.general();
+  },
+
+  /* ---- tenant: sites ---- */
+  async ownLoad() {
+    const o = await Backend.call("get_own_division");
+    if (!o || !o.ok) { this.pane("settings", `<div class="empty">${esc((o && o.error) || "Could not read this division.")}</div>`); return null; }
+    this.own = JSON.parse(JSON.stringify(o));
+    return this.own;
+  },
+  async sitesTab() {
+    const o = await this.ownLoad(); if (!o) return;
+    this.pane("settings", SetUI.card("Sites", "Each site has a short code. The prefixes tell the app which site a user (by Entra city) or a device (by name) belongs to.",
+      `${o.can_edit ? "" : `<div class="cfg-warn">Read-only here (Local data mode or no central site).</div>`}<div id="seSites"></div>
+       <p class="muted" style="margin-top:12px;font-size:12px">Changing a code regroups devices on the dashboard and lists; existing records keep their old code until a sync updates them.</p>`,
+      `<button class="ghost" onclick="Settings.show('sites')">Discard changes</button><button class="primary" id="setSave" onclick="Settings.saveOwn(['sites'])" disabled>Save sites</button>`));
+    SitesEditor.render("seSites", o, () => this.markDirty());
+  },
+  async sqlTab() {
+    const o = await this.ownLoad(); if (!o) return;
+    this.pane("settings", SetUI.card("Directory & SQL", "Where this division's timesheet and employee data live. Used by BG Tools &rarr; Timesheet and the AD lookups.",
+      `${o.can_edit ? "" : `<div class="cfg-warn">Read-only here (Local data mode or no central site).</div>`}<div id="seSql"></div>`,
+      `<button class="ghost" onclick="Settings.show('sql')">Discard changes</button><button class="primary" id="setSave" onclick="Settings.saveOwn(['ad_domain','sql_server','timesheet_db','timesheet_table','employee_db','employee_table'])" disabled>Save</button>`));
+    SqlEditor.render("seSql", o, () => this.markDirty());
+  },
+  async saveOwn(keys) {
+    const o = this.own, data = {};
+    keys.forEach(k => data[k] = o[k]);
+    if (data.sites) data.sites = data.sites.filter(s => s.code);
+    const r = await Backend.call("save_own_division", data);
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+    this.dirty = false;
+    await Divisions.load();
+    App.toast("Saved.");
+    this.show(this.tab);
+  },
+
+  /* ---- platform: super admins ---- */
+  sa: { admins: [], bootstrap: [], me: "" },
+  async admins() {
+    const r = await Backend.call("get_super_admins");
+    if (!r || !r.ok || r.super_admin === false) return this.pane("settings", `<div class="empty">Super admins only.</div>`);
+    this.sa = { admins: r.admins || [], bootstrap: r.bootstrap || [], me: r.me || "" };
+    this.pane("settings", SetUI.card("Super admins", "Super admins manage divisions, who can see them, and the platform settings. Use the account people actually sign in with (for example <b>adm.name.azure@nucor.onmicrosoft.com</b>).",
+      `<div id="saChips" class="dp-chips"></div><div id="saPicker" style="margin-top:10px;max-width:520px"></div>
+       <p class="muted" style="margin:12px 0 0;font-size:12px">You cannot remove yourself. Entries marked <i>config</i> come from config.json and can only be removed there.</p>`));
+    this.saRender();
+  },
+  saRender() {
+    const st = this.sa, all = [...new Set([...st.bootstrap, ...st.admins])];
+    document.getElementById("saChips").innerHTML = all.map(a => {
+      const boot = st.bootstrap.includes(a) && !st.admins.includes(a);
+      const lock = boot || (a === st.me && !st.bootstrap.includes(a));
+      return `<span class="dp-chip" title="${attr(boot ? "Set in config.json - edit that file to remove" : "")}">${esc(a)}${a === st.me ? " <i>(you)</i>" : ""}${boot ? " <i>config</i>" : ""}${lock ? "" : ` <button onclick="Settings.saRemove(${st.admins.indexOf(a)})" title="Remove">&times;</button>`}</span>`;
+    }).join("") || "<span class='muted'>None</span>";
+    DirPicker.mount("saPicker", "user", it => this.saAdd(it.upn), "Add a super admin: type a name or sign-in…");
+  },
+  async saPersist(list, msg) {
+    const r = await Backend.call("save_super_admins", list);
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+    this.sa.admins = r.admins || list; this.saRender(); App.toast(msg);
+  },
+  saAdd(upn) {
+    upn = (upn || "").toLowerCase();
+    if (!upn || [...this.sa.admins, ...this.sa.bootstrap].includes(upn)) return App.toast("Already a super admin.");
+    this.saPersist([...this.sa.admins, upn], "Added " + upn);
+  },
+  saRemove(i) { const u = this.sa.admins[i]; if (u) this.saPersist(this.sa.admins.filter((_, k) => k !== i), "Removed " + u); },
+
+  /* ---- platform: integrations & options (master settings as forms) ---- */
+  async integrations() {
+    const r = await Backend.call("get_master_settings");
+    if (!r || !r.ok || !r.super_admin) return this.pane("settings", `<div class="empty">${esc((r && r.error) || "Super admins only.")}</div>`);
+    this.cat = r.catalog || []; this.other = r.other || [];
+    const order = []; this.cat.forEach(c => { if (!order.includes(c.group)) order.push(c.group); });
+    const blurb = { "Vendor APIs": "Credentials for warranty and spec lookups. Secrets are stored hidden and are never shown again; type a new value to replace one.",
+                    "Regional": "Platform-wide defaults.", "Sync": "How the Intune sync behaves." };
+    const row = (c, i) => {
+      const st = c.status === "planned" ? SetUI.pill("plan", "Not used yet") : (c.kind === "secret" ? (c.is_set ? SetUI.pill("ok", "Set") : SetUI.pill("warn", "Not set")) : "");
+      let ctl;
+      if (c.kind === "secret") ctl = `<input id="ig${i}" type="password" autocomplete="new-password" placeholder="${c.is_set ? "•••••• set - type to replace" : "paste the value"}">`;
+      else if (c.kind === "choice") ctl = SetUI.select("ig" + i, c.options || [], c.value, "", "(none - use each PC's own)");
+      else ctl = `<input id="ig${i}" type="number" min="${c.min}" max="${c.max}" value="${attr(c.value || "")}" placeholder="${c.default} (default)">`;
+      return `<div class="set-row"><div class="set-row-main"><b>${esc(c.label)}</b> ${st}<p>${esc(c.help)}</p></div>
+        <div class="set-row-ctl">${ctl}<button class="primary" onclick="Settings.saveCat(${i})">Save</button></div></div>`;
+    };
+    const cards = order.map(g => SetUI.card(g, blurb[g] || "", this.cat.map((c, i) => c.group === g ? row(c, i) : "").join(""))).join("");
+    const others = this.other.length ? SetUI.card("Other stored settings", "Present in the Master Settings list but not known to this screen.",
+      this.other.map((o, i) => `<div class="set-row"><div class="set-row-main"><b>${esc(o.key)}</b> ${o.secret ? SetUI.pill("warn", "secret") : ""}</div>
+        <div class="set-row-ctl"><input id="igo${i}" ${o.secret ? `type="password" placeholder="${o.is_set ? "•••••• set - type to replace" : "value"}"` : `value="${attr(o.value || "")}"`}>
+        <button class="primary" onclick="Settings.saveOther(${i})">Save</button></div></div>`).join("")) : "";
+    const custom = `<details class="set-adv"><summary>Advanced: add a setting this screen does not know yet</summary>
+      <div class="set-grid2"><div class="field"><label>Key</label><input id="igcKey" placeholder="e.g. new_vendor_key"></div>
+        <div class="field"><label>Value</label><input id="igcVal"></div></div>
+      <label class="set-check"><input type="checkbox" id="igcSec"> Secret (hide the value after saving)</label>
+      <div><button class="primary" style="margin-top:10px" onclick="Settings.saveCustom()">Add setting</button></div></details>`;
+    this.pane("settings", cards + others + custom);
+  },
+  async saveCat(i) {
+    const c = this.cat[i], el = document.getElementById("ig" + i);
+    const v = (el.value || "").trim();
+    if (c.kind === "secret" && !v) return App.toast("Type the new value first.", true);
+    const r = await Backend.call("set_master_setting", c.key, v, c.secret, c.label);
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+    App.toast("Saved " + c.label);
+    this.integrations();
+  },
+  async saveOther(i) {
+    const o = this.other[i], v = document.getElementById("igo" + i).value;
+    if (o.secret && !v) return App.toast("Type the new value first.", true);
+    const r = await Backend.call("set_master_setting", o.key, v, o.secret, o.description || "");
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+    App.toast("Saved " + o.key); this.integrations();
+  },
+  async saveCustom() {
+    const k = (document.getElementById("igcKey").value || "").trim(), v = document.getElementById("igcVal").value;
+    if (!/^[a-z][a-z0-9_]{2,40}$/.test(k)) return App.toast("Key: lowercase letters, digits and underscores (3-41 characters).", true);
+    const r = await Backend.call("set_master_setting", k, v, document.getElementById("igcSec").checked, "");
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+    App.toast("Added " + k); this.integrations();
+  },
+
+  /* ---- platform: divisions (list + editor) ---- */
+  rows: [], dv: null, dvTab: "identity", cats: null,
+  async divisions() {
+    const r = await Backend.call("get_division_admin");
+    if (!r || !r.ok || !r.super_admin) return this.pane("settings", `<div class="empty">${esc((r && r.error) || "Super admins only.")}</div>`);
+    this.rows = r.divisions; this.dv = null;
+    const cards = this.rows.map((d, i) => `<div class="set-div">
+        <div><b>${esc(d.name)}</b> <span class="muted">${esc(d.id)}</span> ${d.enabled ? "" : SetUI.pill("warn", "Hidden")}
+          <p>${esc(d.company_name)} &middot; Intune: ${esc(d.intune_category)} &middot; ${(d.sites || []).length} site(s) &middot; ${(d.access || []).length ? (d.access.includes("*") ? "everyone" : d.access.length + " allowed") : "super admins only"}</p></div>
+        <button class="ghost" onclick="Settings.dvEdit(${i})">Edit</button></div>`).join("");
+    this.pane("settings", SetUI.card("Divisions", "Each division is its own set of people, devices, sites and data. Changes reach other users within about 5 minutes (or on restart).",
+      cards || `<div class="empty">No divisions yet.</div>`, `<button class="primary" onclick="Settings.dvEdit(-1)">+ Add division</button>`));
+  },
+  async dvEdit(i) {
+    this.dv = i >= 0 ? JSON.parse(JSON.stringify(this.rows[i])) :
+      { id: "", name: "", company_name: "", intune_category: "", sharepoint_hostname: "", site_path: "", ad_domain: "", sql_server: "",
+        timesheet_db: "", timesheet_table: "", employee_db: "", employee_table: "", sites: [], access: [], enabled: true, _new: true };
+    this.dvTab = "identity"; this.dirty = false;
+    if (this.cats === null) { const r = await Backend.call("intune_categories"); this.cats = (r && r.ok && r.categories) || []; }
+    this.dvRender();
+  },
+  dvRender() {
+    const d = this.dv, T = [["identity", "Identity"], ["sites", "Sites"], ["sql", "Directory & SQL"], ["access", "Access"], ["adv", "Advanced"]];
+    const tabs = T.map(([id, l]) => `<button class="ctab${id === this.dvTab ? " active" : ""}" onclick="Settings.dvTabTo('${id}')">${l}</button>`).join("");
+    let body = "";
+    if (this.dvTab === "identity") {
+      body = `<div class="set-grid2">
+          <div class="field"><label>Display name</label><input id="dvName" value="${attr(d.name)}" oninput="Settings.dvSet('name',this.value)" placeholder="NBGTX - NBG Terrell"></div>
+          <div class="field"><label>Id ${d._new ? "<span class='muted'>(short, cannot change later)</span>" : "<span class='muted'>(fixed)</span>"}</label>
+            <input id="dvId" value="${attr(d.id)}" ${d._new ? "" : "disabled"} oninput="Settings.dvId(this.value)" placeholder="nbgtx"></div></div>
+        <div class="field"><label>Entra company <span class="muted">(people are scoped by this exact value)</span></label>
+          ${d.company_name ? `<div class="dp-chips"><span class="dp-chip">${esc(d.company_name)} <button onclick="Settings.dvSet('company_name','');Settings.dvRender()" title="Change">&times;</button></span></div>` : ""}
+          <div id="dvCo" style="max-width:520px;${d.company_name ? "display:none" : ""}"></div></div>
+        <div class="field" style="max-width:420px"><label>Intune device category <span class="muted">(devices are scoped by it)</span></label>
+          ${this.cats && this.cats.length ? SetUI.select("dvCat", this.cats.map(c => ({ id: c, label: c })), d.intune_category, "Settings.dvSet('intune_category',this.value)", "Choose…")
+            : `<input id="dvCat" value="${attr(d.intune_category)}" oninput="Settings.dvSet('intune_category',this.value)"><p class="muted" style="font-size:12px;margin:6px 0 0">Could not load the category list from Intune; type the exact name.</p>`}</div>
+        <label class="set-check"><input type="checkbox" ${d.enabled ? "checked" : ""} onchange="Settings.dvSet('enabled',this.checked)"> Visible (untick to hide this division from everyone)</label>
+        <p class="muted" style="font-size:12px">Time zone is set per division on <b>Settings &rarr; General</b> while you are in that division.</p>`;
+    } else if (this.dvTab === "sites") body = `<div id="dvSites"></div>`;
+    else if (this.dvTab === "sql") body = `<div id="dvSql"></div>`;
+    else if (this.dvTab === "access") {
+      body = `<div class="field"><label>Who can see this division</label><div id="dvAccChips" class="dp-chips"></div>
+          <div class="set-acc"><div id="dvAccUser"></div><div id="dvAccGroup"></div><button class="ghost" type="button" onclick="Settings.dvAcc('*')">+ Everyone</button></div>
+          <p class="muted" style="font-size:12px;margin-top:8px">Empty = super admins only. This controls what the app shows; people with access to the SharePoint site can still open the lists directly.</p></div>`;
+    } else body = `<p class="muted" style="margin-top:0">Only needed to import data from an older per-division SharePoint site.</p>
+        <div class="set-grid2"><div class="field"><label>Old SharePoint host</label><input value="${attr(d.sharepoint_hostname)}" oninput="Settings.dvSet('sharepoint_hostname',this.value)" placeholder="nucor.sharepoint.com"></div>
+        <div class="field"><label>Old site path</label><input value="${attr(d.site_path)}" oninput="Settings.dvSet('site_path',this.value)" placeholder="/sites/NBGW/systems"></div></div>`;
+    this.pane("settings", `<div class="set-card"><div class="set-card-head"><h3>${d._new ? "Add division" : "Edit " + esc(d.name)}</h3></div>
+      <div class="config-tabs" style="padding:0 18px">${tabs}</div><div class="set-card-body">${body}</div>
+      <div class="modal-foot"><button class="ghost" onclick="Settings.dvCancel()">Back to divisions</button><button class="primary" onclick="Settings.dvSave()">Save division</button></div></div>`);
+    if (this.dvTab === "identity" && !d.company_name) DirPicker.mount("dvCo", "company", it => { this.dvSet("company_name", it.name); this.dvRender(); }, "Search company names (type 2+ letters)…");
+    if (this.dvTab === "sites") SitesEditor.render("dvSites", d, () => this.markDirty());
+    if (this.dvTab === "sql") SqlEditor.render("dvSql", d, () => this.markDirty());
+    if (this.dvTab === "access") this.dvAccRender();
+  },
+  dvTabTo(t) { this.dvTab = t; this.dvRender(); },
+  dvSet(k, v) { this.dv[k] = typeof v === "string" ? v.trim() : v; this.markDirty(); },
+  dvId(v) { this.dv.id = v.toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 20); this.dv._idTouched = true; this.markDirty(); },
+  accLabel(a) {
+    if (/^group:/i.test(a)) return { t: "group", name: a.slice(6).split("|").slice(1).join("|") || a.slice(6).split("|")[0] };
+    return { t: "user", name: a === "*" ? "Everyone" : a };
+  },
+  dvAccRender() {
+    const acc = this.dv.access || [];
+    document.getElementById("dvAccChips").innerHTML = acc.map((a, i) => { const l = this.accLabel(a);
+      return `<span class="dp-chip ${l.t}">${l.t === "group" ? "👥 " : ""}${esc(l.name)} <button onclick="Settings.dvAccDel(${i})" title="Remove">&times;</button></span>`; }).join("")
+      || "<span class='muted'>Nobody yet: only super admins can see this division</span>";
+    DirPicker.mount("dvAccUser", "user", it => this.dvAcc(it.upn), "Add a person (name or sign-in)…");
+    DirPicker.mount("dvAccGroup", "group", it => this.dvAcc("group:" + it.id + "|" + it.name), "Add an Entra group…");
+  },
+  dvAcc(v) { const a = this.dv.access = this.dv.access || []; if (!a.includes(v)) a.push(v); this.markDirty(); this.dvAccRender(); },
+  dvAccDel(i) { this.dv.access.splice(i, 1); this.markDirty(); this.dvAccRender(); },
+  dvCancel() {
+    if (this.dirty && !confirm("Discard your changes to this division?")) return;
+    this.dirty = false; this.divisions();
+  },
+  async dvSave() {
+    const d = this.dv;
+    if (d._new && !d._idTouched && !d.id) d.id = (d.name.split(" ")[0] || "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 20);
+    const r = await Backend.call("save_division", { ...d, sites: (d.sites || []).filter(s => s.code) });
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+    this.dirty = false;
+    App.toast("Saved " + d.name);
+    await Divisions.load();
+    this.rail();
+    this.divisions();
+  },
+};

@@ -355,6 +355,16 @@ class GraphClient:
             return []
         qq = q.replace("'", "''")
         hdr = {"ConsistencyLevel": "eventual"}
+        if kind == "company":
+            cflt = "startswith(companyName,'" + qq + "')"
+            url = f"{GRAPH}/users?$filter={quote(cflt)}&$select=companyName&$top=100&$count=true"
+            seen = {}
+            for u in self._req("GET", url, headers=hdr).json().get("value", []):
+                c = (u.get("companyName") or "").strip()
+                if c:
+                    seen[c] = seen.get(c, 0) + 1
+            return [{"kind": "company", "id": c, "name": c, "detail": f"{seen[c]}+ people"}
+                    for c in sorted(seen, key=lambda x: (-seen[x], x.lower()))[:int(limit)]]
         if kind == "group":
             gflt = "startswith(displayName,'" + qq + "')"
             url = (f"{GRAPH}/groups?$filter={quote(gflt)}"
@@ -368,6 +378,12 @@ class GraphClient:
         rows = self._req("GET", url, headers=hdr).json().get("value", [])
         return [{"kind": "user", "id": u.get("id", ""), "name": u.get("displayName") or "",
                  "upn": (u.get("userPrincipalName") or "").lower(), "detail": u.get("companyName") or ""} for u in rows]
+
+    def intune_categories(self) -> list:
+        """Names of the Intune device categories (for the division editor's dropdown)."""
+        rows = self._get_all(f"{GRAPH}/deviceManagement/deviceCategories?$select=displayName&$top=100")
+        return sorted({(r.get("displayName") or "").strip() for r in rows if (r.get("displayName") or "").strip()},
+                      key=str.lower)
 
     def _my_group_ids(self) -> set:
         """Ids (lowercase) of the Entra groups the signed-in user belongs to (nested too). Cached 10 min."""
@@ -634,6 +650,78 @@ class GraphClient:
                         "enabled": g("Enabled").lower() not in ("no", "false", "0")})
         return sorted(out, key=lambda d: d["name"].lower())
 
+    @staticmethod
+    def _clean_sites(raw) -> list:
+        import re
+        sites = []
+        for s in raw or []:
+            code = str(s.get("code") or "").strip().upper()
+            if not re.match(r"^[A-Z0-9]{2,6}$", code):
+                raise GraphError(f"Site code '{code}': 2-6 letters or digits.")
+            if code in [x["code"] for x in sites] or code == "OTHER":
+                raise GraphError(f"Site code '{code}' is duplicated or reserved.")
+            clean = lambda v: [str(x).strip() for x in (v or []) if str(x).strip()]
+            sites.append({"code": code, "name": str(s.get("name") or code).strip(),
+                          "city_prefixes": clean(s.get("city_prefixes")), "device_prefixes": clean(s.get("device_prefixes"))})
+        return sites
+
+    def _timesheet_fields(self, d: dict, cmap: dict) -> dict:
+        """Timesheet/Employee DB + table names: validated, written only if the list actually has those columns."""
+        import re
+        ident = re.compile(r"^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)?$")
+        out, missing = {}, []
+        for key, disp in (("timesheet_db", "Timesheet DB"), ("timesheet_table", "Timesheet Table"),
+                          ("employee_db", "Employee DB"), ("employee_table", "Employee Table")):
+            val = str(d.get(key) or "").strip()
+            if val and not ident.match(val):
+                raise GraphError(f"{disp}: letters, digits and underscores only (a table may be schema.name).")
+            if disp.lower() in cmap:
+                out[cmap[disp.lower()]] = val
+            elif val:
+                missing.append(disp)
+        if missing:
+            raise GraphError("The central Divisions list has no column for: " + ", ".join(missing) +
+                             ". Add them as Single line of text (see docs/MANUAL_LIST_SETUP.md), then save again.")
+        return out
+
+    # fields a division's own users may change (everything else stays super-admin only)
+    TENANT_FIELDS = ("sites", "ad_domain", "sql_server", "timesheet_db", "timesheet_table", "employee_db", "employee_table")
+
+    def save_own_division(self, d: dict) -> None:
+        """Tenant settings: update ONLY sites, AD domain and the timesheet/SQL names of the ACTIVE division.
+        Identity (id, company, Intune category), access and visibility stay super-admin only."""
+        if not self._central:
+            raise GraphError("Division settings need the central site (config.json 'central').")
+        if self._local:
+            raise GraphError("Local data mode: switch to Live to change division settings.")
+        did = self.division["id"]
+        if did not in {x["id"] for x in self.visible_registry()}:
+            raise GraphError("You do not have access to this division.")
+        d = {k: v for k, v in (d or {}).items() if k in self.TENANT_FIELDS}
+        cmap = self._col_map("divisions")
+
+        def col(x):
+            return cmap.get(x.lower(), x.replace(" ", ""))
+        fields = {}
+        if "sites" in d:
+            import json
+            fields[col("Sites JSON")] = json.dumps(self._clean_sites(d["sites"]))
+        if "ad_domain" in d:
+            fields[col("AD Domain")] = str(d["ad_domain"] or "").strip()
+        if "sql_server" in d:
+            fields[col("SQL Server")] = str(d["sql_server"] or "").strip()
+        fields.update(self._timesheet_fields(d, cmap))
+        cur = next((it for it in self._items_raw("divisions")
+                    if str((it.get("fields") or {}).get("Title") or "").strip().lower() == did), None)
+        if not cur:
+            raise GraphError("This division has no row in the central Divisions list yet; ask a super admin to add it.")
+        if fields:
+            self._req("PATCH", f"{GRAPH}/sites/{self._ensure_site()}/lists/{self._list_id('divisions')}/items/{cur['id']}/fields",
+                      json=fields)
+        self._reg_at = 0.0
+        self.refresh_registry(force=True)
+        self.add_log("Division changed", did, "", actor=self.account_name or "", details="division settings saved (tenant)")
+
     def save_division_row(self, d: dict) -> None:
         """Create or update one Divisions row (validated). Super admin only."""
         import json
@@ -647,16 +735,7 @@ class GraphClient:
         cat = str(d.get("intune_category") or "").strip()
         if not name or not company or not cat:
             raise GraphError("Display name, Entra company name and Intune category are required.")
-        sites = []
-        for s in d.get("sites") or []:
-            code = str(s.get("code") or "").strip().upper()
-            if not re.match(r"^[A-Z0-9]{2,6}$", code):
-                raise GraphError(f"Site code '{code}': 2-6 letters or digits.")
-            if code in [x["code"] for x in sites] or code == "OTHER":
-                raise GraphError(f"Site code '{code}' is duplicated or reserved.")
-            clean = lambda v: [str(x).strip() for x in (v or []) if str(x).strip()]
-            sites.append({"code": code, "name": str(s.get("name") or code).strip(),
-                          "city_prefixes": clean(s.get("city_prefixes")), "device_prefixes": clean(s.get("device_prefixes"))})
+        sites = self._clean_sites(d.get("sites"))
         access = []
         for a in d.get("access") or []:
             a = str(a).strip()
@@ -676,21 +755,7 @@ class GraphClient:
                   col("SQL Server"): str(d.get("sql_server") or "").strip(),
                   col("Sites JSON"): json.dumps(sites), col("Access JSON"): json.dumps(access),
                   col("Enabled"): "Yes" if d.get("enabled", True) else "No"}
-        # Timesheet DB/table names: validated, and written only if the list actually has those columns.
-        ident = re.compile(r"^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)?$")
-        missing = []
-        for key, disp in (("timesheet_db", "Timesheet DB"), ("timesheet_table", "Timesheet Table"),
-                          ("employee_db", "Employee DB"), ("employee_table", "Employee Table")):
-            val = str(d.get(key) or "").strip()
-            if val and not ident.match(val):
-                raise GraphError(f"{disp}: letters, digits and underscores only (a table may be schema.name).")
-            if disp.lower() in cmap:
-                fields[cmap[disp.lower()]] = val
-            elif val:
-                missing.append(disp)
-        if missing:
-            raise GraphError("The central Divisions list has no column for: " + ", ".join(missing) +
-                             ". Add them as Single line of text (see docs/MANUAL_LIST_SETUP.md), then save again.")
+        fields.update(self._timesheet_fields(d, cmap))
         site = self._ensure_site()
         lid = self._list_id("divisions")
         cur = next((it for it in self._items_raw("divisions")
