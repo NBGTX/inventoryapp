@@ -166,3 +166,28 @@ def save_selection(div_id: str) -> None:
             f.write(div_id)
     except OSError:
         pass
+
+
+# ---- access-list entries -----------------------------------------------------
+# A division's access list holds strings: "a@x.com", "group:<id>|<name>", "*" (everyone), and the same
+# with an "admin:" prefix to make that person/group a division admin ("admin:a@x.com").
+def acl_entry(a) -> str:
+    """Normalised entry ('' if empty): emails lowercased, group display names keep their case."""
+    a = str(a or "").strip()
+    admin = a.lower().startswith("admin:")
+    if admin:
+        a = a[6:].strip()
+    if not a:
+        return ""
+    if a == "*":
+        return "*"                                   # "everyone" is never an admin role
+    a = a if a.lower().startswith("group:") else a.lower()
+    return "admin:" + a if admin else a
+
+
+def acl_parts(e) -> tuple:
+    """(is_admin, body) of a normalised entry."""
+    e = str(e or "")
+    if e.lower().startswith("admin:"):
+        return True, e[6:]
+    return False, e

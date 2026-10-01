@@ -592,8 +592,7 @@ class GraphClient:
                 acl = json.loads(g("Access JSON") or "[]")
                 if not isinstance(acl, list):
                     raise ValueError("not a list")
-                base["access"] = [(str(a).strip() if str(a).strip().lower().startswith("group:") else str(a).strip().lower())
-                                  for a in acl if str(a).strip()]
+                base["access"] = [e for e in (self._div_mod.acl_entry(a) for a in acl) if e]
             except Exception:
                 base["access"] = ["!invalid-access-list"]
             merged[did] = base
@@ -697,6 +696,7 @@ class GraphClient:
         did = self.division["id"]
         if did not in {x["id"] for x in self.visible_registry()}:
             raise GraphError("You do not have access to this division.")
+        self.require_division_admin()
         d = {k: v for k, v in (d or {}).items() if k in self.TENANT_FIELDS}
         cmap = self._col_map("divisions")
 
@@ -712,14 +712,13 @@ class GraphClient:
             existing = list(self.division.get("access") or [])
             acl = []
             for a in d["access"] or []:
-                a = str(a).strip()
-                a = a if a.lower().startswith("group:") else a.lower()
+                a = self._div_mod.acl_entry(a)
                 if a and a not in acl and (a != "*" or sa):          # "everyone" is a platform decision
                     acl.append(a)
             if "*" in existing and not sa:
                 acl.append("*")                                       # a tenant cannot undo it
-            if not sa and not self._acl_allows(acl):
-                raise GraphError("That list would remove your own access to this division. Add yourself (or a group you are in) first.")
+            if not sa and not self._acl_match(acl, admin_only=True):
+                raise GraphError("That list would remove your own admin rights on this division. Keep yourself (or a group you are in) as an admin.")
             fields[col("Access JSON")] = json.dumps(acl)
         if "ad_domain" in d:
             fields[col("AD Domain")] = str(d["ad_domain"] or "").strip()
@@ -753,11 +752,8 @@ class GraphClient:
         sites = self._clean_sites(d.get("sites"))
         access = []
         for a in d.get("access") or []:
-            a = str(a).strip()
-            if not a:
-                continue
-            a = a if a.lower().startswith("group:") else a.lower()      # groups keep their display name
-            if a not in access:
+            a = self._div_mod.acl_entry(a)
+            if a and a not in access:
                 access.append(a)
         cmap = self._col_map("divisions")
 
@@ -796,11 +792,45 @@ class GraphClient:
 
     def _acl_allows(self, acl: list) -> bool:
         """Does this (non-super-admin) account pass the access list? '*', its sign-in, or a group it belongs to."""
+        return self._acl_match(acl)
+
+    def _acl_match(self, acl: list, admin_only: bool = False) -> bool:
+        """True if '*' (users only), this sign-in, or a group this account is in appears in `acl`
+        (with admin_only: only `admin:` entries count)."""
         me = (self.account_upn or "").strip().lower()
-        if "*" in acl or (me and me in acl):
-            return True
-        gids = [str(e)[6:].split("|")[0].strip().lower() for e in acl if str(e).lower().startswith("group:")]
-        return bool(gids) and any(g in self._my_group_ids() for g in gids)
+        groups = None
+        for e in acl:
+            is_admin, body = self._div_mod.acl_parts(e)
+            if admin_only and not is_admin:
+                continue
+            if body == "*":
+                if is_admin:
+                    continue                      # "admin:*" is meaningless: everyone is never an admin
+                return True
+            if me and body == me:
+                return True
+            if body.lower().startswith("group:"):
+                if groups is None:
+                    groups = self._my_group_ids()
+                if body[6:].split("|")[0].strip().lower() in groups:
+                    return True
+        return False
+
+    def division_role(self) -> str:
+        """Role in the ACTIVE division: 'super' | 'admin' | 'user' | '' (none). Installs without a
+        central site have no access control: everyone is an admin there."""
+        if not self._central:
+            return "admin"
+        if self.is_super_admin():
+            return "super"
+        acl = self.division.get("access") or []
+        if self._acl_match(acl, admin_only=True):
+            return "admin"
+        return "user" if self._acl_match(acl) else ""
+
+    def require_division_admin(self) -> None:
+        if self.division_role() not in ("super", "admin"):
+            raise GraphError("Only a division admin can change this.")
 
     def set_division(self, div_id: str, persist: bool = True) -> dict:
         """Switch tenant. Keeps the sign-in (same user/tenant); drops every cache that

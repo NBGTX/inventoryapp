@@ -82,6 +82,8 @@ class DivisionPrefs(unittest.TestCase):
         self.api = app.Api()
         self.api._gc = self.gc
         self.api._hub = Hub(logs_folder=self.tmp, division=self.gc.division)
+        self.gc._base_cfg["super_admins"] = ["pref@nucor.com"]       # prefs are admin-only
+        self.gc.account_upn = "pref@nucor.com"
 
     def test_default_then_set_then_clear(self):
         r = self.api.get_division_prefs()
@@ -157,6 +159,7 @@ class Pickers(unittest.TestCase):
             self.assertEqual(calls[-1], ("BGBRISQL07\\INST", "NBSTimesheet"))
             self.gc.account_upn = "nobody@nucor.com"
             self.gc.division["sql_server"] = "OWNSRV"
+            self.gc.division["access"] = ["admin:nobody@nucor.com"]
             n = len(calls)
             self.assertEqual(self.api.sql_discover("OTHERSRV"), {"ok": True, "items": []})       # not their server
             self.assertEqual(len(calls), n)
@@ -171,8 +174,8 @@ class TenantSettings(unittest.TestCase):
         cols = dict(_env.DEFAULT_COLS)
         cols.update({"timesheet db": "field_20", "timesheet table": "field_21", "employee db": "field_22", "employee table": "field_23"})
         self.site = FakeSite(self.gc, colmaps={"divisions": cols})
-        self.site.add("divisions", Title="nbgw", DisplayName="NBGW", Enabled="Yes", AccessJson='["*"]')
-        self.gc.account_upn = "tech@nucor.com"            # NOT a super admin
+        self.site.add("divisions", Title="nbgw", DisplayName="NBGW", Enabled="Yes", AccessJson='["admin:tech@nucor.com"]')
+        self.gc.account_upn = "tech@nucor.com"            # a division admin, NOT a super admin
         self.gc.refresh_registry(force=True)
         self.api = app.Api()
         self.api._gc = self.gc
@@ -207,30 +210,62 @@ class TenantSettings(unittest.TestCase):
         import json
         return json.loads(self.patches()[-1][2][_env.DEFAULT_COLS["access json"]])
 
-    def test_tenant_adds_people_and_groups_to_its_own_division(self):
-        self.gc.registry[0]["access"] = ["tech@nucor.com"]
+    def test_tenant_admin_adds_people_and_groups_keeping_roles(self):
         self.gc._get_all = lambda url: [{"id": "g-1"}]
-        r = self.api.save_own_division({"access": ["Tech@Nucor.com", "New.Person@nucor.com", "group:G-1|Terrell IT", "new.person@nucor.com"]})
+        r = self.api.save_own_division({"access": ["Admin:Tech@Nucor.com", "New.Person@nucor.com", "group:G-1|Terrell IT",
+                                                   "admin:group:G-2|Terrell Leads", "new.person@nucor.com"]})
         self.assertTrue(r["ok"], r)
-        self.assertEqual(self.acl(), ["tech@nucor.com", "new.person@nucor.com", "group:G-1|Terrell IT"])
+        self.assertEqual(self.acl(), ["admin:tech@nucor.com", "new.person@nucor.com", "group:G-1|Terrell IT", "admin:group:G-2|Terrell Leads"])
 
     def test_tenant_cannot_grant_everyone_or_undo_it(self):
-        self.gc.registry[0]["access"] = ["tech@nucor.com"]
-        self.assertTrue(self.api.save_own_division({"access": ["tech@nucor.com", "*"]})["ok"])
-        self.assertEqual(self.acl(), ["tech@nucor.com"])                       # "*" dropped
-        self.gc.registry[0]["access"] = ["*"]
-        self.assertTrue(self.api.save_own_division({"access": ["tech@nucor.com"]})["ok"])
-        self.assertEqual(self.acl(), ["tech@nucor.com", "*"])                   # platform "everyone" kept
+        self.assertTrue(self.api.save_own_division({"access": ["admin:tech@nucor.com", "*"]})["ok"])
+        self.assertEqual(self.acl(), ["admin:tech@nucor.com"])                  # "*" dropped
+        self.gc.registry[0]["access"] = ["admin:tech@nucor.com", "*"]
+        self.assertTrue(self.api.save_own_division({"access": ["admin:tech@nucor.com"]})["ok"])
+        self.assertEqual(self.acl(), ["admin:tech@nucor.com", "*"])             # platform "everyone" kept
 
-    def test_tenant_cannot_lock_itself_out(self):
+    def test_tenant_cannot_lock_itself_out_of_admin(self):
+        n = len(self.patches())
+        r = self.api.save_own_division({"access": ["tech@nucor.com", "someone@nucor.com"]})   # demotes self
+        self.assertIn("own admin rights", r["error"])
+        self.assertEqual(len(self.patches()), n)
+
+    def test_group_admin_counts(self):
+        self.gc.registry[0]["access"] = ["admin:group:G-9|Leads"]
+        self.gc._get_all = lambda url: [{"id": "g-9"}]
+        self.assertEqual(self.gc.division_role(), "admin")
+        self.assertTrue(self.api.save_own_division({"sql_server": "S"})["ok"])
+
+    def test_roles(self):
+        g = self.gc
+        g.registry[0]["access"] = ["admin:tech@nucor.com"]
+        self.assertEqual(g.division_role(), "admin")
+        g.registry[0]["access"] = ["tech@nucor.com"]
+        self.assertEqual(g.division_role(), "user")
+        g.registry[0]["access"] = ["*"]
+        self.assertEqual(g.division_role(), "user")                              # everyone = user, never admin
+        g.registry[0]["access"] = ["admin:*", "other@nucor.com"]
+        self.assertEqual(g.division_role(), "")
+        g.registry[0]["access"] = []
+        self.assertEqual(g.division_role(), "")
+        g._base_cfg["super_admins"] = ["tech@nucor.com"]
+        self.assertEqual(g.division_role(), "super")
+        self.assertEqual(make_client(central=False).division_role(), "admin")    # single-division install: no access control
+
+    def test_plain_user_cannot_change_anything(self):
         self.gc.registry[0]["access"] = ["tech@nucor.com"]
         n = len(self.patches())
-        r = self.api.save_own_division({"access": ["someone@nucor.com"]})
-        self.assertIn("remove your own access", r["error"])
+        for data in ({"sql_server": "S"}, {"access": ["tech@nucor.com", "x@nucor.com"]}, {"sites": []}):
+            self.assertIn("division admin", self.api.save_own_division(data)["error"])
         self.assertEqual(len(self.patches()), n)
+        self.assertFalse(self.api.save_division_prefs("America/Chicago")["ok"])
+        self.assertFalse(self.api.perm_save_baselines({"departments": {}})["ok"])
+        self.assertEqual(self.api.get_my_role(), {"ok": True, "role": "user"})
+        self.assertEqual(self.api.get_own_division()["role"], "user")
 
     def test_super_admin_may_grant_everyone_from_here(self):
         self.gc._base_cfg["super_admins"] = ["tech@nucor.com"]
+        self.gc.registry[0]["access"] = ["*"]
         self.assertTrue(self.api.save_own_division({"access": ["*"]})["ok"])
         self.assertEqual(self.acl(), ["*"])
 

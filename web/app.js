@@ -4507,7 +4507,7 @@ Object.assign(Mock, {
   async save_division_prefs(tz) { this._prefs.timezone = tz || ""; return { ok: true, timezone: tz || "" }; },
   async get_own_division() {
     const d = this._dv.find(x => x.id === this._divCur) || this._dv[0];
-    return { ok: true, id: d.id, name: d.name, company_name: d.company_name, intune_category: d.intune_category, super_admin: true, can_edit: true,
+    return { ok: true, id: d.id, name: d.name, company_name: d.company_name, intune_category: d.intune_category, super_admin: true, role: "super", can_edit: true,
       sites: JSON.parse(JSON.stringify(d.sites || [])), access: [...(d.access || [])], ad_domain: d.ad_domain || "", sql_server: d.sql_server || "",
       timesheet_db: d.timesheet_db || "", timesheet_table: d.timesheet_table || "", employee_db: d.employee_db || "", employee_table: d.employee_table || "" };
   },
@@ -4517,6 +4517,7 @@ Object.assign(Mock, {
     for (const k of ["sites", "access", "ad_domain", "sql_server", "timesheet_db", "timesheet_table", "employee_db", "employee_table"]) if (k in data) d[k] = data[k];
     return { ok: true };
   },
+  async get_my_role() { return { ok: true, role: "super" }; },
   async intune_categories() { return { ok: true, categories: ["NBGTX", "NBGW", "Shared Devices"] }; },
   async sql_discover(server, db) {
     await new Promise(r => setTimeout(r, 250));

@@ -224,6 +224,7 @@ class Api:
     def save_division_prefs(self, timezone: str = "") -> dict:
         try:
             import settings_catalog as sc
+            self._client().require_division_admin()
             tz = (timezone or "").strip()
             if tz and not sc.valid_timezone(tz):
                 return {"ok": False, "error": "Pick a time zone from the list."}
@@ -237,13 +238,20 @@ class Api:
             return self._fail(e)
 
     # ---- tenant settings: the active division's own sites / AD / timesheet SQL ---------
+    def get_my_role(self) -> dict:
+        """'super' | 'admin' | 'user' in the active division (drives which Settings sections show)."""
+        try:
+            return {"ok": True, "role": self._client().division_role()}
+        except Exception as e:
+            return self._fail(e)
+
     def get_own_division(self) -> dict:
         try:
             gc = self._client()
             d = gc.division
             keys = ("sites", "access", "ad_domain", "sql_server", "timesheet_db", "timesheet_table", "employee_db", "employee_table")
             return {"ok": True, "id": d["id"], "name": d.get("name", ""), "company_name": d.get("company_name", ""),
-                    "intune_category": d.get("intune_category", ""), "super_admin": gc.is_super_admin(),
+                    "intune_category": d.get("intune_category", ""), "super_admin": gc.is_super_admin(), "role": gc.division_role(),
                     "can_edit": bool(gc._central) and gc.data_mode != "local",
                     **{k: (list(d.get(k) or []) if k in ("sites", "access") else (d.get(k) or "")) for k in keys}}
         except Exception as e:
@@ -276,7 +284,7 @@ class Api:
             gc = self._client()
             srv, db = (server or "").strip(), (database or "").strip()
             own = (gc.division.get("sql_server") or "").strip().lower()
-            if not gc.is_super_admin() and not (srv and srv.lower() == own):
+            if not gc.is_super_admin() and not (gc.division_role() == "admin" and srv and srv.lower() == own):
                 return {"ok": True, "items": []}            # tenants may browse only their own division's server
             if not self._SQL_SERVER_RE.match(srv):
                 return {"ok": False, "error": "Server name has unexpected characters."}
@@ -1368,6 +1376,7 @@ class Api:
 
     def perm_save_baselines(self, data: dict, meta: dict | None = None) -> dict:
         try:
+            self._client().require_division_admin()
             data = data or {}
             depts = data.get("departments") if isinstance(data.get("departments"), dict) else {}
             n = sum(len([g for g in (v.get("groups") or []) if g.get("expected")])
