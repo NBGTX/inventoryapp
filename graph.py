@@ -350,6 +350,19 @@ class GraphClient:
         self._reset_caches()
         return self.data_mode
 
+    def snapshot_hub(self) -> dict:
+        """Copy ONLY the division's hub folder (JSON files) into the local sandbox. No SharePoint
+        or Graph access needed. Source = the folder Hub() resolves to (script mode: the project SystemsData folder)."""
+        import shutil
+        from hub import Hub
+        src = Hub(division=self.division).logs
+        dst = self._localstore_mod.hub_logs_dir(self.division["id"])
+        n = 0
+        if os.path.isdir(src):
+            shutil.copytree(src, dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.tmp", "~*"))
+            n = sum(len(f) for _, _, f in os.walk(dst))
+        return {"source": src, "dest": dst, "files": n}
+
     def snapshot_prod(self) -> dict:
         """READ-ONLY pull of production into the local store: the division's SharePoint
         lists (rows + column map) and a copy of its hub folder. Nothing is written to prod."""

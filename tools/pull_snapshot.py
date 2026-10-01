@@ -25,6 +25,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--division", default="nbgw")
+    ap.add_argument("--hub-only", action="store_true",
+                    help="copy only the hub JSON folder (no SharePoint / sign-in needed)")
     ap.add_argument("--switch-local", action="store_true", help="afterwards set the app's data mode to Local")
     args = ap.parse_args()
 
@@ -33,6 +35,12 @@ def main() -> int:
     gc = graph.GraphClient()
     gc.set_division(args.division)
     gc.data_mode = "live"            # read production for the snapshot
+    if args.hub_only:
+        r = gc.snapshot_hub()
+        print("Hub folder copied (no SharePoint access used).")
+        print("  from:", r["source"])
+        print("  to  :", r["dest"], f"({r['files']} files)")
+        return 0
     print(f"Division: {gc.division['id']}  ({gc.division['name']})")
     print("Source  :", gc.division.get("sharepoint_hostname"), gc.division.get("site_path"), "(read-only)")
     print("Signing in (a Microsoft sign-in window will open) ...")
