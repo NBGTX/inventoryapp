@@ -256,11 +256,11 @@ class TenantSettings(unittest.TestCase):
         self.gc.registry[0]["access"] = ["tech@nucor.com"]
         n = len(self.patches())
         for data in ({"sql_server": "S"}, {"access": ["tech@nucor.com", "x@nucor.com"]}, {"sites": []}):
-            self.assertIn("division admin", self.api.save_own_division(data)["error"])
+            self.assertIn("role does not allow", self.api.save_own_division(data)["error"])
         self.assertEqual(len(self.patches()), n)
         self.assertFalse(self.api.save_division_prefs("America/Chicago")["ok"])
         self.assertFalse(self.api.perm_save_baselines({"departments": {}})["ok"])
-        self.assertEqual(self.api.get_my_role(), {"ok": True, "role": "user"})
+        self.assertEqual(self.api.get_my_role(), {"ok": True, "role": "user", "sections": []})
         self.assertEqual(self.api.get_own_division()["role"], "user")
 
     def test_super_admin_may_grant_everyone_from_here(self):
@@ -279,3 +279,61 @@ class TenantSettings(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RoleAccessMatrix(unittest.TestCase):
+    def setUp(self):
+        self.gc = make_client(extra={"super_admins": ["boss@nucor.com"]})
+        cols = dict(_env.DEFAULT_COLS)
+        cols.update({"timesheet db": "field_20", "timesheet table": "field_21", "employee db": "field_22", "employee table": "field_23"})
+        self.site = FakeSite(self.gc, colmaps={"divisions": cols})
+        self.site.add("divisions", Title="nbgw", DisplayName="NBGW", Enabled="Yes", AccessJson='["admin:adm@nucor.com","user@nucor.com"]')
+        self.gc.refresh_registry(force=True)
+        self.api = app.Api()
+        self.api._gc = self.gc
+
+    def as_(self, who):
+        self.gc.account_upn = who
+        self.gc._master_cache = None
+
+    def test_defaults_user_sees_nothing_extra_admin_sees_all(self):
+        self.as_("user@nucor.com")
+        self.assertEqual(self.api.get_my_role()["sections"], [])
+        self.as_("adm@nucor.com")
+        self.assertEqual(len(self.api.get_my_role()["sections"]), len(sc.SECTIONS))
+        self.as_("boss@nucor.com")
+        self.assertEqual(len(self.api.get_my_role()["sections"]), len(sc.SECTIONS))
+
+    def test_super_admin_saves_matrix_and_it_drives_sections_and_enforcement(self):
+        self.as_("boss@nucor.com")
+        self.assertTrue(self.api.save_role_access({"user": ["sites"], "admin": ["sites", "access"]})["ok"])
+        row = [s for s in self.site.sent if s[0] in ("POST", "PATCH")][-1][2]
+        self.assertIn('"sites"', str(row))
+        self.site.add("master_settings", Title="role_access", Value='{"user": ["sites"], "admin": ["sites", "access"]}', Secret="No")
+        self.as_("user@nucor.com")
+        self.assertEqual(self.api.get_my_role()["sections"], ["sites"])
+        self.assertTrue(self.api.save_own_division({"sites": [{"code": "LTR", "name": "L"}]})["ok"])          # allowed section
+        self.assertIn("role does not allow", self.api.save_own_division({"sql_server": "S"})["error"])           # not allowed
+        self.assertIn("role does not allow", self.api.save_own_division({"access": ["user@nucor.com"]})["error"])
+        self.as_("adm@nucor.com")
+        self.assertEqual(self.api.get_my_role()["sections"], ["access", "sites"])
+        self.assertIn("role does not allow", self.api.save_own_division({"sql_server": "S"})["error"])           # admin has no 'sql' now
+
+    def test_only_super_admins_read_or_change_the_matrix_and_input_is_validated(self):
+        self.as_("adm@nucor.com")
+        self.assertEqual(self.api.get_role_access(), {"ok": True, "super_admin": False})
+        self.assertFalse(self.api.save_role_access({"user": [], "admin": []})["ok"])
+        self.as_("boss@nucor.com")
+        self.assertFalse(self.api.save_role_access({"user": ["../etc"], "admin": []})["ok"])
+        self.assertFalse(self.api.save_role_access("nope")["ok"])
+        r = self.api.get_role_access()
+        self.assertEqual(r["matrix"], {"user": [], "admin": [s for s, _ in sc.SECTIONS]})
+
+    def test_garbage_in_the_row_falls_back_to_defaults(self):
+        self.assertEqual(sc.parse_role_access("not json"), sc.default_role_access())
+        self.assertEqual(sc.parse_role_access('{"user": ["sites", "bogus"]}')["user"], ["sites"])
+
+    def test_single_division_install_gives_admin_sections_to_everyone(self):
+        gc = make_client(central=False)
+        gc.account_upn = "anyone@nucor.com"
+        self.assertEqual(gc.allowed_sections(), [s for s, _ in sc.SECTIONS])

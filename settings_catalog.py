@@ -94,3 +94,41 @@ def number(gc, key: str) -> int:
     except (TypeError, ValueError):
         pass
     return c["default"]
+
+
+# ---- which Settings sections each division role may open (edited under Platform > Role access) ----
+# General is always visible to everyone (read-only for users). Super admins always see everything.
+SECTIONS = [("models", "Model departments"), ("links", "NBT Sites"), ("access", "Who has access"), ("sites", "Sites"),
+            ("sql", "Directory & SQL"), ("perms", "Group baselines"), ("storage", "Storage")]
+ROLE_ACCESS_KEY = "role_access"
+
+
+def default_role_access() -> dict:
+    return {"user": [], "admin": [s for s, _ in SECTIONS]}
+
+
+def parse_role_access(raw) -> dict:
+    """JSON from the Master Settings row -> {"user": [...], "admin": [...]} (unknown ids dropped; bad/missing -> defaults)."""
+    import json
+    ids = {s for s, _ in SECTIONS}
+    try:
+        d = json.loads(raw) if isinstance(raw, str) and raw.strip() else None
+        if not isinstance(d, dict):
+            raise ValueError
+        return {r: [s for s, _ in SECTIONS if s in (d.get(r) or []) and s in ids] for r in ("user", "admin")}
+    except Exception:
+        return default_role_access()
+
+
+def clean_role_access(matrix) -> dict:
+    if not isinstance(matrix, dict):
+        raise ValueError("Role access must be an object like {user: [...], admin: [...]}.")
+    ids = {s for s, _ in SECTIONS}
+    out = {}
+    for r in ("user", "admin"):
+        vals = matrix.get(r) or []
+        bad = [v for v in vals if v not in ids]
+        if bad:
+            raise ValueError(f"Unknown section: {bad[0]}")
+        out[r] = [s for s, _ in SECTIONS if s in vals]
+    return out

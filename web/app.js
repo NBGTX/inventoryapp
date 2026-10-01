@@ -4533,7 +4533,13 @@ Object.assign(Mock, {
     for (const k of ["sites", "access", "ad_domain", "sql_server", "timesheet_db", "timesheet_table", "employee_db", "employee_table"]) if (k in data) d[k] = data[k];
     return { ok: true };
   },
-  async get_my_role() { return { ok: true, role: "super" }; },
+  _ra: { user: [], admin: ["models", "links", "access", "sites", "sql", "perms", "storage"] },
+  async get_my_role() { return { ok: true, role: "super", sections: ["models", "links", "access", "sites", "sql", "perms", "storage"] }; },
+  async get_role_access() {
+    return { ok: true, super_admin: true, matrix: JSON.parse(JSON.stringify(this._ra)),
+      sections: [["models", "Model departments"], ["links", "NBT Sites"], ["access", "Who has access"], ["sites", "Sites"], ["sql", "Directory & SQL"], ["perms", "Group baselines"], ["storage", "Storage"]].map(([id, label]) => ({ id, label })) };
+  },
+  async save_role_access(m) { this._ra = { user: [...(m.user || [])], admin: [...(m.admin || [])] }; return { ok: true, matrix: this._ra }; },
   async intune_categories() { return { ok: true, categories: ["NBGTX", "NBGW", "Shared Devices"] }; },
   async sql_discover(server, db) {
     await new Promise(r => setTimeout(r, 250));

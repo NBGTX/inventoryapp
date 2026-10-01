@@ -184,7 +184,7 @@ class Api:
                 v = cur.get(c["key"]) or {}
                 cat.append({**c, "is_set": bool(v.get("value")), "value": "" if c["secret"] else v.get("value", "")})
             return {"ok": True, "super_admin": True, "settings": rows, "catalog": cat,
-                    "other": [r for r in rows if r["key"] not in known and r["key"] != "super_admins"]}
+                    "other": [r for r in rows if r["key"] not in known and r["key"] not in ("super_admins", sc.ROLE_ACCESS_KEY)]}
         except Exception as e:
             return self._fail(e)
 
@@ -239,9 +239,36 @@ class Api:
 
     # ---- tenant settings: the active division's own sites / AD / timesheet SQL ---------
     def get_my_role(self) -> dict:
-        """'super' | 'admin' | 'user' in the active division (drives which Settings sections show)."""
+        """Role in the active division + the Settings sections (beyond General) it may use."""
         try:
-            return {"ok": True, "role": self._client().division_role()}
+            gc = self._client()
+            return {"ok": True, "role": gc.division_role(), "sections": gc.allowed_sections()}
+        except Exception as e:
+            return self._fail(e)
+
+    def get_role_access(self) -> dict:
+        """Super admins: the role x section matrix (Platform > Role access)."""
+        try:
+            import settings_catalog as sc
+            gc = self._client()
+            if not gc.is_super_admin():
+                return {"ok": True, "super_admin": False}
+            return {"ok": True, "super_admin": True, "sections": [{"id": s, "label": l} for s, l in sc.SECTIONS],
+                    "matrix": sc.parse_role_access(gc.get_setting(sc.ROLE_ACCESS_KEY, ""))}
+        except Exception as e:
+            return self._fail(e)
+
+    def save_role_access(self, matrix: dict) -> dict:
+        try:
+            import json
+            import settings_catalog as sc
+            gc = self._client()
+            if not gc.is_super_admin():
+                return {"ok": False, "error": "Only a super admin can change role access."}
+            clean = sc.clean_role_access(matrix)
+            gc.set_setting(sc.ROLE_ACCESS_KEY, json.dumps(clean), secret=False,
+                           description="Settings sections each division role may use (edited in the app)")
+            return {"ok": True, "matrix": clean}
         except Exception as e:
             return self._fail(e)
 
@@ -1376,7 +1403,7 @@ class Api:
 
     def perm_save_baselines(self, data: dict, meta: dict | None = None) -> dict:
         try:
-            self._client().require_division_admin()
+            self._client().require_section("perms")
             data = data or {}
             depts = data.get("departments") if isinstance(data.get("departments"), dict) else {}
             n = sum(len([g for g in (v.get("groups") or []) if g.get("expected")])

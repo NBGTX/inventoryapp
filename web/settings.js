@@ -155,22 +155,22 @@ const SqlEditor = {
 /* ---- the page ------------------------------------------------------------------------------- */
 const Settings = {
   su: false, role: "user", tab: "general", dirty: false, own: null, prefs: null,
-  RANK: { user: 1, admin: 2, super: 3 },
+  RANK: { user: 1, admin: 2, super: 3 }, allowed: [],
   async refreshAccess() {
     const [r, ro] = await Promise.all([Backend.call("get_master_settings"), Backend.call("get_my_role")]);
     this.su = !!(r && r.ok && r.super_admin);
     this.role = (ro && ro.ok && ro.role) || "user";
+    this.allowed = (ro && ro.ok && ro.sections) || [];          // sections beyond General this role may use (Platform > Role access)
   },
   can(min) { return (this.RANK[this.role] || 0) >= this.RANK[min]; },
   open(tab) { if (tab) this.tab = tab; Nav.go("settings"); },
-  /* [id, label, minimum role] - change a section's audience here */
-  SECTIONS: [["general", "General", "user"], ["models", "Model departments", "user"], ["links", "NBT Sites", "user"],
-             ["access", "Who has access", "admin"], ["sites", "Sites", "admin"], ["sql", "Directory & SQL", "admin"],
-             ["perms", "Group baselines", "admin"], ["storage", "Storage", "admin"]],
+  /* every division section; General is always shown, the rest depend on Platform > Role access */
+  SECTIONS: [["general", "General"], ["models", "Model departments"], ["links", "NBT Sites"], ["access", "Who has access"],
+             ["sites", "Sites"], ["sql", "Directory & SQL"], ["perms", "Group baselines"], ["storage", "Storage"]],
   groups() {
     return [
-      { title: Divisions.label(), items: this.SECTIONS.filter(x => this.can(x[2])).map(x => [x[0], x[1]]) },
-      ...(this.su ? [{ title: "Platform (super admin)", items: [["divisions", "Divisions"], ["admins", "Super admins"], ["integrations", "Integrations & options"]] }] : []),
+      { title: Divisions.label(), items: this.SECTIONS.filter(x => x[0] === "general" || this.allowed.includes(x[0])) },
+      ...(this.su ? [{ title: "Platform (super admin)", items: [["divisions", "Divisions"], ["admins", "Super admins"], ["roles", "Role access"], ["integrations", "Integrations & options"]] }] : []),
     ];
   },
   async load() {
@@ -206,7 +206,7 @@ const Settings = {
     this.pane("settings", `<div class="empty">Loading…</div>`);
     const dep = { models: "models", links: "sites", perms: "perms", storage: "storage" }[tab];
     if (dep) { this.pane("depts"); Depts._page = true; await Depts.openPage(dep); return; }
-    const fn = { general: "general", access: "accessTab", sites: "sitesTab", sql: "sqlTab", divisions: "divisions", admins: "admins", integrations: "integrations" }[tab];
+    const fn = { general: "general", access: "accessTab", sites: "sitesTab", sql: "sqlTab", divisions: "divisions", admins: "admins", roles: "roles", integrations: "integrations" }[tab];
     try { await this[fn](); } catch (e) { this.pane("settings", `<div class="empty">Could not open this section: ${esc(String(e && e.message || e))}</div>`); }
   },
 
@@ -341,6 +341,34 @@ const Settings = {
     this.saPersist([...this.sa.admins, upn], "Added " + upn);
   },
   saRemove(i) { const u = this.sa.admins[i]; if (u) this.saPersist(this.sa.admins.filter((_, k) => k !== i), "Removed " + u); },
+
+  /* ---- platform: role access (which Settings sections each division role may use) ---- */
+  async roles() {
+    const r = await Backend.call("get_role_access");
+    if (!r || !r.ok || !r.super_admin) return this.pane("settings", `<div class="empty">${esc((r && r.error) || "Super admins only.")}</div>`);
+    this.ra = { sections: r.sections, matrix: { user: [...r.matrix.user], admin: [...r.matrix.admin] } };
+    const row = s => `<tr><td>${esc(s.label)}</td>` + ["user", "admin"].map(role =>
+      `<td style="text-align:center"><input type="checkbox" class="cb" ${this.ra.matrix[role].includes(s.id) ? "checked" : ""} onchange="Settings.raToggle('${role}','${s.id}',this.checked)"></td>`).join("") + `</tr>`;
+    this.pane("settings", SetUI.card("Role access", "Which Settings sections each division role can open and change. <b>General</b> is always visible to everyone (read-only for users). Super admins always have everything. The same rule is enforced when saving, not only in the menu.",
+      `<table class="ms-table"><thead><tr><th>Section</th><th style="text-align:center">User</th><th style="text-align:center">Division admin</th></tr></thead>
+        <tbody>${this.ra.sections.map(row).join("")}</tbody></table>
+       <p class="muted" style="font-size:12px;margin-top:12px">Applies to every division. Changing the time zone and the General page stays with division admins.
+       Model departments and NBT Sites data is shared day-to-day data: this only controls whether the settings page for it is shown.</p>`,
+      `<button class="ghost" onclick="Settings.show('roles')">Discard changes</button><button class="primary" id="setSave" onclick="Settings.raSave()" disabled>Save role access</button>`));
+  },
+  raToggle(role, id, on) {
+    const m = this.ra.matrix[role], i = m.indexOf(id);
+    if (on && i < 0) m.push(id); else if (!on && i >= 0) m.splice(i, 1);
+    this.markDirty();
+  },
+  async raSave() {
+    const r = await Backend.call("save_role_access", this.ra.matrix);
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+    this.dirty = false;
+    App.toast("Role access saved.");
+    await this.refreshAccess();
+    this.rail();
+  },
 
   /* ---- platform: integrations & options (master settings as forms) ---- */
   async integrations() {

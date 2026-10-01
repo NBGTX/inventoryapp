@@ -696,8 +696,10 @@ class GraphClient:
         did = self.division["id"]
         if did not in {x["id"] for x in self.visible_registry()}:
             raise GraphError("You do not have access to this division.")
-        self.require_division_admin()
         d = {k: v for k, v in (d or {}).items() if k in self.TENANT_FIELDS}
+        section_of = {"sites": "sites", "access": "access"}
+        for k in d:                                    # each field needs its own section (Platform > Role access)
+            self.require_section(section_of.get(k, "sql"))
         cmap = self._col_map("divisions")
 
         def col(x):
@@ -717,8 +719,10 @@ class GraphClient:
                     acl.append(a)
             if "*" in existing and not sa:
                 acl.append("*")                                       # a tenant cannot undo it
-            if not sa and not self._acl_match(acl, admin_only=True):
+            if not sa and self.division_role() == "admin" and not self._acl_match(acl, admin_only=True):
                 raise GraphError("That list would remove your own admin rights on this division. Keep yourself (or a group you are in) as an admin.")
+            if not sa and not self._acl_match(acl):
+                raise GraphError("That list would remove your own access to this division.")
             fields[col("Access JSON")] = json.dumps(acl)
         if "ad_domain" in d:
             fields[col("AD Domain")] = str(d["ad_domain"] or "").strip()
@@ -827,6 +831,22 @@ class GraphClient:
         if self._acl_match(acl, admin_only=True):
             return "admin"
         return "user" if self._acl_match(acl) else ""
+
+    def allowed_sections(self) -> list:
+        """Settings sections (besides General) the current account may open/use in the active division."""
+        import settings_catalog as sc
+        role = self.division_role()
+        if role == "super":
+            return [s for s, _ in sc.SECTIONS]
+        if role not in ("admin", "user"):
+            return []
+        if not self._central:
+            return sc.default_role_access()["admin"]
+        return sc.parse_role_access(self.get_setting(sc.ROLE_ACCESS_KEY, ""))[role]
+
+    def require_section(self, section: str) -> None:
+        if section not in self.allowed_sections():
+            raise GraphError("Your role does not allow changing this setting.")
 
     def require_division_admin(self) -> None:
         if self.division_role() not in ("super", "admin"):
