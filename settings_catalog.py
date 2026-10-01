@@ -78,6 +78,14 @@ CATALOG = [
      "options": [{"id": "on", "label": "On (default)"}, {"id": "off", "label": "Off - only the Sync buttons sync"}],
      "help": "With it on, opening the app starts a sync for the division you are in. Turn it off to stop that on every PC "
              "(the NBG_NO_AUTOSYNC setting on a single PC still wins)."},
+    {"key": "upgrade_cpu_years", "group": "Upgrades", "label": "Queue for upgrade: processor older than (years)",
+     "kind": "number", "secret": False, "min": 0, "max": 15, "default": 5, "status": "active",
+     "help": "A device whose processor generation was released this many years ago or more is added to the Upgrade list. "
+             "0 turns this rule off. Needs the device's CPU to be known."},
+    {"key": "upgrade_warranty_months", "group": "Upgrades", "label": "Queue for upgrade: warranty ended at least (months)",
+     "kind": "number", "secret": False, "min": 0, "max": 60, "default": 0, "status": "active",
+     "help": "A device whose warranty ended this many months ago or more is added to the Upgrade list. 0 (the default) turns "
+             "this rule off. Works for any maker, because it only needs the warranty date."},
     {"key": "intune_enrich_per_sync", "group": "Sync", "label": "Vendor lookups per sync run",
      "kind": "number", "secret": False, "min": 0, "max": 500, "default": 75, "status": "active",
      "help": "How many devices get a Lenovo/Dell/HP spec lookup in one sync. Lower = gentler on vendor APIs, slower to fill in."},

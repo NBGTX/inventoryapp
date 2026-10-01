@@ -20,7 +20,8 @@ const Help = {
           <li><b>Hot spares</b>: imaged, ready-to-deploy loaners. Click for the full list by site and department. A warning sign means a spare is stale or out of compliance.</li>
           <li><b>No UPN set</b>: devices with no primary user.</li>
           <li><b>Warranties ≤ 90 days</b>: warranty ends within 90 days (or already expired).</li>
-          <li><b>Upgrade Forecast</b>: devices old enough to need replacing, by site. Open the Upgrade list to prioritize them.</li>
+          <li><b>Upgrade Forecast</b>: devices that meet the upgrade rules (a processor older than a set number of years, and/or a warranty that ended a set number of months ago; a super admin sets these under Platform → Integrations → Upgrades). Click for the list with the reason for each; the Upgrade list page queues them.</li>
+          <li><b>Missing specs</b> (appears when there are any): devices with no CPU, RAM or warranty date recorded. This happens for makers whose lookup is not available yet (Dell and HP need an API key). Click it, then <b>Edit specs</b> on a row to type the values in; they count immediately toward the upgrade rules. Virtual machines are left out.</li>
           <li><b>No check-in N+ days</b>: devices that have not reported to Intune for longer than the stale limit (30 days unless a super admin changed it).</li>
           <li><b>Users without MFA</b>: people with a device but no registered multi-factor method.</li>
           <li><b>Not part of this division</b>: devices in the division's Intune category whose user is not in the division's Entra company. Usually a mis-categorized device.</li>
@@ -116,13 +117,14 @@ const Help = {
         <ul>
           <li><b>Edit</b> (stock): correct a machine's details.</li>
           <li><b>Remove</b>: for a stock machine this decommissions it. For one in use you choose <i>Remove</i> or <i>Move back to New Stock</i> to reassign later. Both are written to the activity log with who and why.</li>
-          <li><b>Upgrade</b>: adds the device to the Upgrade list with a priority.</li>
+          <li><b>Edit specs</b> (✎ on In use rows): type the CPU, RAM, storage and warranty date by hand when no lookup supplied them. As you type a processor the window tells you whether it recognizes it and whether it will go on the Upgrade list.</li>
+          <li><b>Upgrade</b>: adds the device to the Upgrade list with a priority yourself.</li>
           <li><b>Restore</b> (Boneyard): puts a retired machine back.</li>
         </ul>
         <h5>The buttons at the top</h5>
         <ul>
           <li><b>Log</b>: the activity log of every add, move and removal.</li>
-          <li><b>Sync now</b>: pulls this division's devices from Intune into <i>In use</i>, adds new ones, updates the rest and removes duplicate rows. It never deletes devices. The same sync runs by itself when the app opens, unless a super admin turned that off.</li>
+          <li><b>Sync now</b>: pulls this division's devices from Intune into <i>In use</i>, adds new ones, updates the rest and removes duplicate rows. It never deletes devices, and afterwards it adds any device that meets the upgrade rules to the Upgrade list. The same sync runs by itself when the app opens, unless a super admin turned that off.</li>
           <li><b>Populate MFA</b>: fills the MFA column from each user's registered methods. It needs a role that can read authentication methods.</li>
           <li><b>Master sync</b>: a slower, deliberate full refresh that <b>overwrites</b> every device's user, specs, MFA, last check-in and OS from Intune and Entra. Use it when the stored values look wrong.</li>
         </ul>
@@ -162,8 +164,16 @@ const Help = {
       title: "How to use the Upgrade list",
       html: `
         <p>The Upgrade list is a prioritized queue of machines waiting for a hardware upgrade. It is shared with everyone in the division.</p>
+        <h5>How devices get on the list</h5>
+        <ul>
+          <li><b>Automatically</b>, after every sync: a device is queued when it meets a rule a super admin has switched on (Platform → Integrations → Upgrades): its <b>processor</b> was released N or more years ago, and/or its <b>warranty</b> ended N or more months ago. The note on the entry says which rule matched, and the starting priority comes from how old it is. Entries marked <i>Auto-added</i> are yours to edit, reorder or remove.</li>
+          <li><b>By hand</b>, whenever you like (below).</li>
+          <li>A device you <b>complete</b> or <b>remove</b> is remembered and is <b>not queued again</b> automatically. A line at the bottom of the list shows how many are skipped, with <b>Allow them again</b> for division admins. Adding a device by hand always works.</li>
+          <li>If nothing is queued for a division, its CPU or warranty data is probably missing: check <b>Missing specs</b> on the Dashboard.</li>
+        </ul>
+        <h5>Working the list</h5>
         <ol>
-          <li><b>Add a device.</b> From <b>Devices → In use</b> click the upgrade button on a row, or from the Dashboard's <b>Upgrade Forecast</b> list. Choose a <b>priority from 1 to 5</b> (5 = most urgent) and add notes.</li>
+          <li><b>Add a device by hand.</b> From <b>Devices → In use</b> click the upgrade button on a row, or from the Dashboard's <b>Upgrade Forecast</b> list. Choose a <b>priority from 1 to 5</b> (5 = most urgent) and add notes.</li>
           <li>Each device lands under its <b>site tab</b>. Devices whose site does not match the division's sites go under <b>Other</b>.</li>
           <li><b>Reorder</b> by dragging, or with the ↑ ↓ buttons. The order is yours to set: priority is a label, not an automatic sort.</li>
           <li><b>▶ Begin</b> starts a New Computer Setup for that device in Endpoint Provisioning and marks the entry <b>Working</b> with your name. The setup's progress then shows on the list.</li>
@@ -406,6 +416,7 @@ const Help = {
           <li><b>Vendor APIs</b>: keys for Lenovo, Dell and HP warranty and spec lookups. Secrets are stored hidden and are <b>never shown again</b>; type a new value to replace one. Dell and HP only give model and warranty date, not CPU or RAM.</li>
           <li><b>Regional</b>: the default time zone and the default Project Hub address, used by divisions that have not set their own.</li>
           <li><b>Sync</b>: whether the app syncs when it opens, how many vendor lookups one sync may make, and after how many days without a check-in a device counts as stale.</li>
+          <li><b>Upgrades</b>: the two rules that queue devices for an upgrade after each sync. <i>Processor older than (years)</i> (default 5) and <i>Warranty ended at least (months)</i> (default 0 = off). A device qualifies when either rule matches; set a rule to 0 to switch it off.</li>
           <li><b>Releases</b>: set <i>Latest released version</i> after handing out a new installer so people on older versions see "Update available"; raise <i>Oldest allowed version</i> to show a red "Update required".</li>
           <li><b>Other stored settings</b> are anything else in the list; the <b>Advanced</b> box adds a setting this screen does not know yet.</li>
         </ul>

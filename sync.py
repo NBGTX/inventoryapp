@@ -138,9 +138,30 @@ def run_sync(gc: GraphClient, commit: bool = False) -> dict:
         gc.add_log("Sync", "", "", actor=getattr(gc, "account_name", "") or "",
                    details=f"Intune ({gc.division['intune_category']} device category): {len(added)} added, {len(updated)} updated")
 
+    queued = queue_upgrades(gc) if (commit and not errors) else 0
     return {"moved": added, "added": len(added), "updated": len(updated),
             "refreshed": len(updated), "count": len(devices), "skipped": 0,
-            "deduped": dedupe["removed"], "errors": errors}
+            "deduped": dedupe["removed"], "queued_upgrades": queued, "errors": errors}
+
+
+def queue_upgrades(gc: GraphClient, hub=None) -> int:
+    """Add every device that meets the upgrade rules (Settings > Platform > Integrations > Upgrades) and is not already
+    queued, completed or removed. Idempotent; runs after every sync so the list fills without anyone opening the
+    dashboard. Returns how many were added. Never raises."""
+    try:
+        import settings_catalog as sc
+        import upgrade_rules
+        tagged = [(r, "In Use") for r in gc.get_in_use()] + \
+                 [(r, "In Stock") for r in gc.get_new_stock() if (r.get("status") or "").strip().lower() != "boneyard"]
+        needs = upgrade_rules.evaluate(tagged, sc.number(gc, "upgrade_cpu_years"), sc.number(gc, "upgrade_warranty_months"))
+        if not needs:
+            return 0
+        if hub is None:
+            from hub import hub_for
+            hub = hub_for(gc)
+        return int(hub.ensure_upgrades(needs, getattr(gc, "account_name", "") or "").get("added", 0))
+    except Exception:
+        return 0
 
 
 def dedupe_in_use(gc: GraphClient, commit: bool = True, items: list[dict] | None = None) -> dict:
@@ -340,8 +361,9 @@ def enrich_in_use(gc: GraphClient, commit: bool = True, cap: int | None = None) 
     if commit and (enriched or sites or users or mfas):
         gc.add_log("Enriched", "", "", actor=getattr(gc, "account_name", "") or "",
                    details=f"user for {users}, site for {sites}, MFA for {mfas}, specs for {enriched} device(s); {remaining} specs pending")
+    queued = queue_upgrades(gc) if (commit and enriched) else 0      # new CPU/warranty data may qualify more devices
     return {"enriched": enriched, "sites": sites, "users": users, "mfas": mfas,
-            "remaining": remaining, "errors": errors}
+            "remaining": remaining, "queued_upgrades": queued, "errors": errors}
 
 
 # Fields FORCE-refreshed from Intune on a master sync (overwrite even when already set).

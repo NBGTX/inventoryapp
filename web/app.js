@@ -570,6 +570,7 @@ const App = {
       if (b.dataset.action === "remove") DeleteView.open(b.dataset.serial);
       else if (b.dataset.action === "expand") App.toggleExpand(b.dataset.serial);
       else if (b.dataset.action === "upgrade") Upgrade.addPrompt(b.dataset.serial);
+      else if (b.dataset.action === "editspecs") Specs.open(b.dataset.serial);
       else if (b.dataset.action === "editstock") App.editStock(b.dataset.serial);
       else if (b.dataset.action === "restoreboneyard") App.restoreBoneyard(b.dataset.serial);
     });
@@ -1039,7 +1040,7 @@ const App = {
             <td class="mono" title="${attr(r.serial)}">${esc(r.serial)}</td><td class="cell-mfr" title="${attr(r.manufacturer)}">${esc(r.manufacturer)}</td><td title="${attr(r.model)}">${esc(r.model)}</td>
             <td class="cell-user" title="${attr(r.user)}">${esc(r.user)}</td><td>${mfaCell(r.mfa)}</td><td>${esc(r.site_tag)}</td><td>${esc(r.warranty)}</td>
             <td>${esc(day(r.last_checkin))}${checkinBadge(r.last_checkin)}</td>
-            <td style="text-align:right;white-space:nowrap">${act("⬆", "upgrade", r.serial, false, "Add to upgrade list")} ${act("✕", "remove", r.serial, true, "Remove")}</td></tr>` +
+            <td style="text-align:right;white-space:nowrap">${act("✎", "editspecs", r.serial, false, "Edit CPU, RAM, storage and warranty")} ${act("⬆", "upgrade", r.serial, false, "Add to upgrade list")} ${act("✕", "remove", r.serial, true, "Remove")}</td></tr>` +
             (open ? detail(r) : "");
         }).join("") +
         `</tbody></table>`;
@@ -1699,6 +1700,56 @@ const Sites = {
   },
 };
 
+/* ---- Edit specs: fill in CPU / RAM / storage / warranty by hand (for makers whose lookup is not available) ---- */
+const Specs = {
+  _t: null,
+  _find(serial) {
+    const all = [].concat(App.state.use || [], App.state.stock || [], (Dashboard._inv().missing_specs || []));
+    return all.find(r => r.serial === serial) || { serial };
+  },
+  open(serial) {
+    const r = this._find(serial), f = (id, label, val, ph, extra) => `<div class="field"><label>${label}</label><input id="${id}" value="${attr(val || "")}" placeholder="${attr(ph || "")}" autocomplete="off" ${extra || ""}></div>`;
+    document.getElementById("modalRoot").innerHTML =
+      `<div class="overlay"><div class="modal" style="width:560px;max-width:94vw;">
+        <div class="modal-head"><h3>Edit specs — <span class="mono">${esc(serial)}</span></h3><button onclick="Drill.close()">&times;</button></div>
+        <div class="modal-body">
+          <p class="muted" style="margin:0 0 10px;font-size:12.5px">${esc([r.manufacturer, r.model].filter(Boolean).join(" ") || "")}. Leave a box blank to leave it unknown. A sync never overwrites values you type here (except for Lenovo machines, which get their own lookup).</p>
+          ${f("sp_cpu", "Processor", r.cpu, "e.g. Intel Core i5-8250U", 'oninput="Specs.hint()"')}
+          <div id="sp_hint" class="muted" style="font-size:12px;margin:-6px 0 10px"></div>
+          <div class="fields">${f("sp_ram", "RAM", r.ram, "e.g. 16 GB", 'list="sp_ramlist"')}${f("sp_storage", "Storage", r.storage, "e.g. 512 GB")}</div>
+          <datalist id="sp_ramlist"><option value="4 GB"><option value="8 GB"><option value="16 GB"><option value="32 GB"><option value="64 GB"></datalist>
+          <div class="field" style="max-width:240px"><label>Warranty ends</label><input id="sp_warranty" type="date" value="${attr((r.warranty || "").slice(0, 10))}"></div>
+          <div class="up-actions"><button class="ghost" onclick="Drill.close()">Cancel</button>
+            <button class="primary" onclick="Specs.save('${attr(serial)}')">Save</button></div>
+        </div></div></div>`;
+    this.hint();
+    setTimeout(() => { const el = document.getElementById("sp_cpu"); if (el) el.focus(); }, 30);
+  },
+  /* live: what the app makes of the processor you typed (does it count as old?) */
+  hint() {
+    clearTimeout(this._t);
+    this._t = setTimeout(async () => {
+      const el = document.getElementById("sp_cpu"), h = document.getElementById("sp_hint");
+      if (!el || !h) return;
+      const v = el.value.trim();
+      if (!v) { h.textContent = ""; return; }
+      const r = await Backend.call("cpu_info", v);
+      const rules = (Dashboard._inv().upgrade_rules || {}), lim = rules.cpu_years || 0;
+      h.textContent = (r && r.year) ? `Recognized: released ${r.year} (${r.age} years old)${lim && r.age >= lim ? ". This will go on the Upgrade list." : "."}`
+        : "Not recognized as an Intel or AMD model, so it will not count for the age rule. Check the spelling (for example i5-8250U).";
+    }, 250);
+  },
+  async save(serial) {
+    const val = id => (document.getElementById(id).value || "").trim();
+    const r = await Backend.call("update_device_specs", serial, { cpu: val("sp_cpu"), ram: val("sp_ram"), storage: val("sp_storage"), warranty: val("sp_warranty") });
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+    Drill.close();
+    App.toast("Specs saved." + (r.queued_upgrades ? " " + r.queued_upgrades + " device(s) added to the Upgrade list." : ""));
+    try { await App.reload(); } catch (e) {}
+    try { Dashboard.load(); } catch (e) {}
+  },
+};
+
 /* ---- combined dashboard -------------------------------------------------- */
 // "10.0.22631" -> "10.0.22631 · Windows 11". Win 11 = build 22000+, Win 10 = 10240+,
 // anything older (major < 10) is flagged. Non-Windows / unknown -> just the number.
@@ -1793,6 +1844,7 @@ const Dashboard = {
       ${inv ? cstat(inv.needs_upgrade_count || 0, "Upgrade Forecast", "Dashboard.upgradePlan()", (inv.needs_upgrade_count ? "danger" : "")) : stat("–", "Upgrade Forecast")}
       ${inv ? cstat(inv.stale_checkin_count || 0, "No check-in " + (inv.stale_days || 30) + "+ days", "Dashboard.drillStale()", (inv.stale_checkin_count ? "warn" : "")) : stat("–", "No check-in " + ((inv && inv.stale_days) || 30) + "+ days")}
       ${inv && (inv.no_mfa_count || (inv.no_mfa && inv.no_mfa.length)) ? cstat(inv.no_mfa_count || 0, "Users without MFA", "Dashboard.drillNoMfa()", "danger") : ""}
+      ${inv && inv.missing_specs_count ? cstat(inv.missing_specs_count, "Missing specs", "Dashboard.drillMissingSpecs()", "warn") : ""}
       ${inv && inv.not_nbgw_count ? cstat(inv.not_nbgw_count, "Not part of " + Divisions.label(), "Dashboard.drillNotNbgw()") : ""}
     </div>`;
 
@@ -2025,13 +2077,29 @@ const Dashboard = {
       { label: "User", get: r => r.user, w: "24%" }, { label: "Warranty", get: r => r.warranty, w: "14%" },
       { label: "When", get: r => r.days < 0 ? `expired ${-r.days}d ago` : `in ${r.days}d`, sortGet: r => r.days, w: "12%" }]);
   },
+  _upgradeRulesText() {
+    const r = this._inv().upgrade_rules || { cpu_years: 5, warranty_months: 0 }, bits = [];
+    if (r.cpu_years) bits.push("processor " + r.cpu_years + "+ years old");
+    if (r.warranty_months) bits.push("warranty ended " + r.warranty_months + "+ months ago");
+    return bits.length ? bits.join(" or ") : "no rule is switched on";
+  },
   drillNeedsUpgrade() {
-    Drill.open("Needs upgrade — processor 5+ years old (oldest first)", this._inv().needs_upgrade || [], [
-      { label: "Serial", get: r => r.serial, mono: 1, w: "13%" }, { label: "Model", get: r => r.model, w: "17%" },
-      { label: "Processor", get: r => r.cpu, w: "20%" }, { label: "User", get: r => r.user, w: "20%" },
-      { label: "Released", get: r => r.year, w: "10%" }, { label: "Age", get: r => r.age + " yrs", sortGet: r => r.age, w: "8%" }],
-      { empty: "No devices with a processor 5+ years old — or CPU specs aren't filled in yet (run a sync).",
+    Drill.open("Needs upgrade — " + this._upgradeRulesText(), this._inv().needs_upgrade || [], [
+      { label: "Serial", get: r => r.serial, mono: 1, w: "12%" }, { label: "Model", get: r => r.model, w: "15%" },
+      { label: "User", get: r => r.user, w: "17%" }, { label: "Why", get: r => (r.reasons || []).join("; "), w: "40%" },
+      { label: "Priority", get: r => "P" + (r.priority || 3), sortGet: r => r.priority || 3, w: "8%" },
+      { label: "Source", get: r => r.source || "—", w: "8%" }],
+      { empty: "Nothing meets the upgrade rules. If CPU or warranty data is missing, see the Missing specs tile.",
         rowAction: { label: "⬆ Add to upgrade list", fn: r => Upgrade.addPrompt(r.serial) } });
+  },
+  drillMissingSpecs() {
+    Drill.open("Missing specs — fill in by hand", this._inv().missing_specs || [], [
+      { label: "Serial", get: r => r.serial, mono: 1, w: "13%" }, { label: "Device", get: r => r.device_name, w: "14%" },
+      { label: "Maker", get: r => r.manufacturer, w: "12%" }, { label: "Model", get: r => r.model, w: "18%" },
+      { label: "User", get: r => r.user, w: "16%" }, { label: "Missing", get: r => (r.missing || []).join(", "), sortGet: r => (r.missing || []).length, w: "14%" },
+      { label: "Source", get: r => r.source || "—", w: "8%" }],
+      { empty: "Every device has its CPU, RAM and warranty recorded.",
+        rowAction: { label: "✎ Edit specs", fn: r => Specs.open(r.serial) } });
   },
   // "Needs upgrade" tile: side-by-side LTR / BRI upgrade plan. Each column = top 5,
   // combining user-prioritized upgrade-list entries (priority first) with the most
@@ -2056,11 +2124,11 @@ const Dashboard = {
       const pr = it.priority || 3;
       const badge = it.listed
         ? `<span class="up-badge2 p${pr}" title="Priority ${pr}">P${pr}</span>`
-        : `<span class="tag warn" title="Oldest hardware, not yet queued">${it.age ? it.age + "yr" : "aged"}</span>`;
+        : `<span class="tag warn" title="${attr((it.reasons || []).join("; ") || "Meets the upgrade rules, not yet queued")}">${it.age ? it.age + "yr" : (it.months_past ? it.months_past + "mo" : "aged")}</span>`;
       const stat = it.status === "working" ? ` <span class="tag ok">Working</span>` : "";
       const who = it.listed
         ? `by ${esc(it.updated_by || it.added_by || "—")} · ${esc((it.updated_at || it.added_at || "").slice(0, 10))}`
-        : `CPU ${esc(it.year || "?")} · not yet queued`;
+        : `${esc((it.reasons && it.reasons[0]) || (it.year ? "CPU " + it.year : "aged"))} · not yet queued`;
       return `<div class="up-plan-item">
         <span class="up-pos">${i + 1}</span>${badge}
         <div class="up-main">
@@ -3213,6 +3281,7 @@ const Upgrade = {
       const d = (r && r.ok && r.data) || {};
       this.items = Array.isArray(d.items) ? d.items : [];
       this.log = (r && r.ok && r.log && Array.isArray(r.log.entries)) ? r.log.entries : [];
+      this.ignored = (r && r.ok && r.ignored) || 0;
     } catch (e) { this.items = []; this.log = []; }
     // linked setups -> live progress for "working" items
     this._setupsById = {};
@@ -3237,6 +3306,24 @@ const Upgrade = {
   tab(id) { this.activeTab = id; this.renderTabs(); this.render(); },
 
   render() {
+    this._renderBody();
+    const host = document.getElementById("upHost");
+    if (host && this.activeTab !== "log" && this.ignored) {
+      const n = document.createElement("div");
+      n.className = "up-ignored";
+      n.innerHTML = `<span>${this.ignored} device${this.ignored === 1 ? " is" : "s are"} skipped by the automatic rules because ${this.ignored === 1 ? "it was" : "they were"} completed or removed from this list before.</span>
+        <button class="ghost" onclick="Upgrade.allowAgain()">Allow them again</button>`;
+      host.appendChild(n);
+    }
+  },
+  async allowAgain() {
+    if (!confirm("Let the automatic rules add these devices again if they still meet the rules?")) return;
+    const r = await Backend.call("hub_clear_upgrade_ignored");
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not do that.", true);
+    App.toast(r.cleared + " device(s) can be added again at the next sync.");
+    this.load();
+  },
+  _renderBody() {
     const host = document.getElementById("upHost"); if (!host) return;
     if (this.activeTab === "log") { host.innerHTML = this._logHtml(); return; }
     const list = this.items.filter(it => this.siteKey(it.site) === this.activeTab);
@@ -4780,6 +4867,8 @@ Object.assign(Mock, {
     { key: "default_timezone", group: "Regional", label: "Default time zone", kind: "choice", secret: false, status: "active", help: "Used by every division that has not picked its own time zone. Blank = each PC's own time zone." },
     { key: "project_hub_url", group: "Regional", label: "Default Project Hub address", kind: "url", secret: false, status: "active", help: "Where the Project Hub sidebar item opens for divisions that have not set their own address (Settings > General). Blank = https://projecthub-dev.nucorservices.com/" },
     { key: "auto_sync", group: "Sync", label: "Sync automatically when the app opens", kind: "choice", secret: false, status: "active", options: [{ id: "on", label: "On (default)" }, { id: "off", label: "Off - only the Sync buttons sync" }], help: "With it on, opening the app starts a sync for the division you are in. Turn it off to stop that on every PC (the NBG_NO_AUTOSYNC setting on a single PC still wins)." },
+    { key: "upgrade_cpu_years", group: "Upgrades", label: "Queue for upgrade: processor older than (years)", kind: "number", secret: false, min: 0, max: 15, default: 5, status: "active", help: "A device whose processor generation was released this many years ago or more is added to the Upgrade list. 0 turns this rule off. Needs the device's CPU to be known." },
+    { key: "upgrade_warranty_months", group: "Upgrades", label: "Queue for upgrade: warranty ended at least (months)", kind: "number", secret: false, min: 0, max: 60, default: 0, status: "active", help: "A device whose warranty ended this many months ago or more is added to the Upgrade list. 0 (the default) turns this rule off. Works for any maker, because it only needs the warranty date." },
     { key: "intune_enrich_per_sync", group: "Sync", label: "Vendor lookups per sync run", kind: "number", secret: false, min: 0, max: 500, default: 75, status: "active", help: "How many devices get a Lenovo/Dell/HP spec lookup in one sync. Lower = gentler on vendor APIs, slower to fill in." },
     { key: "latest_version", group: "Releases", label: "Latest released version", kind: "version", secret: false, status: "active", help: "The newest NBG Hub build, for example 2026.10.15. Techs on an older build see an 'Update available' notice." },
     { key: "min_version", group: "Releases", label: "Oldest allowed version", kind: "version", secret: false, status: "active", help: "Builds older than this show a red 'Update required' notice. Raise it when a release changes how data is stored." },
@@ -4854,6 +4943,13 @@ Object.assign(Mock, {
   async get_sync_overview() {
     return { ok: true, super_admin: true, divisions: this._dv.map(d => d.id === "nbgw" ? { id: d.id, name: d.name, ...this._syncSt } : { id: d.id, name: d.name, never: true, stale: true }) };
   },
+  async cpu_info(text) { const m = /i[3579]-(\d{1,2})\d{3}/.exec(text || ""); const yr = m ? ({ 6: 2015, 7: 2016, 8: 2017, 9: 2018, 10: 2019, 11: 2020, 12: 2022, 13: 2023, 14: 2024 })[+m[1]] : null; return { ok: true, year: yr || null, age: yr ? new Date().getFullYear() - yr : null }; },
+  async update_device_specs(serial, f) {
+    if (f.warranty && !/^\d{4}-\d{2}-\d{2}$/.test(f.warranty)) return { ok: false, error: "Warranty must be a date like 2027-05-31." };
+    for (const list of [this._use, this._stock]) { const r = list.find(x => x.serial === serial); if (r) { ["cpu", "ram", "storage", "warranty"].forEach(k => { if (f[k] !== undefined) r[k] = f[k]; }); return { ok: true, queued_upgrades: 0 }; } }
+    return { ok: false, error: serial + " was not found in inventory." };
+  },
+  async hub_clear_upgrade_ignored() { return { ok: true, cleared: 0 }; },
   async get_update_info() { return { ok: true, current: "2026.10.01", latest: "", min: "", update_available: false, update_required: false }; },
   async get_my_role() { return { ok: true, role: "super", sections: ["models", "links", "access", "sites", "sql", "perms", "storage"] }; },
   async get_role_access() {
@@ -5107,6 +5203,7 @@ Object.assign(Mock, {
       .map(x => ({ serial: x.m.serial, model: x.m.model, user: x.m.user || "", warranty: x.v, days: Math.round((x.dt - today) / 86400000), source: x.src }))
       .sort((a, b) => a.days - b.days);
     const ty = today.getFullYear();
+    const _missing = Mock._use.concat(Mock._stock).filter(r => !r.cpu || !r.ram).map(r => ({ serial: r.serial, device_name: r.device_name || "", model: r.model, manufacturer: r.manufacturer, user: r.user || "", missing: [!r.cpu ? "CPU" : null, !r.ram ? "RAM" : null].filter(Boolean), source: r.user ? "In Use" : "In Stock" }));
     const needsUp = tagged.map(t => ({ ...t, y: cpuReleaseYear(t.m.cpu) }))
       .filter(x => x.y && (ty - x.y) >= 5)
       .map(x => ({ serial: x.m.serial, model: x.m.model, cpu: x.m.cpu, user: x.m.user || "", year: x.y, age: ty - x.y, source: x.src }))
@@ -5136,7 +5233,9 @@ Object.assign(Mock, {
         warranty: wb,
         not_nbgw_count: notNbgw.length, not_nbgw: notNbgw, not_nbgw_by_office: byOffice,
         no_upn_count: noUpn.length, no_upn: noUpn, warranty_soon: warrantySoon,
-        needs_upgrade_count: needsUp.length, needs_upgrade: needsUp,
+        needs_upgrade_count: needsUp.length, needs_upgrade: needsUp.map(d => ({ ...d, reasons: ["processor released " + d.year + " (" + d.age + " yrs old)"], priority: Math.max(1, Math.min(5, d.age - 3)) })),
+        upgrade_rules: { cpu_years: 5, warranty_months: 0 },
+        missing_specs_count: _missing.length, missing_specs: _missing,
         stale_checkin_count: staleCk.length, stale_checkin: staleCk,
         no_mfa_count: noMfa.length, no_mfa: noMfa,
         reserved_count: _reservedDevs.length, reserved: _reservedDevs,

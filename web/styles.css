@@ -805,3 +805,4 @@ body.is-busy button.primary,body.is-busy .modal-foot button,body.is-busy .set-ro
 .help-body li ul{margin-top:4px;}
 .help-body b{color:#fff;}
 .modal .help-box{max-width:none;}
+.up-ignored{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:14px;padding:10px 14px;border:1px dashed var(--border);border-radius:8px;font-size:12.5px;color:var(--muted);}

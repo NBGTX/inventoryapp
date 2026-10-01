@@ -520,7 +520,8 @@ const Settings = {
     const order = []; this.cat.forEach(c => { if (!order.includes(c.group)) order.push(c.group); });
     const blurb = { "Vendor APIs": "Credentials for warranty and spec lookups. Secrets are stored hidden and are never shown again; type a new value to replace one.",
                     "Regional": "Platform-wide defaults.", "Sync": "How the Intune sync behaves.",
-                    "Releases": "Tell techs when a newer NBG Hub build is out. Set these after you hand out a new installer." };
+                    "Releases": "Tell techs when a newer NBG Hub build is out. Set these after you hand out a new installer.",
+                    "Upgrades": "Which devices are queued for an upgrade automatically after each sync." };
     const row = (c, i) => {
       const st = c.status === "planned" ? SetUI.pill("plan", "Not used yet") : (c.kind === "secret" ? (c.is_set ? SetUI.pill("ok", "Set") : SetUI.pill("warn", "Not set")) : "");
       let ctl;

@@ -541,6 +541,7 @@ class Hub:
         data["items"] = items
         self._write_upgrades(data)
         self._change("Upgrade list", f"Added {serial} (P{pr})")
+        self.clear_upgrade_ignored(serial)             # someone chose to queue it again
         return {"items": items}
 
     def save_upgrades(self, data: dict, actor: str = "") -> dict:
@@ -557,19 +558,26 @@ class Hub:
         data = self.get_upgrades() or {"items": []}
         items = data.get("items") or []
         have = {(it.get("serial") or "").strip().lower() for it in items}
+        ignored = self.get_upgrade_ignored()          # completed or removed before: never queue those again by themselves
         now = _now_iso()
         who = actor or _user()
         added = 0
         for d in (devices or []):
             serial = (d.get("serial") or "").strip()
-            if not serial or serial.lower() in have:
+            if not serial or serial.lower() in have or serial.lower() in ignored:
                 continue
             try:
                 age = int(d.get("age") or 0)
             except (TypeError, ValueError):
                 age = 0
-            pr = max(1, min(5, age - 3)) if age else 3    # 5yr->2, 6->3, 7->4, 8+->5
-            note = f"Auto-added: processor released {d.get('year', '?')} ({age or '?'} yrs old)"
+            pr = d.get("priority")
+            if isinstance(pr, int) and 1 <= pr <= 5:
+                pass
+            else:
+                pr = max(1, min(5, age - 3)) if age else 3    # 5yr->2, 6->3, 7->4, 8+->5
+            reasons = d.get("reasons")
+            note = ("Auto-added: " + "; ".join(reasons)) if reasons else \
+                f"Auto-added: processor released {d.get('year', '?')} ({age or '?'} yrs old)"
             items.append({
                 "id": "up-" + datetime.now().strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:6],
                 "serial": serial,
@@ -592,6 +600,35 @@ class Hub:
             self._write_upgrades({"items": items})
             self._change("Upgrade list", f"Auto-added {added} aged device(s) from Needs upgrade")
         return {"added": added, "items": items}
+
+    # ---- devices the automatic rules must not queue again (completed or removed from the list) ----
+    def get_upgrade_ignored(self) -> dict:
+        return ((self.get_named("upgrade-ignore") or {}).get("serials")) or {}
+
+    def _ignore_upgrade(self, serial: str, why: str, actor: str = "") -> None:
+        serial = (serial or "").strip().lower()
+        if not serial:
+            return
+        try:
+            cur = self.get_upgrade_ignored()
+            cur[serial] = {"why": why, "by": actor or _user(), "at": _now_iso()}
+            self.put_named("upgrade-ignore", {"serials": cur})
+        except Exception:
+            pass                                       # losing this only means a device could be re-queued once
+
+    def clear_upgrade_ignored(self, serial: str | None = None) -> int:
+        """Forget one serial (or all with None) so the rules may queue it again. Returns how many were forgotten."""
+        try:
+            cur = self.get_upgrade_ignored()
+            if serial is not None:
+                n = 1 if cur.pop((serial or "").strip().lower(), None) else 0
+            else:
+                n, cur = len(cur), {}
+            if n:
+                self.put_named("upgrade-ignore", {"serials": cur})
+            return n
+        except Exception:
+            return 0
 
     def update_upgrade(self, item_id: str, priority=None, notes=None, actor: str = "") -> dict:
         """Edit an item's priority and/or notes, stamping who/when and appending to
@@ -642,8 +679,11 @@ class Hub:
     def remove_upgrade(self, item_id: str, actor: str = "") -> dict:
         """Drop an item WITHOUT logging it (for a mistaken add)."""
         data = self.get_upgrades() or {"items": []}
+        gone = next((it for it in (data.get("items") or []) if it.get("id") == item_id), None)
         items = [it for it in (data.get("items") or []) if it.get("id") != item_id]
         self._write_upgrades({"items": items})
+        if gone:
+            self._ignore_upgrade(gone.get("serial", ""), "removed", actor)
         return {"items": items}
 
     def complete_upgrade(self, item_id: str, actor: str = "") -> dict:
@@ -662,6 +702,7 @@ class Hub:
             self._write(self.upgrade_log_path,
                         json.dumps(log, indent=2, ensure_ascii=False))
             self._change("Upgrade list", f"Completed {rec.get('serial', '')}")
+            self._ignore_upgrade(rec.get("serial", ""), "completed", actor)
         return {"items": items}
 
     # ---- software inventory (cached from Intune) + mandatory rules --------

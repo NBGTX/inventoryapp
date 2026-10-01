@@ -1912,7 +1912,7 @@ class Api:
     def hub_get_upgrades(self) -> dict:
         try:
             h = self._hubc()
-            return {"ok": True, "data": h.get_upgrades(), "log": h.get_upgrade_log()}
+            return {"ok": True, "data": h.get_upgrades(), "log": h.get_upgrade_log(), "ignored": len(h.get_upgrade_ignored())}
         except Exception as e:
             return self._fail(e)
 
@@ -1931,6 +1931,56 @@ class Api:
     def hub_update_upgrade(self, item_id: str, priority=None, notes=None) -> dict:
         try:
             return {"ok": True, **self._hubc().update_upgrade(item_id, priority, notes, self._actor())}
+        except Exception as e:
+            return self._fail(e)
+
+    def hub_clear_upgrade_ignored(self) -> dict:
+        """Let the automatic rules queue devices that were completed or removed before (division admins)."""
+        try:
+            self._client().require_division_admin()
+            return {"ok": True, "cleared": self._hubc().clear_upgrade_ignored(None)}
+        except Exception as e:
+            return self._fail(e)
+
+    # ---- fill in missing specs by hand (Dashboard > Missing specs, Devices) ----
+    def cpu_info(self, text: str) -> dict:
+        """What the app makes of a typed CPU name: release year and age (feeds the live hint in the edit window)."""
+        try:
+            from datetime import date
+            from cpu import release_year
+            yr = release_year(text or "")
+            return {"ok": True, "year": yr, "age": (date.today().year - yr) if yr else None}
+        except Exception as e:
+            return self._fail(e)
+
+    def update_device_specs(self, serial: str, fields: dict) -> dict:
+        """Set CPU / RAM / storage / warranty on a device in In Use or New Stock. Only those four fields are accepted."""
+        try:
+            import re as _re
+            import sync
+            gc = self._client()
+            serial = (serial or "").strip()
+            key, item = "in_use", gc.find_by_serial("in_use", serial)
+            if not item:
+                key, item = "new_stock", gc.find_by_serial("new_stock", serial)
+            if not item:
+                return {"ok": False, "error": f"{serial} was not found in inventory."}
+            upd = {}
+            for k in ("cpu", "ram", "storage", "warranty"):
+                if k in (fields or {}) and fields[k] is not None:
+                    v = " ".join(str(fields[k]).split())
+                    if len(v) > 120:
+                        return {"ok": False, "error": f"{k.upper()} is too long."}
+                    if k == "warranty" and v and not _re.match(r"^\d{4}-\d{2}-\d{2}$", v):
+                        return {"ok": False, "error": "Warranty must be a date like 2027-05-31."}
+                    upd[k] = v
+            if not upd:
+                return {"ok": True}
+            gc.update_item(key, item["id"], upd)
+            gc.add_log("Specs edited", serial, gc._row(item["fields"], key, in_use=(key == "in_use")).get("model", ""),
+                       actor=gc.account_name or "", details=", ".join(f"{k}={v or '(blank)'}" for k, v in upd.items()))
+            queued = sync.queue_upgrades(gc) if ("cpu" in upd or "warranty" in upd) else 0
+            return {"ok": True, "queued_upgrades": queued}
         except Exception as e:
             return self._fail(e)
 
@@ -2069,23 +2119,14 @@ class Api:
                                           "user": r.get("user", ""), "warranty": wd.isoformat(), "days": days,
                                           "source": src})
             warranty_soon.sort(key=lambda x: x["days"])
-            # "Needs upgrade": processor generation released 5+ years ago
-            this_year = _today.year
-            needs_upgrade = []
-            for r, src in tagged:
-                yr = cpu_release_year(r.get("cpu"))
-                if yr and (this_year - yr) >= 5:
-                    needs_upgrade.append({"serial": r.get("serial", ""), "model": r.get("model", ""),
-                                          "cpu": r.get("cpu", ""), "user": r.get("user", ""),
-                                          "site": r.get("site_tag", ""), "device_name": r.get("device_name", ""),
-                                          "year": yr, "age": this_year - yr, "source": src})
-            needs_upgrade.sort(key=lambda x: (x["year"], x["serial"]))  # oldest first
-            # keep the shared upgrade list in sync: auto-add any aged device not
-            # already queued (idempotent — only writes when there's something new).
-            try:
-                self._hubc().ensure_upgrades(needs_upgrade, self._actor())
-            except Exception:
-                pass
+            # "Needs upgrade": the rules in Settings > Integrations > Upgrades (processor age, warranty age).
+            # Viewing the dashboard writes nothing: the Upgrade list is filled by the sync (sync.queue_upgrades).
+            import settings_catalog as _sc
+            import upgrade_rules
+            _cpu_years = _sc.number(gc, "upgrade_cpu_years")
+            _warr_months = _sc.number(gc, "upgrade_warranty_months")
+            needs_upgrade = upgrade_rules.evaluate(tagged, _cpu_years, _warr_months, _today)
+            missing_specs = upgrade_rules.missing_specs(tagged)
             # devices that haven't checked in to Intune in 30+ days (drill-down). Spans
             # both lists — a stock/loaner device can go stale too; Source shows which.
             stale_checkin = []
@@ -2118,6 +2159,9 @@ class Api:
                 "warranty_soon": warranty_soon,
                 "needs_upgrade_count": len(needs_upgrade),
                 "needs_upgrade": needs_upgrade,
+                "upgrade_rules": {"cpu_years": _cpu_years, "warranty_months": _warr_months},
+                "missing_specs_count": len(missing_specs),
+                "missing_specs": missing_specs,
                 "stale_days": stale_limit,
                 "stale_checkin_count": len(stale_checkin),
                 "stale_checkin": stale_checkin,
