@@ -1424,6 +1424,15 @@ class Api:
             divs = self._BG_DIVISIONS_DEFAULT
         dout = [{"label": (d.get("label") or d.get("company") or ""), "company": (d.get("company") or "").strip()}
                 for d in divs if isinstance(d, dict) and d.get("company")]
+        have = {d["company"].lower() for d in dout}
+        try:                                    # every division in the registry is offered, not just the built-in list
+            for rd in self._client().registry:
+                co = (rd.get("company_name") or "").strip()
+                if co and co.lower() not in have and rd.get("enabled") is not False:
+                    dout.append({"label": rd.get("name") or co, "company": co})
+                    have.add(co.lower())
+        except Exception:
+            pass
         return {"ok": True, "locations": out, "divisions": dout,
                 "nbgw_company": self._division_company()}
 

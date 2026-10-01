@@ -420,10 +420,13 @@ const Divisions = {
       }
     } catch (e) { /* keep fallback */ }
     App.state.siteTags = this.codes();
+    this.applyLabels();
     const sub = document.getElementById("divSub");
     if (sub && this.cur().name) sub.textContent = "Systems";
     this.renderSwitcher();
   },
+  /* Static page text that names the division uses <span class="div-label"></span>; fill every slot with the active division. */
+  applyLabels() { document.querySelectorAll(".div-label").forEach(el => { el.textContent = this.label(); }); },
   codes() { return this.sites.map(s => String(s.code).toUpperCase()); },
   invKey() { return this.current === "nbgw" ? "nbgw_inv" : "nbg_inv_" + this.current; },
   draftKey() { return this.current === "nbgw" ? "nbgw_hub_draft_v2" : "nbg_hub_draft_v2_" + this.current; },
@@ -2542,7 +2545,7 @@ const BGTools = {
     p.innerHTML =
       `<div class="chart-card" style="max-width:780px">
         <h4 style="margin:0 0 4px">Permissions Finder</h4>
-        <p class="sub-note" style="margin:0 0 14px">Find every group a teammate belongs to — directly and through nested groups (Entra) — then filter (e.g. type "boms"). Division narrows the search to one division (NBGW by default).</p>
+        <p class="sub-note" style="margin:0 0 14px">Find every group a teammate belongs to — directly and through nested groups (Entra) — then filter (e.g. type "boms"). Division narrows the search to one division (${esc(Divisions.label())} by default).</p>
         <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
           <div class="field" style="flex:2;min-width:200px;margin:0"><label>Teammate name</label>
             <input id="bgpSearch" placeholder="e.g. Alberto Padilla" autocomplete="off" onkeydown="if(event.key==='Enter')BGTools.permSearch()"></div>
@@ -3480,7 +3483,7 @@ const Depts = {
       </div>
       <div class="pb-add">
         <div style="position:relative;flex:1">
-          <input id="pbDeptInput" placeholder="Add a department to analyze… e.g. Detailing Dept Lathrop" autocomplete="off"
+          <input id="pbDeptInput" placeholder="Add a department to analyze… start typing its name" autocomplete="off"
             oninput="Depts._pbSuggest()" onkeydown="if(event.key==='Enter'){event.preventDefault();Depts._pbAnalyzeNew();}">
           <div id="pbSuggest" class="pb-suggest"></div>
         </div>
@@ -4542,7 +4545,7 @@ const Hub = {
         { text: "Mailboxes tab → + dropdown → Office 365 Mailbox", detail: "" },
         { text: "Enter required info and set the correct OU", detail: "" },
         { text: "Set User Logon Name to @nucor.com (all lowercase)", detail: "" },
-        { text: "Format display name as Lastname, Firstname (NBGW)", detail: "Capitalized first letters" } ] },
+        { text: "Format display name as Lastname, Firstname (" + (this.templateMode ? "DIVISION" : Divisions.label()) + ")", detail: "Capitalized first letters" } ] },
       { title: "AD attributes", note: "Values below are Brandenburg (CBC/BGLTR). For Utah use NBSUT / BGBRI.", items: [
         { text: "Set MAIL to @nucor.com (lowercase)", detail: "Depending on OU placement" },
         { text: "Set Primary SMTP to @nucor.com (proxy address)", detail: "" },

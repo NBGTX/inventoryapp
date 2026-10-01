@@ -480,3 +480,21 @@ class TemplateChecklists(unittest.TestCase):
         self.assertEqual(h.division["id"], "_template")
         self.assertEqual(h._store._div(), "_template")
         self.assertNotEqual(self.gc.division["id"], "_template")
+
+
+class BgToolsDivisionList(unittest.TestCase):
+    def test_every_registry_division_is_offered_once(self):
+        gc = make_client()
+        FakeSite(gc)
+        gc.registry = [
+            {"id": "nbgw", "name": "NBGW", "company_name": "Nucor Buildings Group West", "sites": []},          # already in the built-in list
+            {"id": "nbgnew", "name": "NBG - New Place", "company_name": "NBG - New Place", "sites": []},
+            {"id": "off", "name": "Off", "company_name": "Hidden Co", "sites": [], "enabled": False},
+        ]
+        api = app.Api()
+        api._gc = gc
+        divs = api.bg_locations()["divisions"]
+        companies = [d["company"] for d in divs]
+        self.assertEqual(companies.count("Nucor Buildings Group West"), 1)
+        self.assertIn("NBG - New Place", companies)
+        self.assertNotIn("Hidden Co", companies)
