@@ -157,7 +157,7 @@ const Mock = {
   _logIt(action, serial, model, details) {
     this._log.unshift({ when: new Date().toISOString(), action, serial, model, actor: "Demo User (mock data)", details });
   },
-  async get_status() { return { ok: true, signed_in: true, account: "Demo User (mock data)" }; },
+  async get_status() { return { ok: true, signed_in: true, account: "Demo User (mock data)", upn: "demo.user@nucor.com" }; },
   async sign_in() { return { ok: true, account: "Demo User (mock data)" }; },
   async sign_out() { return { ok: true }; },
   async app_version() { return { ok: true, version: "2026.10.01" }; },
@@ -596,7 +596,7 @@ const App = {
     });
     const st = st0 || await Backend.call("get_status");
     if (st && st.signed_in) {
-      this.state.account = st.account;
+      this.state.account = st.account; this.state.upn = st.upn || "";
       document.getElementById("acct").textContent = st.account || "Signed in";
       document.getElementById("signout").classList.remove("hidden");
       await this.startup();
@@ -2589,7 +2589,8 @@ const CopyPerms = {
   render(p) {
     this.s = { src: null, dst: null, cmp: null, picked: {}, res: null };
     let acct = ""; try { acct = localStorage.getItem("nbg_ad_admin_acct") || ""; } catch (e) {}
-    if (!acct) acct = this.guessAdmin((App.state && App.state.account) || "");
+    const who = () => (App.state && (App.state.upn || App.state.account)) || (document.getElementById("acct") || {}).textContent || "";
+    if (!acct) acct = this.guessAdmin(who());
     p.innerHTML = `<div class="chart-card">
       <h4 style="margin:0 0 4px">Copy Permissions</h4>${Help.box("bgt-copyperms")}
       <label class="cp-all"><input type="checkbox" id="cpAll"> Include people from other divisions</label>
@@ -2601,6 +2602,10 @@ const CopyPerms = {
       <div id="cpOut"></div>
       <div class="field cp-acct" style="max-width:380px;margin-top:14px"><label>Your admin account for writing (YubiKey)</label>
         <input id="cpAcct" placeholder="adm.name.pa" value="${attr(acct)}" autocomplete="off"></div></div>`;
+    if (!acct) Backend.call("get_status").then(st => {        // sign-in may still be resolving: ask again, fill only if the box is still empty
+      const el = document.getElementById("cpAcct"), g = this.guessAdmin((st && (st.upn || st.account)) || "");
+      if (el && !el.value && g) el.value = g;
+    });
   },
   /* adm.sanderson.azure@nucor.onmicrosoft.com -> adm.sanderson.pa ; sims.anderson@nucor.com -> adm.sanderson.pa */
   guessAdmin(upn) {

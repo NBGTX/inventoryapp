@@ -845,7 +845,7 @@ class Api:
             gc = self._client()
             gc.sign_in(interactive=False)
             self._trace(f"get_status: signed in as {gc.account_upn!r}")
-            return {"ok": True, "signed_in": True, "account": gc.account_name}
+            return {"ok": True, "signed_in": True, "account": gc.account_name, "upn": gc.account_upn}
         except Exception:
             return {"ok": True, "signed_in": False, "account": None}
 
