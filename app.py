@@ -377,6 +377,11 @@ class Api:
         try:
             import divisions
             gc = self._client()
+            if not gc.account_upn:               # the account decides which divisions are visible: know it first
+                try:
+                    gc.sign_in(interactive=False)
+                except Exception:
+                    pass
             gc.refresh_registry()
             if gc._div_changed:                    # registry refresh moved the active division
                 gc._div_changed = False

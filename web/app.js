@@ -447,7 +447,9 @@ const App = {
   async startup() {
     // The first division read can run before sign-in finished (empty list, blank name): redo it now that we are signed in.
     if (!Divisions.list.length) {
+      const before = Divisions.current;
       await Divisions.load();
+      if (Divisions.list.length && Divisions.current !== before) { location.reload(); return; }   // data painted for the wrong division: start over
       if (!Divisions.list.length) { await new Promise(r => setTimeout(r, 1500)); await Divisions.load(); }
       await Tz.load(); Settings.refreshAccess();
       if (!Divisions.list.length && Divisions._err) this.toast("Divisions: " + Divisions._err, true);
