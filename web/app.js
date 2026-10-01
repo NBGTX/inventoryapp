@@ -416,10 +416,10 @@ const App = {
     expanded: new Set(),
   },
 
-  async init(real) {
+  async init(real, st0) {
     Backend.real = real;
     this.loadVersion();
-    await Divisions.load();
+    if (!Divisions.list.length) await Divisions.load();
     DataMode.refresh();
     Settings.refreshAccess();
     await Tz.load();
@@ -432,7 +432,7 @@ const App = {
       else if (b.dataset.action === "editstock") App.editStock(b.dataset.serial);
       else if (b.dataset.action === "restoreboneyard") App.restoreBoneyard(b.dataset.serial);
     });
-    const st = await Backend.call("get_status");
+    const st = st0 || await Backend.call("get_status");
     if (st && st.signed_in) {
       this.state.account = st.account;
       document.getElementById("acct").textContent = st.account || "Signed in";
@@ -4864,14 +4864,21 @@ function refreshShared() {
     else if (active === "appview-hub") Hub.renderActivity();
   } catch (e) {}
 }
-function _boot(real) {
+async function _boot(real) {
   if (_started) return; _started = true;
   Backend.real = real;
+  /* Nothing reads data until sign-in is settled and the division is known: the signed-in account decides
+     which divisions it may see, and every list/hub read is scoped by the active division. */
+  let st = null;
+  try {
+    st = await Backend.call("get_status");                       // silent sign-in
+    if (st && st.signed_in) await Divisions.load();
+  } catch (e) {}
   Hub.boot();
   Sites.boot();
   Depts.load();
   Dashboard.load();
-  App.init(real);
+  App.init(real, st);
   setInterval(refreshShared, 45000);
   window.addEventListener("focus", refreshShared);
 }
