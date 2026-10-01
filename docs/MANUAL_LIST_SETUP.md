@@ -1,6 +1,6 @@
 # Create the central lists by hand (step by step)
 
-Site: **NBG Hub Data** (dedicated site; URL goes in config.json under `central.site_path`)
+Site: **NBG Hub Data** (https://nucor.sharepoint.com/sites/NBGTX.nbghubdata)
 You need: site Owner. File needed: `docs\CentralLists_Import.xlsx` (in this repo).
 
 You will make 7 lists from the Excel file and 1 document library by hand. Plan about 30 minutes.

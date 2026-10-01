@@ -35,7 +35,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$SiteUrl = 'https://nucor.sharepoint.com/sites/bg.ter.O365.TERALIT',
+    [string]$SiteUrl = 'https://nucor.sharepoint.com/sites/NBGTX.nbghubdata',
     [string]$Prefix = 'Inventory',
     [switch]$Commit,
     [switch]$SeedNbgw

@@ -15,7 +15,7 @@ Target: one **central** SharePoint site that every division's users can reach, h
 | Division config (companyName, Intune category, site list, AD/SQL) | Hardcoded for NBGW in `graph.py` / `app.py` / `hub.py` / `web/app.js` | `Divisions` list (and `divisions` in config.json as a fallback) |
 | Timesheet week locks | SQL `NBSTimesheet.dbo.WeekLocked` | Unchanged |
 
-**Central site:** `https://nucor.sharepoint.com/sites/bg.ter.O365.TERALIT` (main IT site; owner: the project owner).
+**Central site:** `https://nucor.sharepoint.com/sites/NBGTX.nbghubdata` (dedicated site "NBG Hub Data"; owner: the project owner).
 
 ## 2. Decisions and deliberate modifications
 
@@ -67,7 +67,7 @@ Install-Module Microsoft.Graph.Authentication -Scope CurrentUser   # once
 | B | **Central site config**: `central_site_host`, `central_site_path`, central list names; division rows read from the `Divisions` list. | `graph.py` `_apply_division`, `divisions.py` `load_registry` |
 | C | **Hub storage swap**: `Hub` methods read/write `Hub Items` rows instead of JSON files (atomic per item). | `hub.py` (bulk of the work) |
 | D | **UI**: replace 72 hardcoded `LTR`/`BRI` references with sites from `get_divisions`; add the division switcher. | `web/app.js` |
-| E | **Loader** from the local snapshot into the central lists (section 5). | new `tools\load_central.py` |
+| E | **Loader** from the local snapshot into the central lists (section 5). **Done:** `tools\load_central.py` (dry-run default, `--commit`, `--wipe`). Hub items not loaded yet (needs C). | `tools\load_central.py` |
 | F | Bump version on release (`version.py`, `version.txt`, Mock strings). | Rule 3 |
 
 Done so far: division registry (`divisions.py`), division-aware Graph/Hub/site mapping, `get_divisions` / `switch_division`, local snapshot mode (`localstore.py`).
