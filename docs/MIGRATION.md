@@ -109,3 +109,7 @@ Source of truth for the load is the **local snapshot**, which is a read-only cop
 ## 7. Manual alternative
 
 If the Graph PowerShell app is not available, create the lists by hand: see [MANUAL_LIST_SETUP.md](MANUAL_LIST_SETUP.md).
+
+## 8. Note: typed vs text columns
+
+The PowerShell script creates `Enabled` as Yes/No and `Rev` as Number. The manual/Excel route leaves them as text (SharePoint cannot convert text to Yes/No or Number). The app code must accept both (`Enabled`: true/"yes"/"true"/1; `Rev`: int or numeric string).
