@@ -683,3 +683,12 @@ details.miss-card .miss-row{padding:5px 14px;}
 .ms-table{width:100%;border-collapse:collapse;}
 .ms-table th,.ms-table td{padding:8px 10px;border-bottom:1px solid var(--border);text-align:left;font-size:13px;}
 .ms-tag{background:rgba(224,165,65,.18);color:var(--amber);border-radius:4px;padding:1px 6px;font-size:11px;margin-left:4px;}
+
+/* divisions: colours for the 3rd+ site, header switcher */
+.stack-legend .lg.s2::before,.stack-legend .lg.s9::before{background:#e0a541;}
+.stack-legend .lg.s3::before{background:#c98bd1;}
+.stack-track .seg.s2,.stack-track .seg.s9{background:linear-gradient(90deg,#a87a22,#e0a541);}
+.stack-track .seg.s3{background:linear-gradient(90deg,#8a5a94,#c98bd1);}
+.hs-site-tag.s2,.hs-site-tag.s9{background:#b8862e;}
+.hs-site-tag.s3{background:#8a5a94;}
+.div-switch{display:block;margin-top:4px;max-width:200px;background:var(--darker);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 6px;font-size:12px;}

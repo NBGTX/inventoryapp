@@ -316,6 +316,47 @@ const DataMode = {
   },
 };
 
+/* ---- divisions (tenants): sites, labels, switcher ------------------------ */
+const Divisions = {
+  list: [], current: "nbgw",
+  // offline/older-backend fallback = NBGW's two sites
+  sites: [{ code: "LTR", name: "Lathrop, CA" }, { code: "BRI", name: "Brigham City, UT" }],
+  async load() {
+    try {
+      const r = await Backend.call("get_divisions");
+      if (r && r.ok) {
+        this.list = r.divisions || []; this.current = r.current;
+        const d = this.list.find(x => x.id === this.current);
+        if (d) this.sites = d.sites || [];
+      }
+    } catch (e) { /* keep fallback */ }
+    App.state.siteTags = this.codes();
+    const sub = document.getElementById("divSub");
+    if (sub && this.cur().name) sub.textContent = this.label() + " · Systems";
+    this.renderSwitcher();
+  },
+  codes() { return this.sites.map(s => String(s.code).toUpperCase()); },
+  cur() { return this.list.find(x => x.id === this.current) || { id: this.current, name: "", company_name: "" }; },
+  label() { const n = this.cur().name || ""; return (n.split(" - ")[0] || n || "this division").trim(); },
+  /* a site code that belongs to the active division, else "Other" */
+  bucket(s) { const u = String(s || "").trim().toUpperCase(); return this.codes().includes(u) ? u : "Other"; },
+  /* css class for a site: first two keep the original ltr/bri colours */
+  cls(code) { if (code === "Other") return "other"; const i = this.codes().indexOf(code); return i === 0 ? "ltr" : i === 1 ? "bri" : "s" + (i < 0 ? 9 : i); },
+  renderSwitcher() {
+    const el = document.getElementById("divSwitch");
+    if (!el) return;
+    if (this.list.length < 2) { el.classList.add("hidden"); return; }
+    el.classList.remove("hidden");
+    el.innerHTML = this.list.map(d => `<option value="${attr(d.id)}"${d.id === this.current ? " selected" : ""}>${esc(d.name)}</option>`).join("");
+  },
+  async switchTo(id) {
+    if (!id || id === this.current) return;
+    const r = await Backend.call("switch_division", id);
+    if (!r || !r.ok) { App.toast((r && r.error) || "Could not switch division.", true); this.renderSwitcher(); return; }
+    location.reload();
+  },
+};
+
 /* ---- master settings (super admin, above divisions) ----------------------- */
 const MasterSettings = {
   async refresh() {
@@ -366,6 +407,7 @@ const App = {
   async init(real) {
     Backend.real = real;
     this.loadVersion();
+    await Divisions.load();
     DataMode.refresh();
     MasterSettings.refresh();
     document.getElementById("tableWrap").addEventListener("click", e => {
@@ -1532,7 +1574,7 @@ const Dashboard = {
       ${inv ? cstat(inv.needs_upgrade_count || 0, "Upgrade Forecast", "Dashboard.upgradePlan()", (inv.needs_upgrade_count ? "danger" : "")) : stat("–", "Upgrade Forecast")}
       ${inv ? cstat(inv.stale_checkin_count || 0, "No check-in 30+ days", "Dashboard.drillStale()", (inv.stale_checkin_count ? "warn" : "")) : stat("–", "No check-in 30+ days")}
       ${inv && (inv.no_mfa_count || (inv.no_mfa && inv.no_mfa.length)) ? cstat(inv.no_mfa_count || 0, "Users without MFA", "Dashboard.drillNoMfa()", "danger") : ""}
-      ${inv && inv.not_nbgw_count ? cstat(inv.not_nbgw_count, "Not part of NBGW", "Dashboard.drillNotNbgw()") : ""}
+      ${inv && inv.not_nbgw_count ? cstat(inv.not_nbgw_count, "Not part of " + Divisions.label(), "Dashboard.drillNotNbgw()") : ""}
     </div>`;
 
     const bar = (label, val, max, cls, drill) => `<div class="bar-row${drill ? " clickable" : ""}"${drill ? ` data-list="${attr(drill.list)}" data-key="${attr(drill.key)}"` : ""}>
@@ -1576,7 +1618,7 @@ const Dashboard = {
       const nuCol = site => { const l = listFor(site);
         return `<div class="nu-col"><h5>${site}</h5>${l.length ? l.map(nuRow).join("") : `<div class="empty" style="padding:12px;font-size:12px">None queued.</div>`}</div>`; };
       const nuCard = `<div class="chart-card"><h4>Upgrade Forecast — by site <button class="card-link" onclick="Nav.go('upgrades')">Open list ›</button></h4>
-        <div class="nu-grid">${nuCol("LTR")}${nuCol("BRI")}</div></div>`;
+        <div class="nu-grid" style="grid-template-columns:repeat(${Math.max(1, Divisions.codes().length)},1fr)">${Divisions.codes().map(nuCol).join("")}</div></div>`;
 
       html += `<div class="dash-grid" style="margin-top:18px">${warrCard}${nuCard}</div>`;
     } else {
@@ -1701,17 +1743,17 @@ const Dashboard = {
     const maxSD = Math.max(1, ...entries.map(e => e[1]));
     const hasOther = Object.values(bySite).some(s => s.Other);
     const chip = (site, label, cls) => `<span class="lg ${cls} clickable${f === site ? " active" : ""}" data-dsite="${site}">${label}</span>`;
-    const legend = `<div class="stack-legend">${chip("all", "All", "all")}${chip("LTR", "LTR", "ltr")}${chip("BRI", "BRI", "bri")}${hasOther ? chip("Other", "Other", "other") : ""}</div>`;
+    const legend = `<div class="stack-legend">${chip("all", "All", "all")}${Divisions.codes().map(c => chip(c, c, Divisions.cls(c))).join("")}${hasOther ? chip("Other", "Other", "other") : ""}</div>`;
     const rows = entries.map(([k, total]) => {
       if (f === "all") {
-        const s = bySite[k] || {}, ltr = s.LTR || 0, bri = s.BRI || 0, other = s.Other || 0;
-        const nums = [ltr ? `LTR <b>${ltr}</b>` : "", bri ? `BRI <b>${bri}</b>` : "", other ? `Other <b>${other}</b>` : ""].filter(Boolean).join(" · ") || "0";
+        const s = bySite[k] || {}, codes = [...Divisions.codes(), "Other"];
+        const nums = codes.filter(c => s[c]).map(c => `${c} <b>${s[c]}</b>`).join(" · ") || "0";
         const seg = (site, n, cls) => n ? `<div class="seg ${cls}" data-dept="${attr(k)}" data-site="${site}" style="width:${Math.round(n / maxSD * 100)}%" title="${site}: ${n}"></div>` : "";
         return `<div class="stack-row clickable" data-dept="${attr(k)}"><div class="bl">${esc(k)}</div>
-          <div class="stack-track">${seg("LTR", ltr, "ltr")}${seg("BRI", bri, "bri")}${seg("Other", other, "other")}</div>
+          <div class="stack-track">${codes.map(c => seg(c, s[c] || 0, Divisions.cls(c))).join("")}</div>
           <div class="stack-nums">${nums}</div></div>`;
       }
-      const cls = f === "LTR" ? "ltr" : f === "BRI" ? "bri" : "other";
+      const cls = Divisions.cls(f);
       return `<div class="stack-row clickable" data-dept="${attr(k)}" data-site="${f}"><div class="bl">${esc(k)}</div>
         <div class="stack-track"><div class="seg ${cls}" style="width:${Math.round(total / maxSD * 100)}%"></div></div>
         <div class="stack-nums">${f} <b>${total}</b></div></div>`;
@@ -1775,7 +1817,7 @@ const Dashboard = {
   // "Needs upgrade" tile: side-by-side LTR / BRI upgrade plan. Each column = top 5,
   // combining user-prioritized upgrade-list entries (priority first) with the most
   // out-of-date (oldest CPU) devices not yet queued. Links to the Upgrades tab.
-  _bucket(s) { const u = (s || "").trim().toUpperCase(); return u === "LTR" ? "LTR" : u === "BRI" ? "BRI" : "Other"; },
+  _bucket(s) { return Divisions.bucket(s); },
   async upgradePlan() {
     const aged = this._inv().needs_upgrade || [];
     let items = [];
@@ -1819,7 +1861,7 @@ const Dashboard = {
         <div class="modal-head"><h3>Upgrade Forecast — by site</h3><button onclick="Drill.close()">&times;</button></div>
         <div class="modal-body" style="max-height:74vh;overflow:auto;">
           <p class="sub-note" style="margin:0 0 14px">Every device meeting upgrade criteria, by site. Open the Upgrade list to set priorities, add notes, and Begin Upgrade.</p>
-          <div class="up-plan-grid">${column("LTR")}${column("BRI")}</div>
+          <div class="up-plan-grid" style="grid-template-columns:repeat(${Math.max(1, Divisions.codes().length)},1fr)">${Divisions.codes().map(column).join("")}</div>
         </div>
         <div class="modal-foot"><button class="ghost" onclick="Drill.close()">Close</button>
           <button class="primary" onclick="Drill.close(); Nav.go('upgrades')">Open Upgrade list →</button></div>
@@ -1910,10 +1952,10 @@ const Dashboard = {
   },
   drillNotNbgw() {
     const inv = this._inv();
-    Drill.open("Not part of NBGW", inv.not_nbgw || [], [
+    Drill.open("Not part of " + Divisions.label(), inv.not_nbgw || [], [
       { label: "Serial", get: r => r.serial, mono: 1 }, { label: "Model", get: r => r.model },
       { label: "Primary user", get: r => r.user }, { label: "Office location", get: r => r.office }],
-      { chips: inv.not_nbgw_by_office, empty: "No devices outside NBGW (LTR/BRI) yet — fills in once directory access is granted and a sync resolves each user's location." });
+      { chips: inv.not_nbgw_by_office, empty: "No devices outside " + Divisions.label() + " (" + Divisions.codes().join("/") + ") yet — fills in once directory access is granted and a sync resolves each user's location." });
   },
   drillSite(list, key) {
     // The dashboard buckets a blank site as "—"; rows store it as "". Treat both as "no site".
@@ -1931,7 +1973,7 @@ const Dashboard = {
     { label: "Serial", get: r => r.serial, mono: 1 }, { label: "Model", get: r => r.model },
     { label: "CPU", get: r => r.cpu }, { label: "RAM", get: r => r.ram },
     { label: "Site", get: r => r.site_tag }, { label: "Added", get: r => r.date_added }],
-  _siteKey(v) { v = (v || "").trim().toUpperCase(); return (v === "LTR" || v === "BRI") ? v : "Other"; },
+  _siteKey(v) { return Divisions.bucket(v); },
 
   drillDept(dept) { this._deptDrill(dept, null); },
   drillDeptSite(dept, siteKey) { this._deptDrill(dept, siteKey); },
@@ -2002,7 +2044,7 @@ const HotSpares = {
     { key: "Engineering", label: "Engineering" },
     { key: "Other", label: "Estimating / PCs / Other" },
   ],
-  SITES: ["LTR", "BRI"],
+  get SITES() { return Divisions.codes(); },
   _spares: [],
   _expanded: {},
   _modalOpen: false,
@@ -2071,7 +2113,7 @@ const HotSpares = {
       const rows = list.length ? list.map(hs => this._entry(hs)).join("") : `<div class="hs-empty">No spares</div>`;
       return `<div class="hs-dept"><div class="hs-dept-h">${esc(d.label)}<span class="hs-count">${list.length}</span></div>${rows}</div>`;
     }).join("");
-    return `<div class="hs-site"><div class="hs-site-h"><span class="hs-site-tag ${site.toLowerCase()}">${esc(site)}</span></div>${sections}</div>`;
+    return `<div class="hs-site"><div class="hs-site-h"><span class="hs-site-tag ${Divisions.cls(site)}">${esc(site)}</span></div>${sections}</div>`;
   },
   _entry(hs) {
     const open = !!this._expanded[hs.id];
@@ -2157,7 +2199,7 @@ const HotSpares = {
   },
   _openForm(hs) {
     const isEdit = !!hs;
-    const site = hs ? (hs.site || "LTR") : "LTR", dept = hs ? (hs.dept || "Detailing") : "Detailing";
+    const site = hs ? (hs.site || Divisions.codes()[0] || "") : (Divisions.codes()[0] || ""), dept = hs ? (hs.dept || "Detailing") : "Detailing";
     const siteOpts = this.SITES.map(s => `<option${s === site ? " selected" : ""}>${s}</option>`).join("");
     const deptOpts = this.DEPTS.map(d => `<option value="${attr(d.key)}"${d.key === dept ? " selected" : ""}>${esc(d.label)}</option>`).join("");
     document.getElementById("modalRoot").innerHTML =
@@ -2885,9 +2927,9 @@ const Software = {
    Stored shared + no-auth in the Endpoint Hub folder (Backend hub_*_upgrade). */
 const Upgrade = {
   items: [], log: [], activeTab: "LTR", _pri: 3,
-  SITES: ["LTR", "BRI", "Other"],
+  get SITES() { return [...Divisions.codes(), "Other"]; },
 
-  siteKey(site) { const s = (site || "").trim().toUpperCase(); return s === "LTR" ? "LTR" : s === "BRI" ? "BRI" : "Other"; },
+  siteKey(site) { return Divisions.bucket(site); },
 
   resolveDevice(serial) {
     const s = String(serial);
@@ -2913,7 +2955,7 @@ const Upgrade = {
         this._setupsById[s.id] = { pct, status: s.status, done: s.done || 0, total: s.total || 0 };
       });
     } catch (e) {}
-    if (!["LTR", "BRI", "Other", "log"].includes(this.activeTab)) this.activeTab = "LTR";
+    if (![...this.SITES, "log"].includes(this.activeTab)) this.activeTab = this.SITES[0];
     this.renderTabs(); this.render();
   },
 
