@@ -65,9 +65,9 @@ Install-Module Microsoft.Graph.Authentication -Scope CurrentUser   # once
 |---|---|---|
 | A | **Division filtering**: every list read filters `Division eq '<id>'`; every create sets `Division`. | `graph.py` `_items_raw`, `_create_item`, `find_by_serial`, `get_log` |
 | B | **Central site config**: `central_site_host`, `central_site_path`, central list names; division rows read from the `Divisions` list. | `graph.py` `_apply_division`, `divisions.py` `load_registry` |
-| C | **Hub storage swap**: `Hub` methods read/write `Hub Items` rows instead of JSON files (atomic per item). | `hub.py` (bulk of the work) |
+| C | **Hub storage swap. Done:** `Hub` reads/writes `Hub Items` rows via `hubstore.py` when the central site is configured (JSON files otherwise). Documents over ~50k chars are split into chunk rows; each write bumps `Rev`, and a stale editor gets a conflict error instead of silently overwriting. Setup HTML is stored as `blob` rows for now (a `Hub Files` library upload is a later improvement). | `hub.py`, `hubstore.py` |
 | D | **UI**: replace 72 hardcoded `LTR`/`BRI` references with sites from `get_divisions`; add the division switcher. | `web/app.js` |
-| E | **Loader** from the local snapshot into the central lists (section 5). **Done:** `tools\load_central.py` (dry-run default, `--commit`, `--wipe`). Hub items not loaded yet (needs C). | `tools\load_central.py` |
+| E | **Loader** from the local snapshot into the central lists (section 5). **Done:** `tools\load_central.py` (dry-run default, `--commit`, `--wipe`). Hub JSON: `--hub` / `--hub-only` (needs C, done). | `tools\load_central.py` |
 | F | Bump version on release (`version.py`, `version.txt`, Mock strings). | Rule 3 |
 
 Done so far: division registry (`divisions.py`), division-aware Graph/Hub/site mapping, `get_divisions` / `switch_division`, local snapshot mode (`localstore.py`).

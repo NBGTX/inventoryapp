@@ -70,7 +70,7 @@ def _config_logs_folder() -> str | None:
 class Hub:
     """The shared-folder Endpoint Hub store. All methods are cheap file IO."""
 
-    def __init__(self, logs_folder: str | None = None, division: dict | None = None):
+    def __init__(self, logs_folder: str | None = None, division: dict | None = None, store=None):
         # Resolve the shared data root. A configured `logs_folder` may use
         # environment variables (e.g. %ONEDRIVE%) and, crucially, may be RELATIVE —
         # in which case it resolves against the .exe's folder. That lets a single
@@ -91,6 +91,7 @@ class Hub:
             self.logs = os.path.join(_app_dir(), "SystemsData")
             self.logs_source = "default"
         import divisions
+        self._store = store          # SharePointHubStore (central) or None (JSON files)
         self.division = division or divisions.load_registry({})[0]
         self.hub = os.path.join(self.logs, divisions.hub_folder_name(self.division))
         self.setups_dir = os.path.join(self.hub, "setups")
@@ -109,8 +110,9 @@ class Hub:
         self.perm_baselines_path = os.path.join(self.hub, "nbgw-perm-baselines.json")
         appdata = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
         self.history_dir = os.path.join(appdata, "NBGW-Endpoint-Hub", "config-history")
-        for d in (self.logs, self.hub, self.setups_dir, self.changes_dir,
-                  self.feedback_dir, self.history_dir):
+        dirs = (self.history_dir,) if store else (self.logs, self.hub, self.setups_dir, self.changes_dir,
+                                                  self.feedback_dir, self.history_dir)
+        for d in dirs:
             try:
                 os.makedirs(d, exist_ok=True)
             except Exception:
@@ -127,8 +129,30 @@ class Hub:
         import divisions
         return divisions.site_bucket(self.division, site)
 
+    # ---- storage layer ----------------------------------------------------
+    # Every hub read/write goes through _exists/_read_json/_write/_read_dir/_remove. With a
+    # central store, hub paths map to rows (kind, doc); anything else (local config history)
+    # stays a plain file.
+    def _loc(self, path: str):
+        """(kind, doc) when `path` is a hub path the central store owns, else None."""
+        if not self._store:
+            return None
+        from hubstore import kind_for_file
+        d = os.path.normcase(os.path.dirname(os.path.normpath(path)))
+        name = os.path.basename(path)
+        stem = os.path.splitext(name)[0]
+        hub = os.path.normcase(os.path.normpath(self.hub))
+        logs = os.path.normcase(os.path.normpath(self.logs))
+        if d == hub:
+            return kind_for_file(stem), "main"
+        if os.path.dirname(d) == hub:
+            return os.path.basename(d), stem
+        if d == logs:
+            return "blob", name
+        return None
+
     @staticmethod
-    def _write(path: str, text: str) -> None:
+    def _write_file(path: str, text: str) -> None:
         # Atomic write: fully write a temp file in the same folder, then replace.
         # OneDrive/SharePoint sync can grab a file mid-write; writing to a temp and
         # os.replace()-ing it means readers/sync never see a half-written JSON.
@@ -139,22 +163,53 @@ class Hub:
             os.fsync(f.fileno())
         os.replace(tmp, path)
 
-    @staticmethod
-    def _read_json(path: str):
+    def _write(self, path: str, text: str) -> None:
+        loc = self._loc(path)
+        if loc:
+            self._store.write(loc[0], loc[1], text)
+        else:
+            self._write_file(path, text)
+
+    def _read_json(self, path: str):
+        loc = self._loc(path)
+        if loc:
+            text = self._store.read(loc[0], loc[1])
+            if text is None:
+                raise FileNotFoundError(path)
+            return json.loads(text)
         with open(path, "r", encoding="utf-8-sig") as f:
             return json.load(f)
 
+    def _exists(self, path: str) -> bool:
+        loc = self._loc(path)
+        return self._store.exists(loc[0], loc[1]) if loc else os.path.exists(path)
+
+    def _remove(self, path: str) -> None:
+        loc = self._loc(path)
+        if loc:
+            self._store.remove(loc[0], loc[1])
+        else:
+            os.remove(path)
+
     def _read_dir(self, folder: str) -> list:
         out = []
-        if not os.path.isdir(folder):
-            return out
-        for name in os.listdir(folder):
-            if not name.lower().endswith(".json"):
-                continue
-            try:
-                out.append(self._read_json(os.path.join(folder, name)))
-            except Exception:
-                pass
+        if self._store and self._loc(os.path.join(folder, "x.json")):
+            kind = self._loc(os.path.join(folder, "x.json"))[0]
+            for _doc, text in self._store.list_docs(kind):
+                try:
+                    out.append(json.loads(text))
+                except Exception:
+                    pass
+        else:
+            if not os.path.isdir(folder):
+                return out
+            for name in os.listdir(folder):
+                if not name.lower().endswith(".json"):
+                    continue
+                try:
+                    out.append(self._read_json(os.path.join(folder, name)))
+                except Exception:
+                    pass
 
         def best_date(o):
             for k in ("updatedAt", "when", "at", "createdAt"):
@@ -203,7 +258,7 @@ class Hub:
 
     # ---- config -----------------------------------------------------------
     def get_config(self):
-        if os.path.exists(self.config_path):
+        if self._exists(self.config_path):
             try:
                 return self._read_json(self.config_path)
             except Exception:
@@ -238,7 +293,7 @@ class Hub:
     # it (Detailing / Engineering / Sales / Shared / ...), so the dashboard can
     # roll up how many of each department's machines are in stock for deployment.
     def get_model_departments(self):
-        if os.path.exists(self.model_dept_path):
+        if self._exists(self.model_dept_path):
             try:
                 return self._read_json(self.model_dept_path)
             except Exception:
@@ -267,7 +322,7 @@ class Hub:
     # {categories:[...], sites:[{id,name,url,icon,mode,category}], pin:"...."}.
     # Groups the embedded web tools by use case; pin gates the Configuration UI.
     def get_sites(self):
-        if os.path.exists(self.sites_path):
+        if self._exists(self.sites_path):
             try:
                 return self._read_json(self.sites_path)
             except Exception:
@@ -301,7 +356,7 @@ class Hub:
     # Drives the "Missing Groups" tool so we can spot users who lack groups their
     # department peers have.
     def get_perm_baselines(self):
-        if os.path.exists(self.perm_baselines_path):
+        if self._exists(self.perm_baselines_path):
             try:
                 return self._read_json(self.perm_baselines_path)
             except Exception:
@@ -343,7 +398,7 @@ class Hub:
     # when the upgrade is done, which moves the record to the completion log.
     # {items:[{id,serial,device_name,model,user,site,priority,notes,added_by,added_at}]}
     def get_upgrades(self):
-        if os.path.exists(self.upgrades_path):
+        if self._exists(self.upgrades_path):
             try:
                 return self._read_json(self.upgrades_path)
             except Exception:
@@ -351,7 +406,7 @@ class Hub:
         return None
 
     def get_upgrade_log(self):
-        if os.path.exists(self.upgrade_log_path):
+        if self._exists(self.upgrade_log_path):
             try:
                 return self._read_json(self.upgrade_log_path)
             except Exception:
@@ -543,7 +598,7 @@ class Hub:
 
     # ---- software inventory (cached from Intune) + mandatory rules --------
     def get_software(self):
-        if os.path.exists(self.software_path):
+        if self._exists(self.software_path):
             try:
                 return self._read_json(self.software_path)
             except Exception:
@@ -554,7 +609,7 @@ class Hub:
         self._write(self.software_path, json.dumps(data or {}, ensure_ascii=False))
 
     def get_software_rules(self):
-        if os.path.exists(self.software_rules_path):
+        if self._exists(self.software_rules_path):
             try:
                 return self._read_json(self.software_rules_path)
             except Exception:
@@ -578,7 +633,7 @@ class Hub:
         path = os.path.join(self.setups_dir, self._safe(sid) + ".json")
         # preserve createdAt / createdBy across updates
         created_by = _user()
-        if os.path.exists(path):
+        if self._exists(path):
             try:
                 prev = self._read_json(path)
                 created_by = prev.get("createdBy") or created_by
@@ -593,7 +648,8 @@ class Hub:
         self._write(path, json.dumps(entry, ensure_ascii=False))
         if html and filename:
             try:
-                os.makedirs(self.logs, exist_ok=True)
+                if not self._store:
+                    os.makedirs(self.logs, exist_ok=True)
                 self._write(os.path.join(self.logs, self._safe(filename)), html)
             except Exception:
                 pass
@@ -614,7 +670,7 @@ class Hub:
         except Exception:
             pass
         try:
-            os.remove(path)
+            self._remove(path)
         except OSError:
             pass
         # revert any upgrade entry linked to this setup
@@ -692,7 +748,7 @@ class Hub:
     HOT_SPARE_DEPTS = ["Detailing", "Engineering", "Other"]
 
     def get_hot_spares(self) -> list:
-        if os.path.exists(self.hot_spares_path):
+        if self._exists(self.hot_spares_path):
             try:
                 data = self._read_json(self.hot_spares_path)
                 return data.get("items") or []
@@ -765,7 +821,7 @@ class Hub:
     # New Stock row can't hold (former hostname, user, last check-in, when/why/who,
     # and where it was last seen) so the Boneyard tab is useful for troubleshooting.
     def get_boneyard(self) -> dict:
-        if os.path.exists(self.boneyard_path):
+        if self._exists(self.boneyard_path):
             try:
                 return self._read_json(self.boneyard_path).get("items") or {}
             except Exception:
@@ -795,7 +851,7 @@ class Hub:
         if not machine:
             return
         clients = {}
-        if os.path.exists(self.clients_path):
+        if self._exists(self.clients_path):
             try:
                 clients = self._read_json(self.clients_path).get("clients") or {}
             except Exception:
@@ -808,7 +864,7 @@ class Hub:
             pass
 
     def get_clients(self) -> list:
-        if not os.path.exists(self.clients_path):
+        if not self._exists(self.clients_path):
             return []
         try:
             clients = self._read_json(self.clients_path).get("clients") or {}

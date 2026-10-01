@@ -97,6 +97,9 @@ class Api:
             if gc.data_mode == "local":
                 import localstore
                 self._hub = Hub(logs_folder=localstore.hub_logs_dir(gc.division["id"]), division=gc.division)
+            elif gc._central:
+                from hubstore import SharePointHubStore   # central site: hub data lives in SharePoint rows
+                self._hub = Hub(division=gc.division, store=SharePointHubStore(gc))
             else:
                 self._hub = Hub(division=gc.division)
         return self._hub

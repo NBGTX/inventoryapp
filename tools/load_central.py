@@ -3,7 +3,10 @@
 Source : the local snapshot (Data: Live -> pull a snapshot in the app first). The snapshot is a
          read-only copy of the old per-division site, so this never touches the old site.
 Target : the central site (config.json "central") - New Stock, In Use, Model Specs, Activity Log.
-         Rows are stamped with Division. Hub JSON is NOT loaded here (needs the Hub Items swap).
+         Rows are stamped with Division.
+         --hub also loads the hub JSON (upgrades, hot spares, baselines, setups, changes, ...) from
+         the snapshot's hub folder into the Hub Items list. --hub-only does just that (needs no
+         access to the old NBGW site: run pull_snapshot.py --hub-only first).
 
 DRY RUN by default (reads the central lists, prints what it would add / skip).
 Writes only with --commit. Idempotent: rows already in the central list for this division
@@ -14,6 +17,8 @@ Usage (from the project root, same Python as the app):
     python tools\\load_central.py                       # dry run, division nbgw
     python tools\\load_central.py --commit              # load
     python tools\\load_central.py --commit --wipe       # clear this division's central rows, then load
+    python tools\\load_central.py --hub-only            # dry run for hub JSON only
+    python tools\\load_central.py --hub-only --commit   # load hub JSON only
 One audit entry is written per committed run.
 """
 from __future__ import annotations
@@ -130,10 +135,52 @@ def _batch_post(gc, key: str, rows: list[dict]) -> int:
     return failed
 
 
+def hub_stage(gc, args) -> int:
+    """Load the snapshot's hub JSON files into Hub Items. Dry run unless --commit. Idempotent:
+    a document whose JSON already matches is left alone (no Rev bump)."""
+    import localstore
+    from hub import Hub
+    from hubstore import SharePointHubStore, scan_folder, same_json
+
+    h = Hub(logs_folder=localstore.hub_logs_dir(args.division), division=gc.division)
+    if not os.path.isdir(h.hub):
+        print(f"\nHub: no hub folder at {h.hub}. Run tools/pull_snapshot.py --hub-only first.")
+        return 1
+    hs = SharePointHubStore(gc)
+    new, changed, same = [], [], 0
+    for kind, doc, text in scan_folder(h.logs, h.hub):
+        cur = hs.read(kind, doc)
+        if cur is None:
+            new.append((kind, doc, text))
+        elif same_json(cur, text):
+            same += 1
+        else:
+            changed.append((kind, doc, text))
+    kinds = sorted({k for k, _, _ in new + changed})
+    print(f"\nHub items: new {len(new)}   changed {len(changed)}   identical (skipped) {same}")
+    if kinds:
+        print("  kinds to write:", ", ".join(kinds))
+    if not args.commit:
+        return 0
+    failed = 0
+    for kind, doc, text in new + changed:
+        try:
+            hs.write(kind, doc, text)
+        except Exception as e:
+            failed += 1
+            print(f"  FAILED {kind}/{doc}: {e}")
+    gc.add_log("Central load", "", "", actor=gc.account_name or "",
+               details=f"hub division={args.division} written={len(new) + len(changed) - failed} failed={failed}")
+    print(f"Hub load done. Written {len(new) + len(changed) - failed}, failed {failed}.")
+    return failed
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--division", default="nbgw")
     ap.add_argument("--commit", action="store_true", help="actually write (default: dry run)")
+    ap.add_argument("--hub", action="store_true", help="also load the hub JSON into Hub Items")
+    ap.add_argument("--hub-only", action="store_true", help="load ONLY the hub JSON (skip the device lists)")
     ap.add_argument("--wipe", action="store_true", help="with --commit: delete this division's central rows first")
     args = ap.parse_args()
 
@@ -148,23 +195,27 @@ def main() -> int:
     gc.data_mode = "live"           # target = central lists, never the local sandbox
     gc._reset_caches()
     store = localstore.LocalStore(args.division)
-    if not store.has_snapshot():
-        print("No local snapshot for this division. In the app: Data: Live -> pull a fresh copy.")
+    if not args.hub_only and not store.has_snapshot():
+        print("No local snapshot for this division. Run tools/pull_snapshot.py (or use --hub-only).")
         return 2
     info = store.info()
     print(f"Division : {gc.division['id']}  ({gc.division['name']})")
-    print(f"Snapshot : taken {info['taken_at']}  counts {info['counts']}")
+    print(f"Snapshot : taken {info['taken_at'] or '(lists: none)'}  counts {info['counts']}")
     print(f"Target   : {gc.cfg['sharepoint_hostname']}{gc.cfg['site_path']}")
     print("Mode     :", "COMMIT" + (" + WIPE" if args.wipe else "") if args.commit else "DRY RUN (nothing is written)")
     print("Signing in ...")
     gc.sign_in(interactive=True)
 
+    if args.hub_only:
+        return hub_stage(gc, args)
     p = plan(gc, store, args.division)
     print()
     for key in KEYS:
         print(f"  {key:12} add {len(p[key]['add']):6}   already there/skip {p[key]['skip']:6}   "
               f"existing rows for division {len(p[key]['existing']):6}")
     if not args.commit:
+        if args.hub:
+            hub_stage(gc, args)
         print("\nDry run only. Re-run with --commit to load.")
         return 0
 
@@ -185,6 +236,8 @@ def main() -> int:
     gc.add_log("Central load", "", "", actor=gc.account_name or "",
                details=f"division={args.division} added={total} failed={failed} wipe={args.wipe}")
     print(f"\nDone. Added {total - failed}, failed {failed}.")
+    if args.hub:
+        failed += hub_stage(gc, args)
     return 1 if failed else 0
 
 
