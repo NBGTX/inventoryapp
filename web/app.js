@@ -333,14 +333,20 @@ const Divisions = {
     } catch (e) { /* keep fallback */ }
     App.state.siteTags = this.codes();
     const sub = document.getElementById("divSub");
-    if (sub && this.cur().name) sub.textContent = this.label() + " · Systems";
+    if (sub && this.cur().name) sub.textContent = "Systems";
     this.renderSwitcher();
   },
   codes() { return this.sites.map(s => String(s.code).toUpperCase()); },
   invKey() { return this.current === "nbgw" ? "nbgw_inv" : "nbg_inv_" + this.current; },
   draftKey() { return this.current === "nbgw" ? "nbgw_hub_draft_v2" : "nbg_hub_draft_v2_" + this.current; },
   cur() { return this.list.find(x => x.id === this.current) || { id: this.current, name: "", company_name: "" }; },
-  label() { const n = this.cur().name || ""; return (n.split(" - ")[0] || n || "this division").trim(); },
+  /* "NBGW - Nucor Buildings Group West" -> "NBGW" (short code form); "NBG - Terrell" stays whole (its first part is not the id) */
+  label() {
+    const c = this.cur(), n = (c.name || "").trim();
+    const first = (n.split(" - ")[0] || "").trim();
+    if (first && first.toLowerCase() === String(c.id || "").toLowerCase()) return first;
+    return n || "this division";
+  },
   /* a site code that belongs to the active division, else "Other" */
   bucket(s) { const u = String(s || "").trim().toUpperCase(); return this.codes().includes(u) ? u : "Other"; },
   /* css class for a site: first two keep the original ltr/bri colours */
