@@ -2589,6 +2589,7 @@ const CopyPerms = {
   render(p) {
     this.s = { src: null, dst: null, cmp: null, picked: {}, res: null };
     let acct = ""; try { acct = localStorage.getItem("nbg_ad_admin_acct") || ""; } catch (e) {}
+    if (!acct) acct = this.guessAdmin((App.state && App.state.account) || "");
     p.innerHTML = `<div class="chart-card">
       <h4 style="margin:0 0 4px">Copy Permissions</h4>${Help.box("bgt-copyperms")}
       <label class="cp-all"><input type="checkbox" id="cpAll"> Include people from other divisions</label>
@@ -2600,6 +2601,13 @@ const CopyPerms = {
       <div id="cpOut"></div>
       <div class="field cp-acct" style="max-width:380px;margin-top:14px"><label>Your admin account for writing (YubiKey)</label>
         <input id="cpAcct" placeholder="adm.name.pa" value="${attr(acct)}" autocomplete="off"></div></div>`;
+  },
+  /* adm.sanderson.azure@nucor.onmicrosoft.com -> adm.sanderson.pa ; sims.anderson@nucor.com -> adm.sanderson.pa */
+  guessAdmin(upn) {
+    const parts = String(upn || "").split("@")[0].toLowerCase().split(".").filter(Boolean);
+    if (!parts.length) return "";
+    if (parts[0] === "adm") return parts.length > 2 ? "adm." + parts.slice(1, -1).join(".") + ".pa" : "";
+    return parts.length > 1 ? "adm." + parts[0][0] + parts[parts.length - 1] + ".pa" : "";
   },
   typed(w) {
     clearTimeout(this._t[w]);
