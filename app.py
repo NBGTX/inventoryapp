@@ -1828,11 +1828,18 @@ class Api:
             if "__error__" in w:
                 return {"ok": False, "error": w["__error__"]}
             names = {g["dn"]: g["name"] for g in plan["add"]}
-            after = adperms.user_groups(dst_dn, domain)
-            have = {g["dn"].lower() for g in after.get("groups", [])} if "__error__" not in after else None
-            added = [names[x] for x in w["done"] if x in names and (have is None or x.lower() in have)]
+            import time
+            written = [x for x in w["done"] if x in names]
+            have = None
+            for attempt in range(3):                       # another domain controller may answer before the write has replicated
+                after = adperms.user_groups(dst_dn, domain)
+                have = {g["dn"].lower() for g in after.get("groups", [])} if "__error__" not in after else None
+                if have is None or all(x.lower() in have for x in written):
+                    break
+                time.sleep(2)
+            added = [names[x] for x in written]            # the directory accepted these writes
             failed = [{"name": names.get(f.get("dn"), f.get("dn")), "error": f.get("error", "")} for f in w["failed"]]
-            unverified = [names[x] for x in w["done"] if x in names and have is not None and x.lower() not in have]
+            unverified = [names[x] for x in written if have is not None and x.lower() not in have]
             try:
                 self._hubc()._change("AD copy permissions", f"{self._actor() or 'NBG Hub'} added {dst_dn.split(',')[0][3:]} to {len(added)} group(s) "
                                      f"copied from {src_dn.split(',')[0][3:]} as {w.get('who') or 'admin account'}: {', '.join(added)[:300]}")

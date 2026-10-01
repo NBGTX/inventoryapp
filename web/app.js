@@ -2695,8 +2695,8 @@ const CopyPerms = {
     let h;
     if (!r || !r.ok) h = `<div class="cp-res bad">${esc((r && r.error) || "Failed.")}</div>`;
     else if (!r.committed) h = `<div class="cp-res">Would add ${r.would_add.length}: ${esc(r.would_add.join(", ") || "nothing")}.${r.skipped.length ? " Skipped: " + esc(r.skipped.map(x => x.dn.split(",")[0].slice(3) + " (" + x.why + ")").join("; ")) : ""}</div>`;
-    else h = `<div class="cp-res ${r.failed.length || r.unverified.length ? "bad" : "good"}">Added ${r.added.length}${r.who ? " as " + esc(r.who) : ""}: ${esc(r.added.join(", ") || "none")}.
-      ${r.failed.length ? "<br>Failed: " + esc(r.failed.map(f => f.name + " — " + f.error).join("; ")) : ""}${r.unverified.length ? "<br>Not confirmed in AD yet (replication?): " + esc(r.unverified.join(", ")) : ""}</div>`;
+    else h = `<div class="cp-res ${r.failed.length ? "bad" : "good"}">Added ${r.added.length}${r.who ? " as " + esc(r.who) : ""}: ${esc(r.added.join(", ") || "none")}.
+      ${r.failed.length ? "<br>Failed: " + esc(r.failed.map(f => f.name + " — " + f.error).join("; ")) : ""}${r.unverified.length ? "<br>Accepted by AD; some domain controllers may take a few minutes to show it: " + esc(r.unverified.join(", ")) : ""}</div>`;
     this.s.res = h;
     if (commit && r && r.ok && r.committed) { await this.compare(); this.s.res = h; this.draw(); } else document.getElementById("cpRes").innerHTML = h;
   },
