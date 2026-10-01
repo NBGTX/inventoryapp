@@ -874,3 +874,5 @@ body.is-busy button.primary,body.is-busy .modal-foot button,body.is-busy .set-ro
 .att-light img{max-width:92vw;max-height:90vh;border-radius:8px;box-shadow:0 10px 40px #000;}
 .field .iss-seg label,.iss-seg label{margin:0;display:inline-flex;font-size:13px;line-height:1.2;}
 .field .iss-seg label.on{color:#fff;}
+button[data-busy]{opacity:1!important;cursor:progress;}
+button.primary[data-busy] .busy-spin{border-color:rgba(255,255,255,.35);border-top-color:#fff;}

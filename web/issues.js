@@ -176,7 +176,7 @@ const Issues = {
           <div class="iss-tl">${this.timeline(d) || `<span class="muted">Nothing yet.</span>`}</div>
           <div class="iss-newcm"><textarea id="issCm" rows="3" placeholder="Write a comment… (paste a screenshot here with Ctrl+V)"></textarea>
             <div class="att-box" id="issCmAtt"></div>
-            <div style="text-align:right;margin-top:8px"><button class="primary" onclick="Issues.comment()">Comment</button></div></div>
+            <div style="text-align:right;margin-top:8px"><button class="primary" id="issCmBtn" onclick="Issues.comment()">Comment</button></div></div>
         </div>
         <aside class="iss-d-side">
           <div class="iss-box"><label>Status</label>${statusSel}</div>
@@ -211,9 +211,14 @@ const Issues = {
   async comment() {
     const el = document.getElementById("issCm"), text = (el.value || "").trim(), files = Attach.payload("comment");
     if (!text && !files.length) return App.toast("Write a comment or attach a file first.", true);
-    const r = await Backend.call("issue_comment", this.cur, text, files);
-    if (!r || !r.ok) return App.toast((r && r.error) || "Could not comment.", true);
-    this.open(this.cur, true);
+    const btn = document.getElementById("issCmBtn");
+    const label = files.length ? "Uploading " + files.length + " file" + (files.length === 1 ? "" : "s") + "…" : "Posting…";
+    await Ui.working(btn, label, async () => {
+      const r = await Backend.call("issue_comment", this.cur, text, files);
+      if (!r || !r.ok) { App.toast((r && r.error) || "Could not comment.", true); return false; }
+      await this.open(this.cur, true);
+      return true;
+    });
   },
   async vote() { const r = await Backend.call("issue_vote", this.cur); if (r && r.ok) this.open(this.cur, true); else App.toast((r && r.error) || "Could not vote.", true); },
   async watch() {
@@ -247,7 +252,7 @@ const Feedback = {
           <div class="field"><label>Pictures and files <span class="muted">(optional)</span></label><div id="mfbAtt"></div></div>
           <p class="muted" style="font-size:12px;margin:0">Everyone using NBG Hub can see and comment on this. You cannot edit it after you submit (you can add comments), so check it first. Do not paste passwords or personal data.</p>
         </div>
-        <div class="modal-foot"><button class="ghost" onclick="Feedback.close()">Cancel</button><button class="primary" onclick="Feedback.submit()">Submit</button></div>
+        <div class="modal-foot"><button class="ghost" id="mfbCancel" onclick="Feedback.close()">Cancel</button><button class="primary" id="mfbSubmit" onclick="Feedback.submit()">Submit</button></div>
       </div></div>`;
     Attach.mount("new", "mfbAtt", ["mfbDetail", "mfbTitle"]);
     this.kind("bug");
@@ -274,10 +279,18 @@ How do you imagine it working? Paste a sketch or an example with Ctrl+V.` },
   async submit() {
     const title = (document.getElementById("mfbTitle").value || "").trim();
     if (!title) return App.toast("Add a short title.", true);
-    const r = await Backend.call("issue_create", (document.querySelector("input[name=mfbKind]:checked") || {}).value || "bug", title, (document.getElementById("mfbDetail").value || "").trim(), Attach.payload("new"));
-    if (!r || !r.ok) return App.toast((r && r.error) || "Could not submit.", true);
-    this.close();
-    App.toast("Thanks: filed as " + r.issue.short + ". Find it under Issues.");
-    if (document.getElementById("appview-issues").classList.contains("active")) Issues.load();
+    const files = Attach.payload("new"), btn = document.getElementById("mfbSubmit"), cancel = document.getElementById("mfbCancel");
+    const label = files.length ? "Uploading " + files.length + " file" + (files.length === 1 ? "" : "s") + " and submitting…" : "Submitting…";
+    const lock = (on) => { document.querySelectorAll("#modalRoot input, #modalRoot textarea, #modalRoot select").forEach(e => e.disabled = on); if (cancel) cancel.disabled = on; };
+    lock(true);
+    const ok = await Ui.working(btn, label, async () => {
+      const r = await Backend.call("issue_create", (document.querySelector("input[name=mfbKind]:checked") || {}).value || "bug", title, (document.getElementById("mfbDetail").value || "").trim(), files);
+      if (!r || !r.ok) { App.toast((r && r.error) || "Could not submit.", true); return false; }
+      this.close();
+      App.toast("Thanks: filed as " + r.issue.short + ". Find it under Issues.");
+      if (document.getElementById("appview-issues").classList.contains("active")) Issues.load();
+      return true;
+    });
+    if (!ok) lock(false);
   },
 };

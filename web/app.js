@@ -11,7 +11,7 @@ const attr = s => (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/"
    must NOT lock the screen, so they are excluded. */
 const Busy = {
   n: 0, timer: null,
-  WRITE: /^(save_|set_|add_|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|switch_|register_|reserve_|complete_|start_)/,
+  WRITE: /^(save_|set_|add_|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|switch_|register_|reserve_|complete_|start_|issue_(create|comment|update|delete|vote|watch|notify)|issues_import)/,
   LONG: /^(run_sync|enrich_inventory|sync_all_divisions|master_sync|populate_mfa|boneyard_sweep|software_refresh|pull_prod_snapshot|set_data_mode)$/,
   watches(method) { return this.WRITE.test(method) && !this.LONG.test(method); },
   /* Long jobs keep running when you move to another page (the work is in the backend); this shows them in the sidebar
@@ -86,6 +86,19 @@ const Resume = {
 /* Refresh-style buttons must SAY something: a re-read often returns the same numbers, which looks like "nothing happened".
    Ui.refreshing(button, work, "Upgrade list") shows a spinner, ignores a second click, then confirms with the time. */
 const Ui = {
+  /* A button that does something slow: spinner + a label that says what is happening, locked against a second click.
+     `work` returns true on success (the button stays locked, the caller closes the window) or false to unlock it again. */
+  async working(btn, label, work) {
+    if (!btn || btn.dataset.busy) return false;
+    btn.dataset.busy = "1";
+    const old = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="busy-spin"></span> ' + esc(label);
+    let ok = false;
+    try { ok = await work(); } catch (e) { App.toast(String((e && e.message) || e), true); }
+    if (!ok || !document.body.contains(btn)) { if (document.body.contains(btn)) { btn.disabled = false; btn.innerHTML = old; delete btn.dataset.busy; } }
+    return ok;
+  },
   async refreshing(btn, work, what) {
     if (!btn) { await work(); return; }
     if (btn.dataset.busy) return;
