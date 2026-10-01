@@ -264,7 +264,7 @@ const Help = {
         <ol>
           <li>Search and pick the <b>source</b> person (whose access you want to copy) and the <b>destination</b> person. Search shows only people in the current division (plus admin accounts, which have no company); tick <b>Include people from other divisions</b> to widen it. Use their admin account if the access is on that account.</li>
           <li><b>Compare</b> shows on-premises AD groups: only the source has, only the destination has, and both. Only direct memberships are compared.</li>
-          <li>Tick the groups to copy (<b>Only source has</b> list). Groups marked <b>privileged</b> (protected admin groups) are never ticked for you.</li>
+          <li>Nothing is ticked for you: tick the groups to copy in the <b>Only source has</b> list (or use <i>Select all (not privileged)</i>). Groups marked <b>privileged</b> are protected admin groups.</li>
           <li><b>Preview</b> lists what would be added and changes nothing. <b>Copy now</b> asks you to confirm, then adds the destination to the groups.</li>
         </ol>
         <p>Writing uses <b>your own admin account on your YubiKey</b>: insert the key and pick the account from the box (it lists only certificates on the inserted key). A separate window opens and asks for the PIN <b>once</b>, with hidden typing; the app never sees the PIN. A wrong PIN stops the run at once (no retries, to protect the key from locking). Reading works on a PC that is not joined to AD, as long as you are on the corporate network or VPN. Each copy is written to the change log. Removing groups is not supported.</p>`
@@ -286,6 +286,7 @@ const Help = {
       html: `
         <ul>
           <li><b>About this division</b> is read-only: name, id, Entra company, Intune device category and sites. A super admin changes these under Platform → Divisions.</li>
+          <li><b>My default division</b> (only if you can see more than one division): the division NBG Hub opens in at every start. Only you see this choice. Leave it on "The last division I used" to keep the old behaviour.</li>
           <li><b>Time zone</b>: every date and time in the app for this division is shown in this zone. "Use the default" uses the platform default, or each PC's own zone if there is none. The line under the box shows what the time is right now in the zone you pick.</li>
           <li><b>Inventory options</b> (division admins): <i>Devices to sync from Intune</i> chooses between Windows computers only (the default) and every device type. <i>Hot spare departments</i> are the department groups on the Hot spares window; "Other" is always added at the end.</li>
           <li><b>Project Hub</b>: where the sidebar's Project Hub item opens for this division. Leave it blank to use the platform default. "Open this address" lets you test it first.</li>
@@ -458,6 +459,7 @@ const Help = {
         <ul>
           <li><b>Vendor APIs</b>: keys for Lenovo, Dell and HP warranty and spec lookups. Secrets are stored hidden and are <b>never shown again</b>; type a new value to replace one. Dell and HP only give model and warranty date, not CPU or RAM.</li>
           <li><b>Regional</b>: the default time zone and the default Project Hub address, used by divisions that have not set their own.</li>
+          <li><b>Directory</b>: the domain controller that Copy Permissions uses (for example <i>BGDALDCRW02.bg.nucorsteel.local</i>). Blank lets Windows pick one.</li>
           <li><b>Sync</b>: whether the app syncs when it opens, how many vendor lookups one sync may make, and after how many days without a check-in a device counts as stale.</li>
           <li><b>Upgrades</b>: the two rules that queue devices for an upgrade after each sync. <i>Processor older than (years)</i> (default 5) and <i>Warranty ended at least (months)</i> (default 0 = off). A device qualifies when either rule matches; set a rule to 0 to switch it off.</li>
           <li><b>Releases</b>: set <i>Latest released version</i> after handing out a new installer so people on older versions see "Update available"; raise <i>Oldest allowed version</i> to show a red "Update required".</li>

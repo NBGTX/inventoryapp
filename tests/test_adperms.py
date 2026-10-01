@@ -119,5 +119,46 @@ class ApiFlow(unittest.TestCase):
         self.assertEqual(self.writes, [])
 
 
+class MyPrefs(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        import hub as hubmod
+        from hub import Hub
+        self.gc = make_client(extra={"super_admins": ["boss@nucor.com"]})
+        FakeSite(self.gc)
+        self.gc.sign_in = lambda interactive=False: ""
+        self.gc.account_upn, self.gc.account_name = "boss@nucor.com", "Boss"
+        self.dir = tempfile.mkdtemp()
+        self._orig = hubmod.platform_hub_for
+        hubmod.platform_hub_for = lambda gc: Hub(logs_folder=self.dir, division={"id": "_platform", "name": "P", "legacy_data": False, "sites": []})
+        self.hubmod = hubmod
+        self.api = app.Api()
+        self.api._gc = self.gc
+
+    def tearDown(self):
+        self.hubmod.platform_hub_for = self._orig
+
+    def test_default_division_is_saved_per_person_and_validated(self):
+        ids = [d["id"] for d in self.gc.visible_registry()]
+        self.assertTrue(ids)
+        self.assertTrue(self.api.save_my_prefs(ids[-1])["ok"])
+        self.assertEqual(self.api.get_my_prefs()["default_division"], ids[-1])
+        self.assertFalse(self.api.save_my_prefs("nope")["ok"])
+        self.gc.account_upn = "other@nucor.com"
+        self.assertEqual(self.api.get_my_prefs()["default_division"], "")        # someone else's choice is theirs alone
+        self.gc.account_upn = "boss@nucor.com"
+        self.assertTrue(self.api.save_my_prefs("")["ok"])
+        self.assertEqual(self.api.get_my_prefs()["default_division"], "")
+
+
+class Catalog(unittest.TestCase):
+    def test_domain_controller_setting_accepts_a_server_name_only(self):
+        import settings_catalog as sc
+        self.assertEqual(sc.check_value("ad_domain_controller", " BGDALDCRW02.bg.nucorsteel.local "), "BGDALDCRW02.bg.nucorsteel.local")
+        self.assertEqual(sc.check_value("ad_domain_controller", ""), "")
+        with self.assertRaises(ValueError):
+            sc.check_value("ad_domain_controller", "bad name; rm -rf")
+
+
 if __name__ == "__main__":
     unittest.main()

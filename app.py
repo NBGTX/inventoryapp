@@ -807,6 +807,15 @@ class Api:
                 gc._div_changed = False
                 self._hub = None
             vis = gc.visible_registry()
+            if not getattr(self, "_default_div_applied", False) and len(vis) > 1:   # once per launch: open in the person's chosen division
+                self._default_div_applied = True
+                try:
+                    want = (self._my_prefs().get("default_division") or "")
+                    if want and want != gc.division["id"] and want in [d["id"] for d in vis]:
+                        gc.set_division(want)
+                        self._hub = None
+                except Exception:
+                    pass
             self._trace(f"get_divisions: account={gc.account_upn!r} role={gc.division_role()} visible={[d['id'] for d in vis]} active={gc.division['id']}")
             if not vis:
                 return {"ok": False, "error": "No division is available to your account. Ask a super admin for access."}
@@ -815,6 +824,53 @@ class Api:
                 self._hub = None
             return {"ok": True, "current": gc.division["id"],
                     "divisions": [divisions.public(d) for d in vis]}
+        except Exception as e:
+            return self._fail(e)
+
+    # ---- personal preferences (platform doc `user-prefs`, keyed by sign-in) ----
+    def _my_prefs(self) -> dict:
+        from hub import platform_hub_for
+        gc = self._client()
+        doc = platform_hub_for(gc).get_named("user-prefs") or {}
+        return (doc.get("users") or {}).get((gc.account_upn or "").lower()) or {}
+
+    def get_my_prefs(self) -> dict:
+        """The signed-in person's own options: which division the app opens in (only offered with 2+ divisions)."""
+        try:
+            gc = self._client()
+            vis = [{"id": d["id"], "name": d.get("name", d["id"])} for d in gc.visible_registry()]
+            want = self._my_prefs().get("default_division", "")
+            return {"ok": True, "divisions": vis, "default_division": want if want in [d["id"] for d in vis] else ""}
+        except Exception as e:
+            return self._fail(e)
+
+    def save_my_prefs(self, default_division: str = "") -> dict:
+        try:
+            from hub import platform_hub_for
+            gc = self._client()
+            who = (gc.account_upn or "").lower()
+            if not who:
+                return {"ok": False, "error": "Sign in first."}
+            want = (default_division or "").strip()
+            if want and want not in [d["id"] for d in gc.visible_registry()]:
+                return {"ok": False, "error": "You do not have access to that division."}
+            for attempt in range(3):
+                try:
+                    h = platform_hub_for(gc)
+                    doc = h.get_named("user-prefs") or {}
+                    users = dict(doc.get("users") or {})
+                    mine = dict(users.get(who) or {})
+                    if want:
+                        mine["default_division"] = want
+                    else:
+                        mine.pop("default_division", None)
+                    users[who] = mine
+                    h.put_named("user-prefs", {"users": users})
+                    break
+                except HubConflict:
+                    if attempt == 2:
+                        raise
+            return {"ok": True, "default_division": want}
         except Exception as e:
             return self._fail(e)
 
@@ -1758,7 +1814,11 @@ class Api:
         gc = self._client()
         if gc.division_role() not in ("super", "admin"):
             raise PermissionError("Copy permissions is for admins.")
-        return (gc.cfg.get("ad_domain") or "bg.nucorsteel.local")
+        try:
+            dc = ((gc.master_settings().get("ad_domain_controller") or {}).get("value") or "").strip()
+        except Exception:
+            dc = ""
+        return dc or (gc.cfg.get("ad_domain") or "bg.nucorsteel.local")      # one named server = writes are visible at once
 
     def ad_user_search(self, q: str, all_divisions: bool = False) -> dict:
         """People search; limited to the ACTIVE division's AD company unless all_divisions (Rule 6)."""

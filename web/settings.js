@@ -245,11 +245,17 @@ const Settings = {
     const def = this.prefs.default ? zlabel(this.prefs.default) : "this PC's own time zone";
     const sites = (o.sites || []).map(s => `<span class="dp-chip">${esc(s.code)} <i>${esc(s.name || "")}</i></span>`).join("") || `<span class="muted">none yet</span>`;
     const canEdit = this.can("admin");
+    const mp = await Backend.call("get_my_prefs");
+    this.my = (mp && mp.ok) ? mp : { divisions: [], default_division: "" };
     const fact = (k, v) => `<div class="set-fact"><span>${k}</span><b>${v || "<i class='muted'>not set</i>"}</b></div>`;
     this.pane("settings",
       SetUI.card("About this division", this.su ? "Identity is changed under <b>Platform &rarr; Divisions</b>." : "Identity (name, Entra company, Intune category) is managed by a super admin.",
         `<div class="set-facts">${fact("Name", esc(o.name))}${fact("Id", esc(o.id))}${fact("Entra company", esc(o.company_name))}${fact("Intune category", esc(o.intune_category))}</div>
          <div style="margin-top:12px"><span class="muted" style="font-size:12px">Sites</span><div class="dp-chips" style="margin-top:6px">${sites}</div></div>`) +
+      (this.my.divisions.length > 1 ? SetUI.card("My default division", "The division NBG Hub opens in each time you start it. Only you see this choice.",
+        `<div class="field" style="max-width:420px"><label>Open in</label>
+           ${SetUI.select("mdSel", this.my.divisions.map(d => ({ id: d.id, label: d.name })), this.my.default_division, "Settings.markDirty('mdSave')", "The last division I used")}</div>`,
+        `<button class="primary" id="mdSave" onclick="Settings.saveMyDiv()" disabled>Save my default</button>`) : "") +
       SetUI.card("Time zone", "Every date and time in the app for this division is shown in this zone." + (canEdit ? "" : " Division admins can change it."),
         `<div class="field" style="max-width:420px"><label>Time zone for ${esc(Divisions.label())}</label>
            ${SetUI.select("tzSel", zl.map(z => ({ id: z.id, label: z.label })), this.prefs.timezone, "Settings.tzPreview()", "Use the default (" + def + ")", !canEdit)}</div>
@@ -273,6 +279,13 @@ const Settings = {
       ChipInput.mount("ioDepts", this.ioDepts, () => this.markDirty("ioSave"), "department, Enter");
     }
     this.tzPreview();
+  },
+  async saveMyDiv() {
+    const r = await Backend.call("save_my_prefs", document.getElementById("mdSel").value);
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+    this.dirty = false;
+    App.toast(r.default_division ? "Saved. NBG Hub will open in that division." : "Saved. NBG Hub will open in the last division you used.");
+    this.general();
   },
   tzPreview() {
     const v = document.getElementById("tzSel").value || this.prefs.default || "";
@@ -566,6 +579,7 @@ const Settings = {
     const blurb = { "Vendor APIs": "Credentials for warranty and spec lookups. Secrets are stored hidden and are never shown again; type a new value to replace one.",
                     "Regional": "Platform-wide defaults.", "Sync": "How the Intune sync behaves.",
                     "Releases": "Tell techs when a newer NBG Hub build is out. Set these after you hand out a new installer.",
+                    "Directory": "On-premises Active Directory options.",
                     "Upgrades": "Which devices are queued for an upgrade automatically after each sync.",
                     "Notifications": "How e-mails about Issues are sent. Choose who gets them under Issue notifications." };
     const row = (c, i) => {
@@ -573,6 +587,7 @@ const Settings = {
       let ctl;
       if (c.kind === "secret") ctl = `<input id="ig${i}" type="password" autocomplete="new-password" placeholder="${c.is_set ? "•••••• set - type to replace" : "paste the value"}">`;
       else if (c.kind === "url") ctl = `<input id="ig${i}" value="${attr(c.value || "")}" placeholder="https://projecthub.example.com/">`;
+      else if (c.kind === "text") ctl = `<input id="ig${i}" value="${attr(c.value || "")}" placeholder="server.domain.local">`;
       else if (c.kind === "version") ctl = `<input id="ig${i}" value="${attr(c.value || "")}" placeholder="2026.10.15">`;
       else if (c.kind === "choice") ctl = SetUI.select("ig" + i, c.options || [], c.value, "", "(none - use each PC's own)");
       else ctl = `<input id="ig${i}" type="number" min="${c.min}" max="${c.max}" value="${attr(c.value || "")}" placeholder="${c.default} (default)">`;
