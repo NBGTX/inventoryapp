@@ -68,7 +68,20 @@ FIELD_ALIASES = {
     "mfa": ["mfa", "mfa status", "mfa registered", "mfa configured", "multifactor",
             "multi-factor", "multi factor"],
     "status": ["status", "device status", "state", "lifecycle"],
+    "division": ["division"],
 }
+# Central multi-division store (config.json "central": {site_host, site_path, lists}).
+# Default list names match docs/MANUAL_LIST_SETUP.md. Lists in _DIVISION_SCOPED hold rows for
+# every division, separated by an indexed Division column.
+DEFAULT_CENTRAL_LISTS = {
+    "divisions": "Inventory - Divisions",
+    "new_stock": "Inventory - New Stock",
+    "in_use": "Inventory - In Use",
+    "model_specs": "Inventory - Model Specs",
+    "log": "Inventory - Activity Log",
+    "hub_items": "Inventory - Hub Items",
+}
+_DIVISION_SCOPED = ("new_stock", "in_use", "log")
 SCOPES = [
     "User.Read",
     "DeviceManagementManagedDevices.Read.All",
@@ -164,6 +177,7 @@ class GraphClient:
         self._base_cfg = dict(self.cfg)
         self.registry = divisions.load_registry(self._base_cfg)
         self.division = divisions.find(self.registry, divisions.load_selection())
+        self._use_legacy = False     # True only while snapshotting the pre-central (source) site
         self._apply_division()
         import localstore
         self._localstore_mod = localstore
@@ -196,13 +210,33 @@ class GraphClient:
         `self.cfg.get(...)` reads that division's site, lists, category, AD, SQL."""
         d = self.division
         cfg = dict(self._base_cfg)
+        central = cfg.get("central") or {}
+        self._central = bool(central.get("site_path")) and not self._use_legacy
         cfg.update({"sharepoint_hostname": d.get("sharepoint_hostname") or cfg.get("sharepoint_hostname"),
                     "site_path": d.get("site_path") or cfg.get("site_path"),
                     "lists": d.get("lists") or cfg.get("lists") or {},
                     "intune_device_category": d.get("intune_category") or cfg.get("intune_device_category"),
                     "ad_domain": d.get("ad_domain") or cfg.get("ad_domain"),
                     "timesheet_sql_server": d.get("sql_server") or cfg.get("timesheet_sql_server")})
+        if self._central:     # all divisions share the central site + lists
+            cfg["sharepoint_hostname"] = central.get("site_host") or cfg.get("sharepoint_hostname")
+            cfg["site_path"] = central["site_path"]
+            cfg["lists"] = {**DEFAULT_CENTRAL_LISTS, **(central.get("lists") or {})}
         self.cfg = cfg
+
+    def _div_scoped(self, key: str) -> bool:
+        """True when rows of this list are shared by all divisions (central live mode)."""
+        return self._central and not self._local and key in _DIVISION_SCOPED
+
+    def _item_division(self, item: dict, key: str) -> str:
+        col = self._internal_for(key, "division") or "Division"
+        return str((item.get("fields", {}) or {}).get(col) or "").strip().lower()
+
+    def _only_division(self, items: list, key: str) -> list:
+        if not self._div_scoped(key):
+            return items
+        me = self.division["id"].lower()
+        return [i for i in items if self._item_division(i, key) == me]
 
     # ---- local data mode (snapshot sandbox) ---------------------------------
     @property
@@ -240,6 +274,8 @@ class GraphClient:
         import shutil
         from hub import Hub
         self._force_live = True
+        self._use_legacy = True
+        self._apply_division()
         try:
             self._reset_caches()
             store = self._ls()
@@ -271,6 +307,8 @@ class GraphClient:
             return {"counts": counts, **store.info()}
         finally:
             self._force_live = False
+            self._use_legacy = False
+            self._apply_division()
             self._reset_caches()
 
     def _create_item(self, key: str, fields: dict) -> None:
@@ -279,6 +317,9 @@ class GraphClient:
             return
         site = self._ensure_site()
         lid = self._ensure_log_list() if key == "log" else self._list_id(key)
+        if self._div_scoped(key):
+            fields = dict(fields)
+            fields[self._internal_for(key, "division") or "Division"] = self.division["id"]
         self._req("POST", f"{GRAPH}/sites/{site}/lists/{lid}/items", json={"fields": fields})
 
     def set_division(self, div_id: str) -> dict:
@@ -1234,9 +1275,9 @@ class GraphClient:
         if self._local:
             return self._ls().items(key)
         site = self._ensure_site()
-        return self._get_all(
+        return self._only_division(self._get_all(
             f"{GRAPH}/sites/{site}/lists/{self._list_id(key)}/items?expand=fields&$top=500"
-        )
+        ), key)
 
     def find_by_serial(self, key: str, serial: str) -> dict | None:
         s = serial.strip().lower()
@@ -1423,9 +1464,9 @@ class GraphClient:
         else:
             site = self._ensure_site()
             lid = self._ensure_log_list()
-            items = self._get_all(
+            items = self._only_division(self._get_all(
                 f"{GRAPH}/sites/{site}/lists/{lid}/items?expand=fields&$top=200"
-            )
+            ), "log")
         rows = []
         for it in items:
             f = it.get("fields", {})

@@ -1,17 +1,17 @@
 # Create the central lists by hand (step by step)
 
-Site: https://nucor.sharepoint.com/sites/bg.ter.O365.TERALIT  (NBGTX IT)
+Site: **NBG Hub Data** (dedicated site; URL goes in config.json under `central.site_path`)
 You need: site Owner. File needed: `docs\CentralLists_Import.xlsx` (in this repo).
 
 You will make 6 lists from the Excel file and 1 document library by hand. Plan about 30 minutes.
 
 ## Step 1. Go to Site contents
 
-1. Open the site (the NBGTX IT home page).
+1. Open the **NBG Hub Data** site.
 2. Click the **gear icon** in the black bar at the top right (next to the question mark).
 3. Click **Site contents**.
 
-Shortcut: paste this in the browser: `https://nucor.sharepoint.com/sites/bg.ter.O365.TERALIT/_layouts/15/viewlsts.aspx`
+Shortcut: add `/_layouts/15/viewlsts.aspx` to the end of the site address.
 
 ## Step 2. Make a list from the Excel file (repeat 6 times)
 

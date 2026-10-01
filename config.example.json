@@ -9,5 +9,10 @@
     "model_specs": "Model Spec References"
   },
   "site_tags": ["LTR", "BRI"],
+  "central": {
+    "site_host": "nucor.sharepoint.com",
+    "site_path": "/sites/PASTE-NBG-HUB-DATA-SITE-PATH",
+    "lists": {}
+  },
   "lenovo_client_id": ""
 }
