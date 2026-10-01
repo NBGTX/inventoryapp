@@ -33,14 +33,10 @@ class Pure(unittest.TestCase):
         self.assertEqual(len([u for u in us if adperms.in_scope(u, ["NBG - Terrell", "Other"])]), 3)
 
     def test_scinfo_hashes_ignore_the_windows_hello_reader(self):
-        txt = ("--- Reader: Windows Hello for Business 1
-Cert Hash(sha1): aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-"
-               "--- Reader: Yubico YubiKey OTP+FIDO+CCID 0
-Cert Hash(sha1): CB7B4E020AF1435D03C57AD0B66CC3A1C8F4E430
-"
-               "Cert Hash(sha1): b8 6b 4d 36 8b 40 90 2e cc d8 ac 4c 82 34 fd bc 43 f4 1a 00
-")
+        txt = "
+".join(["--- Reader: Windows Hello for Business 1", "Cert Hash(sha1): " + "a" * 40,
+                         "--- Reader: Yubico YubiKey OTP+FIDO+CCID 0", "Cert Hash(sha1): CB7B4E020AF1435D03C57AD0B66CC3A1C8F4E430",
+                         "Cert Hash(sha1): b8 6b 4d 36 8b 40 90 2e cc d8 ac 4c 82 34 fd bc 43 f4 1a 00"])
         got = adperms.parse_scinfo(txt)
         self.assertIn("cb7b4e020af1435d03c57ad0b66cc3a1c8f4e430", got)
         self.assertNotIn("a" * 40, got)
