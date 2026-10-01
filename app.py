@@ -250,17 +250,28 @@ class Api:
                 ph_def = sc.clean_url(gc.get_setting("project_hub_url")) or sc.PROJECT_HUB_DEFAULT
             except ValueError:
                 ph_def = sc.PROJECT_HUB_DEFAULT
+            dos = (prefs.get("device_os") or "").strip().lower()
+            if not sc.valid_device_os(dos):
+                dos = "all" if (gc.cfg.get("intune_device_os", "Windows") or "").strip().lower() in ("", "all", "*", "any") else "windows"
+            try:
+                depts = sc.clean_depts(prefs.get("hot_spare_depts"))
+            except ValueError:
+                depts = []
             return {"ok": True, "timezone": tz, "default": dflt, "effective": tz or dflt, "zones": sc.zones(),
-                    "project_hub_url": ph, "project_hub_default": ph_def, "project_hub_effective": ph or ph_def}
+                    "project_hub_url": ph, "project_hub_default": ph_def, "project_hub_effective": ph or ph_def,
+                    "device_os": dos, "device_os_options": [{"id": k, "label": v} for k, v in sc.DEVICE_OS],
+                    "hot_spare_depts": depts, "hot_spare_default": sc.HOT_SPARE_DEFAULT,
+                    "hot_spare_effective": (depts or sc.HOT_SPARE_DEFAULT) + ["Other"]}
         except Exception as e:
             return self._fail(e)
 
-    def save_division_prefs(self, timezone=None, project_hub_url=None) -> dict:
+    def save_division_prefs(self, timezone=None, project_hub_url=None, device_os=None, hot_spare_depts=None) -> dict:
         """Admin of the division (or super admin). Only the arguments that are given are changed;
-        timezone "" / project_hub_url "" mean 'use the default'."""
+        timezone "" / project_hub_url "" / hot_spare_depts [] mean 'use the default'."""
         try:
             import settings_catalog as sc
-            self._client().require_division_admin()
+            gc = self._client()
+            gc.require_division_admin()
             prefs_in = {}
             if timezone is not None:
                 tz = (timezone or "").strip()
@@ -272,6 +283,15 @@ class Api:
                     prefs_in["project_hub_url"] = sc.clean_url(project_hub_url)
                 except ValueError as e:
                     return {"ok": False, "error": str(e)}
+            if device_os is not None:
+                if not sc.valid_device_os(device_os):
+                    return {"ok": False, "error": "Pick which devices to sync from the list."}
+                prefs_in["device_os"] = device_os
+            if hot_spare_depts is not None:
+                try:
+                    prefs_in["hot_spare_depts"] = sc.clean_depts(hot_spare_depts)
+                except ValueError as e:
+                    return {"ok": False, "error": str(e)}
             if not prefs_in:
                 return {"ok": True}
             hub = self._hubc()
@@ -279,7 +299,52 @@ class Api:
             prefs.update(prefs_in)
             hub.save_prefs(prefs, {"action": "save", "target": "Division preferences",
                                    "detail": ", ".join(f"{k} = {v or '(default)'}" for k, v in prefs_in.items())})
+            gc.__dict__.pop("_prefs_cache", None)           # the sync reads the device filter from here
             return {"ok": True, **prefs_in}
+        except Exception as e:
+            return self._fail(e)
+
+    # ---- BG Tools people-search scopes (platform-wide; super admin edits) ----
+    def _scopes(self) -> dict:
+        """Saved scopes if any, else config.json, else the built-in lists."""
+        gc = self._client()
+        try:
+            from hub import platform_hub_for
+            saved = platform_hub_for(gc).get_named("search-scopes")
+        except Exception:
+            saved = None
+        if saved and isinstance(saved, dict):
+            return {"custom": True, "brands": saved.get("brands") or [], "divisions": saved.get("divisions") or []}
+        cfg = gc.cfg
+        brands = cfg.get("permission_locations")
+        divs = cfg.get("permission_divisions")
+        return {"custom": False,
+                "brands": [{"label": b.get("label") or b.get("domain") or "", "domain": (b.get("domain") or "").strip().lower()}
+                           for b in (brands if isinstance(brands, list) and brands else self._BG_LOCATIONS_DEFAULT) if isinstance(b, dict) and b.get("domain")],
+                "divisions": [{"label": d.get("label") or d.get("company") or "", "company": (d.get("company") or "").strip()}
+                              for d in (divs if isinstance(divs, list) and divs else self._BG_DIVISIONS_DEFAULT) if isinstance(d, dict) and d.get("company")]}
+
+    def get_search_scopes(self) -> dict:
+        try:
+            if not self._client().is_super_admin():
+                return {"ok": True, "super_admin": False}
+            return {"ok": True, "super_admin": True, **self._scopes()}
+        except Exception as e:
+            return self._fail(e)
+
+    def save_search_scopes(self, data: dict) -> dict:
+        try:
+            import settings_catalog as sc
+            from hub import platform_hub_for
+            gc = self._client()
+            if not gc.is_super_admin():
+                return {"ok": False, "error": "Only a super admin can change the search scopes."}
+            try:
+                clean = sc.clean_scopes(data)
+            except ValueError as e:
+                return {"ok": False, "error": str(e)}
+            platform_hub_for(gc).put_named("search-scopes", clean)
+            return {"ok": True, **clean}
         except Exception as e:
             return self._fail(e)
 
@@ -381,8 +446,10 @@ class Api:
         launch-time background sync, so opening the app to look around writes nothing."""
         try:
             off = os.environ.get("NBG_NO_AUTOSYNC", "").strip() not in ("", "0", "false", "False")
-            cfg_off = self._client()._base_cfg.get("auto_sync") is False
-            return {"ok": True, "auto_sync": not (off or cfg_off)}
+            gc = self._client()
+            cfg_off = gc._base_cfg.get("auto_sync") is False
+            master_off = (gc.get_setting("auto_sync", "") or "").strip().lower() in ("off", "false", "no", "0")
+            return {"ok": True, "auto_sync": not (off or cfg_off or master_off)}
         except Exception as e:
             return self._fail(e)
 
@@ -1411,21 +1478,13 @@ class Api:
 
     def bg_locations(self) -> dict:
         try:
-            cfg = self._client().cfg
+            sc_ = self._scopes()
         except Exception:
-            cfg = {}
-        locs = cfg.get("permission_locations")
-        if not isinstance(locs, list) or not locs:
-            locs = self._BG_LOCATIONS_DEFAULT
-        out = [{"label": (l.get("label") or l.get("domain") or ""), "domain": (l.get("domain") or "").strip().lower()}
-               for l in locs if isinstance(l, dict) and l.get("domain")]
-        divs = cfg.get("permission_divisions")
-        if not isinstance(divs, list) or not divs:
-            divs = self._BG_DIVISIONS_DEFAULT
-        dout = [{"label": (d.get("label") or d.get("company") or ""), "company": (d.get("company") or "").strip()}
-                for d in divs if isinstance(d, dict) and d.get("company")]
+            sc_ = {"brands": [], "divisions": []}
+        out = [{"label": b["label"], "domain": b["domain"]} for b in sc_["brands"] if b.get("domain")]
+        dout = [{"label": d["label"], "company": d["company"]} for d in sc_["divisions"] if d.get("company")]
         have = {d["company"].lower() for d in dout}
-        try:                                    # every division in the registry is offered, not just the built-in list
+        try:                                    # every division in the registry is offered, not just the saved list
             for rd in self._client().registry:
                 co = (rd.get("company_name") or "").strip()
                 if co and co.lower() not in have and rd.get("enabled") is not False:
@@ -2012,6 +2071,7 @@ class Api:
             # devices that haven't checked in to Intune in 30+ days (drill-down). Spans
             # both lists — a stock/loaner device can go stale too; Source shows which.
             stale_checkin = []
+            stale_limit = self._stale_limit()
             for r, src in tagged:
                 lc = (r.get("last_checkin") or "")[:10]
                 if not lc:
@@ -2020,7 +2080,7 @@ class Api:
                     days = (_today - date.fromisoformat(lc)).days
                 except ValueError:
                     continue
-                if days > 30:
+                if days > stale_limit:
                     stale_checkin.append({"serial": r.get("serial", ""), "device_name": r.get("device_name", ""),
                                           "model": r.get("model", ""), "user": r.get("user", ""),
                                           "last_checkin": lc, "days": days, "source": src})
@@ -2040,6 +2100,7 @@ class Api:
                 "warranty_soon": warranty_soon,
                 "needs_upgrade_count": len(needs_upgrade),
                 "needs_upgrade": needs_upgrade,
+                "stale_days": stale_limit,
                 "stale_checkin_count": len(stale_checkin),
                 "stale_checkin": stale_checkin,
                 "no_mfa_count": len(no_mfa),

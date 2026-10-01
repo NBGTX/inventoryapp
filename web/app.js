@@ -1375,10 +1375,11 @@ const LogView = {
 /* ---- left-nav ------------------------------------------------------------ */
 /* ---- division time zone: all displayed times use it (blank = this PC's own zone) ---- */
 const Tz = {
-  id: "",
+  id: "", prefs: null,
   async load() {
     try {
       const r = await Backend.call("get_division_prefs");
+      this.prefs = (r && r.ok) ? r : null;
       this.id = (r && r.ok && r.effective) || "";
       if (r && r.ok && r.project_hub_effective) ProjectHub.URL = r.project_hub_effective;
     } catch (e) { this.id = ""; }
@@ -1771,7 +1772,7 @@ const Dashboard = {
       ${inv ? cstat(inv.no_upn_count || 0, "No UPN set", "Dashboard.drillNoUpn()", (inv.no_upn_count ? "warn" : "")) : stat("–", "No UPN set")}
       ${w ? cstat(w.expiring_90, "Warranties ≤90 days", "Dashboard.drillWarranty()", w.expired ? "danger" : (w.expiring_90 ? "warn" : "")) : stat("–", "Warranties ≤90 days")}
       ${inv ? cstat(inv.needs_upgrade_count || 0, "Upgrade Forecast", "Dashboard.upgradePlan()", (inv.needs_upgrade_count ? "danger" : "")) : stat("–", "Upgrade Forecast")}
-      ${inv ? cstat(inv.stale_checkin_count || 0, "No check-in 30+ days", "Dashboard.drillStale()", (inv.stale_checkin_count ? "warn" : "")) : stat("–", "No check-in 30+ days")}
+      ${inv ? cstat(inv.stale_checkin_count || 0, "No check-in " + (inv.stale_days || 30) + "+ days", "Dashboard.drillStale()", (inv.stale_checkin_count ? "warn" : "")) : stat("–", "No check-in " + ((inv && inv.stale_days) || 30) + "+ days")}
       ${inv && (inv.no_mfa_count || (inv.no_mfa && inv.no_mfa.length)) ? cstat(inv.no_mfa_count || 0, "Users without MFA", "Dashboard.drillNoMfa()", "danger") : ""}
       ${inv && inv.not_nbgw_count ? cstat(inv.not_nbgw_count, "Not part of " + Divisions.label(), "Dashboard.drillNotNbgw()") : ""}
     </div>`;
@@ -2070,14 +2071,14 @@ const Dashboard = {
     const rows = (this._inv().stale_checkin || []);
     rows.forEach(r => { if (r._living === undefined) r._living = null; });   // reset per open
     this._livingState = { entra: "…", ad_error: null, domain: Divisions.cur().ad_domain || "" };
-    Drill.open("No Intune check-in in 30+ days (stalest first)", rows, [
+    Drill.open("No Intune check-in in " + ((this._inv().stale_days) || 30) + "+ days (stalest first)", rows, [
       { label: "Serial", get: r => r.serial, mono: 1, w: "12%" }, { label: "Device name", get: r => r.device_name, w: "13%" },
       { label: "Model", get: r => r.model, w: "13%" }, { label: "User", get: r => r.user, w: "16%" },
       { label: "Last check-in", get: r => (r.last_checkin || "").slice(0, 10), w: "11%" },
       { label: "Days ago", get: r => r.days, w: "7%" },
       { label: "Source", get: r => r.source || "—", w: "8%" },
       { label: "Living in", get: r => this._livingCell(r), html: 1, sortGet: r => this._livingRank(r), w: "18%" }],
-      { empty: "No device has gone 30+ days without an Intune check-in.", width: "min(1360px, 96vw)" });
+      { empty: "No device has gone " + ((this._inv().stale_days) || 30) + "+ days without an Intune check-in.", width: "min(1360px, 96vw)" });
     // Async: find where each stale device still lives (on-prem AD / Entra / Intune).
     try {
       const res = await Backend.call("locate_devices",
@@ -2238,11 +2239,13 @@ const Dashboard = {
    in the shared hub store; live specs, OS install, last check-in and compliance are
    joined from Intune. Each entry expands (+) to full detail like the Devices tables. */
 const HotSpares = {
-  DEPTS: [
-    { key: "Detailing", label: "Detailing" },
-    { key: "Engineering", label: "Engineering" },
-    { key: "Other", label: "Estimating / PCs / Other" },
-  ],
+  /* Departments are a per-division list (Settings > General > Hot spare departments); "Other" is always last.
+     A division that never set its own list keeps the original three. */
+  get DEPTS() {
+    const own = (Tz.prefs && Tz.prefs.hot_spare_depts) || [];
+    if (!own.length) return [{ key: "Detailing", label: "Detailing" }, { key: "Engineering", label: "Engineering" }, { key: "Other", label: "Estimating / PCs / Other" }];
+    return own.map(n => ({ key: n, label: n })).concat([{ key: "Other", label: "Other" }]);
+  },
   get SITES() { return Divisions.codes(); },
   _spares: [],
   _expanded: {},
@@ -4740,6 +4743,7 @@ Object.assign(Mock, {
     { key: "hp_client_secret", group: "Vendor APIs", label: "HP warranty API secret", kind: "secret", secret: true, status: "active", help: "Pairs with the HP key." },
     { key: "default_timezone", group: "Regional", label: "Default time zone", kind: "choice", secret: false, status: "active", help: "Used by every division that has not picked its own time zone. Blank = each PC's own time zone." },
     { key: "project_hub_url", group: "Regional", label: "Default Project Hub address", kind: "url", secret: false, status: "active", help: "Where the Project Hub sidebar item opens for divisions that have not set their own address (Settings > General). Blank = https://projecthub-dev.nucorservices.com/" },
+    { key: "auto_sync", group: "Sync", label: "Sync automatically when the app opens", kind: "choice", secret: false, status: "active", options: [{ id: "on", label: "On (default)" }, { id: "off", label: "Off - only the Sync buttons sync" }], help: "With it on, opening the app starts a sync for the division you are in. Turn it off to stop that on every PC (the NBG_NO_AUTOSYNC setting on a single PC still wins)." },
     { key: "intune_enrich_per_sync", group: "Sync", label: "Vendor lookups per sync run", kind: "number", secret: false, min: 0, max: 500, default: 75, status: "active", help: "How many devices get a Lenovo/Dell/HP spec lookup in one sync. Lower = gentler on vendor APIs, slower to fill in." },
     { key: "latest_version", group: "Releases", label: "Latest released version", kind: "version", secret: false, status: "active", help: "The newest NBG Hub build, for example 2026.10.15. Techs on an older build see an 'Update available' notice." },
     { key: "min_version", group: "Releases", label: "Oldest allowed version", kind: "version", secret: false, status: "active", help: "Builds older than this show a red 'Update required' notice. Raise it when a release changes how data is stored." },
@@ -4766,9 +4770,23 @@ Object.assign(Mock, {
   async get_division_prefs() {
     const d = this._ms.default_timezone || "", def = this._ms.project_hub_url || "https://projecthub-dev.nucorservices.com/", own = this._prefs.project_hub_url || "";
     return { ok: true, timezone: this._prefs.timezone, default: d, effective: this._prefs.timezone || d, zones: this._tzs.map(([id, label]) => ({ id, label })),
-      project_hub_url: own, project_hub_default: def, project_hub_effective: own || def };
+      project_hub_url: own, project_hub_default: def, project_hub_effective: own || def,
+      device_os: this._prefs.device_os || "windows", device_os_options: [{ id: "windows", label: "Windows computers only" }, { id: "all", label: "All device types (phones, tablets, Macs too)" }],
+      hot_spare_depts: this._prefs.hot_spare_depts || [], hot_spare_default: ["Detailing", "Engineering"],
+      hot_spare_effective: ((this._prefs.hot_spare_depts || []).length ? this._prefs.hot_spare_depts : ["Detailing", "Engineering"]).concat(["Other"]) };
   },
-  async save_division_prefs(tz, url) {
+  _scopes: null,
+  async get_search_scopes() {
+    return { ok: true, super_admin: true, custom: !!this._scopes, brands: (this._scopes || { brands: [{ label: "American Buildings", domain: "americanbuildings.com" }, { label: "CBC Steel Buildings", domain: "cbcsteelbuildings.com" }] }).brands,
+      divisions: (this._scopes || { divisions: [{ label: "NBSIN — Waterloo", company: "NBSIN" }, { label: "NBGSC — NBG Swansea", company: "NBG - Swansea" }] }).divisions };
+  },
+  async save_search_scopes(d) {
+    for (const b of d.brands || []) if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/i.test((b.domain || "").trim())) return { ok: false, error: "Brand '" + (b.label || b.domain) + "': needs a name and an email domain such as example.com." };
+    this._scopes = d; return { ok: true, ...d };
+  },
+  async save_division_prefs(tz, url, os, depts) {
+    if (os !== undefined && os !== null) this._prefs.device_os = os;
+    if (depts !== undefined && depts !== null) this._prefs.hot_spare_depts = depts.filter(x => x && x.toLowerCase() !== "other");
     if (tz !== undefined && tz !== null) this._prefs.timezone = tz || "";
     if (url !== undefined && url !== null) {
       let u = (url || "").trim();

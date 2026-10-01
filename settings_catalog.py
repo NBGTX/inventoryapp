@@ -73,6 +73,11 @@ CATALOG = [
      "kind": "url", "secret": False, "status": "active",
      "help": "Where the Project Hub sidebar item opens for divisions that have not set their own address (Settings > General). "
              "Blank = " + PROJECT_HUB_DEFAULT},
+    {"key": "auto_sync", "group": "Sync", "label": "Sync automatically when the app opens",
+     "kind": "choice", "secret": False, "status": "active",
+     "options": [{"id": "on", "label": "On (default)"}, {"id": "off", "label": "Off - only the Sync buttons sync"}],
+     "help": "With it on, opening the app starts a sync for the division you are in. Turn it off to stop that on every PC "
+             "(the NBG_NO_AUTOSYNC setting on a single PC still wins)."},
     {"key": "intune_enrich_per_sync", "group": "Sync", "label": "Vendor lookups per sync run",
      "kind": "number", "secret": False, "min": 0, "max": 500, "default": 75, "status": "active",
      "help": "How many devices get a Lenovo/Dell/HP spec lookup in one sync. Lower = gentler on vendor APIs, slower to fill in."},
@@ -169,3 +174,59 @@ def clean_role_access(matrix) -> dict:
             raise ValueError(f"Unknown section: {bad[0]}")
         out[r] = [s for s, _ in SECTIONS if s in vals]
     return out
+
+
+# ---- per-division options kept in the division's preferences document (Settings > General) ----
+DEVICE_OS = [("windows", "Windows computers only"), ("all", "All device types (phones, tablets, Macs too)")]
+HOT_SPARE_DEFAULT = ["Detailing", "Engineering"]          # "Other" is always added as the catch-all
+
+
+def valid_device_os(v: str) -> bool:
+    return v in {k for k, _ in DEVICE_OS}
+
+
+def clean_depts(raw) -> list:
+    """Hot spare department names: tidy, de-duplicated, never 'Other' (always present), at most 12. Raises ValueError."""
+    out = []
+    for d in raw or []:
+        d = " ".join(str(d).split())
+        if not d:
+            continue
+        if len(d) > 30:
+            raise ValueError(f"'{d[:30]}...' is too long (30 characters at most).")
+        if d.lower() == "other" or d.lower() in [x.lower() for x in out]:
+            continue
+        out.append(d)
+    if len(out) > 12:
+        raise ValueError("At most 12 departments.")
+    return out
+
+
+# ---- platform-wide people-search scopes for BG Tools (Settings > Platform > Search scopes) ----
+def clean_scopes(data) -> dict:
+    """{"brands": [{label, domain}], "divisions": [{label, company}]}, validated. Raises ValueError."""
+    import re
+    if not isinstance(data, dict):
+        raise ValueError("Search scopes must have brands and divisions.")
+    brands, divs = [], []
+    for b in data.get("brands") or []:
+        label = " ".join(str((b or {}).get("label") or "").split())
+        dom = str((b or {}).get("domain") or "").strip().lower()
+        if not label and not dom:
+            continue
+        if not label or not re.match(r"^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$", dom):
+            raise ValueError(f"Brand '{label or dom}': needs a name and an email domain such as example.com.")
+        if dom not in [x["domain"] for x in brands]:
+            brands.append({"label": label[:60], "domain": dom})
+    for d in data.get("divisions") or []:
+        label = " ".join(str((d or {}).get("label") or "").split())
+        co = " ".join(str((d or {}).get("company") or "").split())
+        if not label and not co:
+            continue
+        if not label or not co:
+            raise ValueError(f"Division '{label or co}': needs a name and the exact Entra company name.")
+        if co.lower() not in [x["company"].lower() for x in divs]:
+            divs.append({"label": label[:60], "company": co[:80]})
+    if len(brands) > 40 or len(divs) > 40:
+        raise ValueError("At most 40 entries in each list.")
+    return {"brands": brands, "divisions": divs}

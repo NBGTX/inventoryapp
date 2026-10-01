@@ -498,3 +498,101 @@ class BgToolsDivisionList(unittest.TestCase):
         self.assertEqual(companies.count("Nucor Buildings Group West"), 1)
         self.assertIn("NBG - New Place", companies)
         self.assertNotIn("Hidden Co", companies)
+
+
+class InventoryOptions(unittest.TestCase):
+    def setUp(self):
+        self.gc = make_client(extra={"super_admins": ["adm@nucor.com"]})
+        FakeSite(self.gc)
+        self.gc.account_upn = "adm@nucor.com"
+        self.api = app.Api()
+        self.api._gc = self.gc
+        self.api._hub = Hub(logs_folder=tempfile.mkdtemp(), division=self.gc.division)
+
+    def test_auto_sync_is_a_platform_setting(self):
+        self.assertTrue(self.api.get_flags()["auto_sync"])
+        self.gc._base_cfg["auto_sync"] = None
+        self.gc._base_cfg["auto_sync"] = "off"                                    # master/config string form
+        self.assertFalse(self.api.get_flags()["auto_sync"])
+        self.assertEqual(sc.check_value("auto_sync", "on"), "on")
+        with self.assertRaises(ValueError):
+            sc.check_value("auto_sync", "maybe")
+
+    def test_device_os_default_follows_config_then_saved_choice_wins(self):
+        self.assertEqual(self.api.get_division_prefs()["device_os"], "windows")
+        self.assertTrue(self.api.save_division_prefs(None, None, "all")["ok"])
+        self.assertEqual(self.api.get_division_prefs()["device_os"], "all")
+        self.assertFalse(self.api.save_division_prefs(None, None, "linux")["ok"])
+
+    def test_sync_uses_the_division_device_filter(self):
+        devs = [{"id": "1", "serialNumber": "W1", "operatingSystem": "Windows", "deviceName": "A", "deviceCategoryDisplayName": "NBGW"},
+                {"id": "2", "serialNumber": "I1", "operatingSystem": "iOS", "deviceName": "B", "deviceCategoryDisplayName": "NBGW"}]
+        self.gc._get_all = lambda url: devs
+        self.gc.division_prefs = lambda: {"device_os": "windows"}
+        self.assertEqual([d["serial"] for d in self.gc.get_intune_category_devices()], ["W1"])
+        self.gc.division_prefs = lambda: {"device_os": "all"}
+        self.assertEqual([d["serial"] for d in self.gc.get_intune_category_devices()], ["W1", "I1"])
+        self.gc.division_prefs = lambda: {}                                         # nothing saved: old config.json behaviour
+        self.assertEqual([d["serial"] for d in self.gc.get_intune_category_devices()], ["W1"])
+
+    def test_hot_spare_departments(self):
+        r = self.api.get_division_prefs()
+        self.assertEqual((r["hot_spare_depts"], r["hot_spare_effective"]), ([], ["Detailing", "Engineering", "Other"]))
+        self.assertTrue(self.api.save_division_prefs(None, None, None, ["  Fab  Shop ", "Sales", "other", "sales", ""])["ok"])
+        r = self.api.get_division_prefs()
+        self.assertEqual(r["hot_spare_depts"], ["Fab Shop", "Sales"])                 # tidy, no duplicates, 'Other' never listed twice
+        self.assertEqual(r["hot_spare_effective"], ["Fab Shop", "Sales", "Other"])
+        self.assertFalse(self.api.save_division_prefs(None, None, None, ["x" * 31])["ok"])
+        self.assertFalse(self.api.save_division_prefs(None, None, None, [str(i) for i in range(13)])["ok"])
+        self.assertTrue(self.api.save_division_prefs(None, None, None, [])["ok"])
+        self.assertEqual(self.api.get_division_prefs()["hot_spare_effective"], ["Detailing", "Engineering", "Other"])
+
+    def test_plain_users_cannot_change_the_options(self):
+        self.gc._base_cfg["super_admins"] = []
+        self.gc.account_upn = "plain@nucor.com"
+        self.assertFalse(self.api.save_division_prefs(None, None, "all")["ok"])
+
+
+class SearchScopes(unittest.TestCase):
+    def setUp(self):
+        import hub as hubmod
+        self.hubmod = hubmod
+        self.gc = make_client(extra={"super_admins": ["adm@nucor.com"]})
+        FakeSite(self.gc)
+        self.gc.account_upn = "adm@nucor.com"
+        self.dir = tempfile.mkdtemp()
+        self._orig = hubmod.platform_hub_for
+        hubmod.platform_hub_for = lambda gc: Hub(logs_folder=self.dir, division={"id": "_platform", "name": "P", "legacy_data": False, "sites": []})
+        self.api = app.Api()
+        self.api._gc = self.gc
+
+    def tearDown(self):
+        self.hubmod.platform_hub_for = self._orig
+
+    def test_defaults_until_saved_then_saved_lists_drive_bg_tools(self):
+        r = self.api.get_search_scopes()
+        self.assertFalse(r["custom"])
+        self.assertTrue(any(b["domain"] == "americanbuildings.com" for b in r["brands"]))
+        self.assertTrue(self.api.save_search_scopes({"brands": [{"label": " Acme  Steel ", "domain": "ACME.com"}],
+                                                      "divisions": [{"label": "NBSIN", "company": "NBSIN"}]})["ok"])
+        r = self.api.get_search_scopes()
+        self.assertTrue(r["custom"])
+        self.assertEqual(r["brands"], [{"label": "Acme Steel", "domain": "acme.com"}])
+        loc = self.api.bg_locations()
+        self.assertEqual([b["domain"] for b in loc["locations"]], ["acme.com"])
+        self.assertIn("NBSIN", [d["company"] for d in loc["divisions"]])
+
+    def test_validation(self):
+        for bad in ({"brands": [{"label": "X", "domain": "not a domain"}], "divisions": []},
+                    {"brands": [{"label": "", "domain": "a.com"}], "divisions": []},
+                    {"brands": [], "divisions": [{"label": "L", "company": ""}]},
+                    {"brands": [{"label": "A", "domain": "a%d.com" % i} for i in range(41)], "divisions": []},
+                    "nope"):
+            self.assertFalse(self.api.save_search_scopes(bad)["ok"], bad)
+        ok = sc.clean_scopes({"brands": [{"label": "A", "domain": "a.com"}, {"label": "Dup", "domain": "A.COM"}, {"label": "", "domain": ""}], "divisions": []})
+        self.assertEqual(len(ok["brands"]), 1)                                       # duplicates and blank rows dropped
+
+    def test_super_admin_only(self):
+        self.gc.account_upn = "tech@nucor.com"
+        self.assertEqual(self.api.get_search_scopes(), {"ok": True, "super_admin": False})
+        self.assertFalse(self.api.save_search_scopes({"brands": [], "divisions": []})["ok"])

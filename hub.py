@@ -322,6 +322,13 @@ class Hub:
         except Exception:
             pass
 
+    # ---- small named JSON documents (platform-level settings such as BG Tools search scopes) ----
+    def get_named(self, name: str):
+        return self._get_doc(os.path.join(self.hub, "nbgw-" + self._safe(name) + ".json"))
+
+    def put_named(self, name: str, data: dict) -> None:
+        self._write(os.path.join(self.hub, "nbgw-" + self._safe(name) + ".json"), json.dumps(data, indent=2, ensure_ascii=False))
+
     # ---- sync lock + last-sync status (one pair per division; see synclock.py) --------------
     def _get_doc(self, path):
         if self._exists(path):
@@ -954,16 +961,26 @@ def hub_for(gc) -> "Hub":
 
 
 TEMPLATE_ID = "_template"
+PLATFORM_ID = "_platform"
+
+
+def pseudo_hub_for(gc, div_id: str, name: str) -> "Hub":
+    """A hub for a platform-level pseudo-division: no Divisions row, never in the switcher, edited by super admins."""
+    div = {"id": div_id, "name": name, "company_name": "", "legacy_data": False, "sites": []}
+    if gc.data_mode == "local":
+        import localstore
+        return Hub(logs_folder=localstore.hub_logs_dir(div_id), division=div)
+    if gc._central:
+        from hubstore import SharePointHubStore
+        return Hub(division=div, store=SharePointHubStore(gc, div_id=div_id))
+    return Hub(division=div)
 
 
 def template_hub_for(gc) -> "Hub":
-    """The platform-level TEMPLATE hub (checklists new divisions start from). Not a real division: it has no
-    Divisions row, never shows in the switcher, and is only edited by super admins."""
-    div = {"id": TEMPLATE_ID, "name": "Template checklists", "company_name": "", "legacy_data": False, "sites": []}
-    if gc.data_mode == "local":
-        import localstore
-        return Hub(logs_folder=localstore.hub_logs_dir(TEMPLATE_ID), division=div)
-    if gc._central:
-        from hubstore import SharePointHubStore
-        return Hub(division=div, store=SharePointHubStore(gc, div_id=TEMPLATE_ID))
-    return Hub(division=div)
+    """The platform-level TEMPLATE hub (checklists new divisions start from)."""
+    return pseudo_hub_for(gc, TEMPLATE_ID, "Template checklists")
+
+
+def platform_hub_for(gc) -> "Hub":
+    """Platform-wide documents (BG Tools search scopes ...)."""
+    return pseudo_hub_for(gc, PLATFORM_ID, "Platform settings")

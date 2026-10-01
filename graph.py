@@ -1653,6 +1653,21 @@ class GraphClient:
         self._loc_cache[key] = loc
         return loc
 
+    def division_prefs(self) -> dict:
+        """The active division's preferences document (Settings > General), cached for 5 minutes. {} on any problem."""
+        import time as _t
+        key = self.division["id"]
+        hit = self.__dict__.setdefault("_prefs_cache", {}).get(key)
+        if hit and _t.monotonic() - hit[0] < 300:
+            return hit[1]
+        try:
+            from hub import hub_for
+            prefs = hub_for(self).get_prefs() or {}
+        except Exception:
+            prefs = {}
+        self._prefs_cache[key] = (_t.monotonic(), prefs)
+        return prefs
+
     def get_intune_category_devices(self) -> list[dict]:
         """Intune managed devices in the configured **device category** (default
         'NBGW'), mapped to In Use row dicts.
@@ -1663,7 +1678,9 @@ class GraphClient:
         type (phones/tablets) in a later phase - or to another OS to target that.
         """
         category = (self.cfg.get("intune_device_category") or "NBGW").strip().replace("'", "''")
-        os_want = (self.cfg.get("intune_device_os", "Windows") or "").strip().lower()
+        pref = (self.division_prefs().get("device_os") or "").strip().lower()      # Settings > General wins over config.json
+        os_want = ("" if pref == "all" else "windows") if pref in ("all", "windows") \
+            else (self.cfg.get("intune_device_os", "Windows") or "").strip().lower()
         include_all_os = os_want in ("", "all", "*", "any")
         select = _INTUNE_SELECT + ",deviceCategoryDisplayName"
         url = (f"{GRAPH}/deviceManagement/managedDevices"

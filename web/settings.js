@@ -194,7 +194,7 @@ const Settings = {
   groups() {
     return [
       { title: Divisions.label(), items: this.SECTIONS.filter(x => x[0] === "general" || this.allowed.includes(x[0])) },
-      ...(this.su ? [{ title: "Platform (super admin)", items: [["divisions", "Divisions"], ["admins", "Super admins"], ["sync", "Sync all divisions"], ["template", "Template checklists"], ["roles", "Role access"], ["integrations", "Integrations & options"]] }] : []),
+      ...(this.su ? [{ title: "Platform (super admin)", items: [["divisions", "Divisions"], ["admins", "Super admins"], ["sync", "Sync all divisions"], ["scopes", "People-search scopes"], ["template", "Template checklists"], ["roles", "Role access"], ["integrations", "Integrations & options"]] }] : []),
     ];
   },
   async load() {
@@ -230,7 +230,7 @@ const Settings = {
     this.pane("settings", `<div class="empty">Loading…</div>`);
     const dep = { models: "models", links: "sites", perms: "perms", storage: "storage" }[tab];
     if (dep) { this.pane("depts"); Depts._page = true; await Depts.openPage(dep); return; }
-    const fn = { general: "general", access: "accessTab", sites: "sitesTab", sql: "sqlTab", divisions: "divisions", admins: "admins", roles: "roles", template: "templateTab", sync: "syncAll", integrations: "integrations" }[tab];
+    const fn = { general: "general", access: "accessTab", sites: "sitesTab", sql: "sqlTab", divisions: "divisions", admins: "admins", roles: "roles", template: "templateTab", scopes: "scopesTab", sync: "syncAll", integrations: "integrations" }[tab];
     try { await this[fn](); } catch (e) { this.pane("settings", `<div class="empty">Could not open this section: ${esc(String(e && e.message || e))}</div>`); }
   },
 
@@ -253,12 +253,23 @@ const Settings = {
            ${SetUI.select("tzSel", zl.map(z => ({ id: z.id, label: z.label })), this.prefs.timezone, "Settings.tzPreview()", "Use the default (" + def + ")", !canEdit)}</div>
          <p id="tzPrev" class="muted" style="margin:10px 0 0"></p>`,
         canEdit ? `<button class="primary" id="setSave" onclick="Settings.saveTz()" disabled>Save time zone</button>` : "") +
+      (canEdit ? SetUI.card("Inventory options", "How this division's devices are synced and grouped.",
+        `<div class="field" style="max-width:460px"><label>Devices to sync from Intune</label>
+           ${SetUI.select("ioOs", this.prefs.device_os_options || [], this.prefs.device_os, "Settings.markDirty('ioSave')")}</div>
+         <div class="field"><label>Hot spare departments <span class="muted">(Other is always added at the end)</span></label>
+           <div id="ioDepts" style="max-width:560px"></div>
+           <p class="muted" style="margin:6px 0 0;font-size:12px">These are the department groups on the Hot spares window. Press Enter after each name; click &times; to remove one.</p></div>`,
+        `<button class="primary" id="ioSave" onclick="Settings.saveInv()" disabled>Save inventory options</button>`) : "") +
       SetUI.card("Project Hub", "Where the Project Hub item in the sidebar opens for " + esc(Divisions.label()) + (canEdit ? "." : ". Division admins can change it."),
         `<div class="field" style="max-width:560px"><label>Project Hub address</label>
            <input id="phUrl" value="${attr(this.prefs.project_hub_url || "")}" placeholder="${attr(this.prefs.project_hub_default)}" ${canEdit ? "" : "disabled"} oninput="Settings.markDirty('phSave')"></div>
          <p class="muted" style="margin:8px 0 0;font-size:12px">Leave blank to use the platform default: ${esc(this.prefs.project_hub_default)}. Must start with https://.</p>`,
         `<button class="ghost" onclick="Settings.phOpen()">Open this address</button>` + (canEdit ? `<button class="primary" id="phSave" onclick="Settings.savePh()" disabled>Save address</button>` : "")));
     document.getElementById("tzSel").addEventListener("change", () => this.markDirty());
+    if (document.getElementById("ioDepts")) {
+      this.ioDepts = ((this.prefs.hot_spare_depts || []).length ? this.prefs.hot_spare_depts : (this.prefs.hot_spare_default || [])).slice();
+      ChipInput.mount("ioDepts", this.ioDepts, () => this.markDirty("ioSave"), "department, Enter");
+    }
     this.tzPreview();
   },
   tzPreview() {
@@ -272,6 +283,14 @@ const Settings = {
   phOpen() {
     const v = (document.getElementById("phUrl").value || "").trim() || this.prefs.project_hub_default;
     Backend.call("open_external", /^https?:\/\//i.test(v) ? v : "https://" + v).then(r => { if (r && !r.ok) App.toast(r.error || "Could not open it.", true); });
+  },
+  async saveInv() {
+    const r = await Backend.call("save_division_prefs", null, null, document.getElementById("ioOs").value, this.ioDepts);
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+    this.dirty = false;
+    await Tz.load();
+    App.toast("Inventory options saved.");
+    this.general();
   },
   async savePh() {
     const r = await Backend.call("save_division_prefs", null, (document.getElementById("phUrl").value || "").trim());
@@ -382,6 +401,39 @@ const Settings = {
     this.saPersist([...this.sa.admins, upn], "Added " + upn);
   },
   saRemove(i) { const u = this.sa.admins[i]; if (u) this.saPersist(this.sa.admins.filter((_, k) => k !== i), "Removed " + u); },
+
+  /* ---- platform: who BG Tools can search (other brands by email domain, other divisions by Entra company) ---- */
+  async scopesTab() {
+    const r = await Backend.call("get_search_scopes");
+    if (!r || !r.ok || !r.super_admin) return this.pane("settings", `<div class="empty">${esc((r && r.error) || "Super admins only.")}</div>`);
+    this.sc = { brands: r.brands.map(b => ({ ...b })), divisions: r.divisions.map(d => ({ ...d })) };
+    this.pane("settings", SetUI.card("People-search scopes", "The extra groups of people the Permissions Finder can search besides the division you are in. " +
+      (r.custom ? "" : "Showing the built-in lists; saving makes them yours."),
+      `<h4 style="margin:0 0 6px">Other BG brands <span class="muted" style="font-weight:400">(told apart by email domain)</span></h4><div id="scBrands"></div>
+       <h4 style="margin:18px 0 6px">Other divisions <span class="muted" style="font-weight:400">(told apart by Entra company name; every division in this app is added automatically)</span></h4><div id="scDivs"></div>`,
+      `<button class="ghost" onclick="Settings.show('scopes')">Discard changes</button><button class="primary" id="setSave" onclick="Settings.scSave()" disabled>Save scopes</button>`));
+    this.scDraw();
+  },
+  scDraw() {
+    const row = (kind, i, a, b, ph) => `<tr><td><input value="${attr(a)}" oninput="Settings.scSet('${kind}',${i},0,this.value)" placeholder="${attr(ph[0])}"></td>
+      <td><input value="${attr(b)}" oninput="Settings.scSet('${kind}',${i},1,this.value)" placeholder="${attr(ph[1])}"></td>
+      <td style="text-align:right"><button class="cfg-del" onclick="Settings.scDel('${kind}',${i})" title="Remove">&times;</button></td></tr>`;
+    const table = (kind, list, f2, heads, ph) => `<table class="ms-table"><thead><tr><th>${heads[0]}</th><th>${heads[1]}</th><th></th></tr></thead><tbody>` +
+      list.map((x, i) => row(kind, i, x.label, x[f2], ph)).join("") + `</tbody></table><button class="ghost" style="margin-top:8px" onclick="Settings.scAdd('${kind}')">+ Add</button>`;
+    document.getElementById("scBrands").innerHTML = table("b", this.sc.brands, "domain", ["Name", "Email domain"], ["American Buildings", "example.com"]);
+    document.getElementById("scDivs").innerHTML = table("d", this.sc.divisions, "company", ["Name", "Entra company name (exact)"], ["NBSIN — Waterloo", "NBSIN"]);
+  },
+  scSet(kind, i, col, v) {
+    const list = kind === "b" ? this.sc.brands : this.sc.divisions, f2 = kind === "b" ? "domain" : "company";
+    list[i][col === 0 ? "label" : f2] = v; this.markDirty();
+  },
+  scAdd(kind) { (kind === "b" ? this.sc.brands : this.sc.divisions).push(kind === "b" ? { label: "", domain: "" } : { label: "", company: "" }); this.markDirty(); this.scDraw(); },
+  scDel(kind, i) { (kind === "b" ? this.sc.brands : this.sc.divisions).splice(i, 1); this.markDirty(); this.scDraw(); },
+  async scSave() {
+    const r = await Backend.call("save_search_scopes", this.sc);
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+    this.dirty = false; App.toast("Search scopes saved."); this.scopesTab();
+  },
 
   /* ---- platform: template checklists (what a new division's Endpoint Provisioning starts from) ---- */
   async templateTab() {
