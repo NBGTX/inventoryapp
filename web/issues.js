@@ -161,22 +161,26 @@ const Feedback = {
         <div class="modal-head"><h3>New issue</h3><button onclick="Feedback.close()">&times;</button></div>
         <div class="modal-body">
           <div class="field"><label>What is it?</label>
-            <select id="mfbType"><option value="bug">Bug: something is wrong</option><option value="feature">Feature request: I would like…</option></select></div>
+            <div class="iss-seg" id="mfbType" role="radiogroup">
+              <label class="on"><input type="radio" name="mfbKind" value="bug" checked onchange="Feedback.kind('bug')">🐞 Bug: something is wrong</label>
+              <label><input type="radio" name="mfbKind" value="feature" onchange="Feedback.kind('feature')">💡 Feature request: I would like…</label>
+            </div></div>
           <div class="field"><label>Title</label><input id="mfbTitle" placeholder="Short summary" maxlength="120" autocomplete="off"></div>
           <div class="field"><label>Details</label>
-            <textarea id="mfbDetail" rows="6" placeholder="What happened, what did you expect, and which page were you on? (Steps help.)"></textarea></div>
+            <textarea id="mfbDetail" rows="7" placeholder="What happened, what did you expect, and which page were you on? (Steps help.)"></textarea></div>
           <p class="muted" style="font-size:12px;margin:0">Everyone using NBG Hub can see and comment on this. You cannot edit it after you submit (you can add comments), so check it first. Do not paste passwords or personal data.</p>
         </div>
         <div class="modal-foot"><button class="ghost" onclick="Feedback.close()">Cancel</button><button class="primary" onclick="Feedback.submit()">Submit</button></div>
       </div></div>`;
-    if (type) document.getElementById("mfbType").value = type;
+    if (type) { const r = document.querySelector(`input[name=mfbKind][value=${type === "feature" ? "feature" : "bug"}]`); if (r) { r.checked = true; this.kind(r.value); } }
     setTimeout(() => { const t = document.getElementById("mfbTitle"); if (t) t.focus(); }, 30);
   },
   close() { document.getElementById("modalRoot").innerHTML = ""; },
+  kind(v) { document.querySelectorAll("#mfbType label").forEach(l => l.classList.toggle("on", l.querySelector("input").value === v)); },
   async submit() {
     const title = (document.getElementById("mfbTitle").value || "").trim();
     if (!title) return App.toast("Add a short title.", true);
-    const r = await Backend.call("issue_create", document.getElementById("mfbType").value, title, (document.getElementById("mfbDetail").value || "").trim());
+    const r = await Backend.call("issue_create", (document.querySelector("input[name=mfbKind]:checked") || {}).value || "bug", title, (document.getElementById("mfbDetail").value || "").trim());
     if (!r || !r.ok) return App.toast((r && r.error) || "Could not submit.", true);
     this.close();
     App.toast("Thanks: filed as " + r.issue.short + ". Find it under Issues.");

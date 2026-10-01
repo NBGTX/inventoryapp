@@ -852,3 +852,7 @@ body.is-busy button.primary,body.is-busy .modal-foot button,body.is-busy .set-ro
 .iss-seg label.on{background:var(--med);color:#fff;font-weight:600;}
 .iss-seg input{position:absolute;opacity:0;width:0;height:0;}
 .iss-seg label:focus-within{outline:2px solid var(--light);outline-offset:-2px;}
+.field textarea{width:100%;background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:11px 12px;color:var(--text);font-size:14px;font-family:inherit;line-height:1.45;resize:vertical;min-height:110px;}
+.field textarea::placeholder,.field input::placeholder{color:var(--muted);opacity:.7;}
+#mfbType{display:flex;width:100%;}
+#mfbType label{flex:1;justify-content:center;}
