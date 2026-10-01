@@ -23,11 +23,37 @@
 
 param(
     [switch]$OneDir,
-    [switch]$Deploy
+    [switch]$Deploy,
+    [switch]$SkipTests,
+    [string]$Python = ""
 )
 
 $ErrorActionPreference = "Stop"
-$py = "C:\Users\Blake.Stevenson\AppData\Local\Programs\Python\Python312\python.exe"
+
+# ---- find Python 3.12: -Python arg, then $env:NBG_PYTHON, then the py launcher, then the old path ----
+$py = $Python
+if (-not $py) { $py = $env:NBG_PYTHON }
+if (-not $py) {
+    try { $py = (& py -3.12 -c "import sys;print(sys.executable)").Trim() } catch { $py = "" }
+}
+if (-not $py -or -not (Test-Path $py)) {
+    $legacy = "C:\Users\Blake.Stevenson\AppData\Local\Programs\Python\Python312\python.exe"
+    if (Test-Path $legacy) { $py = $legacy }
+}
+if (-not $py -or -not (Test-Path $py)) {
+    throw "Python 3.12 not found. Install it, or pass -Python <path-to-python.exe>, or set NBG_PYTHON."
+}
+Write-Host "Using Python: $py"
+
+# ---- version files must agree (CLAUDE.md Rule 3) ----
+& $py tools\bump_version.py --check
+if ($LASTEXITCODE -ne 0) { throw "Version files disagree. Run: python tools\bump_version.py" }
+
+# ---- offline tests must pass ----
+if (-not $SkipTests) {
+    & $py -m unittest discover -s tests -p "test_*.py"
+    if ($LASTEXITCODE -ne 0) { throw "Tests failed. Fix them, or pass -SkipTests to build anyway." }
+}
 
 $mode = if ($OneDir) { "--onedir" } else { "--onefile" }
 Write-Host "Building NBG Hub.exe ($mode, with version metadata, no UPX) ..."
