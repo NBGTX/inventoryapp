@@ -4508,13 +4508,13 @@ Object.assign(Mock, {
   async get_own_division() {
     const d = this._dv.find(x => x.id === this._divCur) || this._dv[0];
     return { ok: true, id: d.id, name: d.name, company_name: d.company_name, intune_category: d.intune_category, super_admin: true, can_edit: true,
-      sites: JSON.parse(JSON.stringify(d.sites || [])), ad_domain: d.ad_domain || "", sql_server: d.sql_server || "",
+      sites: JSON.parse(JSON.stringify(d.sites || [])), access: [...(d.access || [])], ad_domain: d.ad_domain || "", sql_server: d.sql_server || "",
       timesheet_db: d.timesheet_db || "", timesheet_table: d.timesheet_table || "", employee_db: d.employee_db || "", employee_table: d.employee_table || "" };
   },
   async save_own_division(data) {
     const d = this._dv.find(x => x.id === this._divCur) || this._dv[0];
     for (const c of (data.sites || [])) if (!/^[A-Za-z0-9]{2,6}$/.test(c.code || "")) return { ok: false, error: `Site code '${c.code || ""}': 2-6 letters or digits.` };
-    for (const k of ["sites", "ad_domain", "sql_server", "timesheet_db", "timesheet_table", "employee_db", "employee_table"]) if (k in data) d[k] = data[k];
+    for (const k of ["sites", "access", "ad_domain", "sql_server", "timesheet_db", "timesheet_table", "employee_db", "employee_table"]) if (k in data) d[k] = data[k];
     return { ok: true };
   },
   async intune_categories() { return { ok: true, categories: ["NBGTX", "NBGW", "Shared Devices"] }; },

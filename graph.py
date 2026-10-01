@@ -685,7 +685,7 @@ class GraphClient:
         return out
 
     # fields a division's own users may change (everything else stays super-admin only)
-    TENANT_FIELDS = ("sites", "ad_domain", "sql_server", "timesheet_db", "timesheet_table", "employee_db", "employee_table")
+    TENANT_FIELDS = ("sites", "access", "ad_domain", "sql_server", "timesheet_db", "timesheet_table", "employee_db", "employee_table")
 
     def save_own_division(self, d: dict) -> None:
         """Tenant settings: update ONLY sites, AD domain and the timesheet/SQL names of the ACTIVE division.
@@ -706,6 +706,21 @@ class GraphClient:
         if "sites" in d:
             import json
             fields[col("Sites JSON")] = json.dumps(self._clean_sites(d["sites"]))
+        if "access" in d:
+            import json
+            sa = self.is_super_admin()
+            existing = list(self.division.get("access") or [])
+            acl = []
+            for a in d["access"] or []:
+                a = str(a).strip()
+                a = a if a.lower().startswith("group:") else a.lower()
+                if a and a not in acl and (a != "*" or sa):          # "everyone" is a platform decision
+                    acl.append(a)
+            if "*" in existing and not sa:
+                acl.append("*")                                       # a tenant cannot undo it
+            if not sa and not self._acl_allows(acl):
+                raise GraphError("That list would remove your own access to this division. Add yourself (or a group you are in) first.")
+            fields[col("Access JSON")] = json.dumps(acl)
         if "ad_domain" in d:
             fields[col("AD Domain")] = str(d["ad_domain"] or "").strip()
         if "sql_server" in d:
@@ -776,22 +791,16 @@ class GraphClient:
         someone with site access (see docs/MIGRATION.md)."""
         if not self._central:
             return list(self.registry)
+        sa = self.is_super_admin()      # the result may be empty: the caller shows "no division available"
+        return [d for d in self.registry if sa or self._acl_allows(d.get("access") or [])]
+
+    def _acl_allows(self, acl: list) -> bool:
+        """Does this (non-super-admin) account pass the access list? '*', its sign-in, or a group it belongs to."""
         me = (self.account_upn or "").strip().lower()
-        out = []
-        sa = self.is_super_admin()
-        groups = None                                  # fetched lazily, only if some ACL names a group
-        for d in self.registry:
-            acl = d.get("access") or []
-            ok = sa or "*" in acl or bool(me and me in acl)
-            if not ok:
-                gids = [str(e)[6:].split("|")[0].strip().lower() for e in acl if str(e).lower().startswith("group:")]
-                if gids:
-                    if groups is None:
-                        groups = self._my_group_ids()
-                    ok = any(g in groups for g in gids)
-            if ok:
-                out.append(d)
-        return out           # may be empty: the caller shows "no division available to your account"
+        if "*" in acl or (me and me in acl):
+            return True
+        gids = [str(e)[6:].split("|")[0].strip().lower() for e in acl if str(e).lower().startswith("group:")]
+        return bool(gids) and any(g in self._my_group_ids() for g in gids)
 
     def set_division(self, div_id: str, persist: bool = True) -> dict:
         """Switch tenant. Keeps the sign-in (same user/tenant); drops every cache that

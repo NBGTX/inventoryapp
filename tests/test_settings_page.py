@@ -183,14 +183,14 @@ class TenantSettings(unittest.TestCase):
     def test_tenant_can_change_only_its_own_allowed_fields(self):
         r = self.api.save_own_division({"sql_server": "SRV1", "timesheet_db": "TS", "timesheet_table": "dbo.Locks",
                                         "employee_db": "EMP", "employee_table": "dbo.People", "ad_domain": "x.local",
-                                        "name": "HACKED", "company_name": "evil", "access": ["*"], "enabled": False,
+                                        "name": "HACKED", "company_name": "evil", "intune_category": "EVIL", "enabled": False,
                                         "sites": [{"code": "ltr", "name": "Lathrop", "city_prefixes": ["lathrop"], "device_prefixes": ["BGLTR"]}]})
         self.assertTrue(r["ok"], r)
         sent = self.patches()[-1][2]
         self.assertEqual(sent["field_20"], "TS")
         self.assertEqual(sent["field_23"], "dbo.People")
         self.assertIn('"LTR"', sent[_env.DEFAULT_COLS["sites json"]])
-        for forbidden in ("HACKED", "evil", "AccessJson", "Enabled", "Title"):
+        for forbidden in ("HACKED", "evil", "EVIL", "AccessJson", "Enabled", "Title"):
             self.assertNotIn(forbidden, str(sent))
 
     def test_validation_and_access_and_local_mode(self):
@@ -202,6 +202,37 @@ class TenantSettings(unittest.TestCase):
         self.gc.registry[0]["access"] = ["*"]
         self.gc.data_mode = "local"
         self.assertIn("Local data mode", self.api.save_own_division({"sql_server": "S"})["error"])
+
+    def acl(self):
+        import json
+        return json.loads(self.patches()[-1][2][_env.DEFAULT_COLS["access json"]])
+
+    def test_tenant_adds_people_and_groups_to_its_own_division(self):
+        self.gc.registry[0]["access"] = ["tech@nucor.com"]
+        self.gc._get_all = lambda url: [{"id": "g-1"}]
+        r = self.api.save_own_division({"access": ["Tech@Nucor.com", "New.Person@nucor.com", "group:G-1|Terrell IT", "new.person@nucor.com"]})
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(self.acl(), ["tech@nucor.com", "new.person@nucor.com", "group:G-1|Terrell IT"])
+
+    def test_tenant_cannot_grant_everyone_or_undo_it(self):
+        self.gc.registry[0]["access"] = ["tech@nucor.com"]
+        self.assertTrue(self.api.save_own_division({"access": ["tech@nucor.com", "*"]})["ok"])
+        self.assertEqual(self.acl(), ["tech@nucor.com"])                       # "*" dropped
+        self.gc.registry[0]["access"] = ["*"]
+        self.assertTrue(self.api.save_own_division({"access": ["tech@nucor.com"]})["ok"])
+        self.assertEqual(self.acl(), ["tech@nucor.com", "*"])                   # platform "everyone" kept
+
+    def test_tenant_cannot_lock_itself_out(self):
+        self.gc.registry[0]["access"] = ["tech@nucor.com"]
+        n = len(self.patches())
+        r = self.api.save_own_division({"access": ["someone@nucor.com"]})
+        self.assertIn("remove your own access", r["error"])
+        self.assertEqual(len(self.patches()), n)
+
+    def test_super_admin_may_grant_everyone_from_here(self):
+        self.gc._base_cfg["super_admins"] = ["tech@nucor.com"]
+        self.assertTrue(self.api.save_own_division({"access": ["*"]})["ok"])
+        self.assertEqual(self.acl(), ["*"])
 
     def test_get_own_division_shape(self):
         r = self.api.get_own_division()

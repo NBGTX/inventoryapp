@@ -146,7 +146,7 @@ const Settings = {
   open(tab) { if (tab) this.tab = tab; Nav.go("settings"); },
   groups() {
     return [
-      { title: Divisions.label(), items: [["general", "General"], ["sites", "Sites"], ["sql", "Directory & SQL"],
+      { title: Divisions.label(), items: [["general", "General"], ["access", "Who has access"], ["sites", "Sites"], ["sql", "Directory & SQL"],
         ["models", "Model departments"], ["links", "NBT Sites"], ["perms", "Group baselines"], ["storage", "Storage"]] },
       ...(this.su ? [{ title: "Platform (super admin)", items: [["divisions", "Divisions"], ["admins", "Super admins"], ["integrations", "Integrations & options"]] }] : []),
     ];
@@ -184,7 +184,7 @@ const Settings = {
     this.pane("settings", `<div class="empty">Loading…</div>`);
     const dep = { models: "models", links: "sites", perms: "perms", storage: "storage" }[tab];
     if (dep) { this.pane("depts"); Depts._page = true; await Depts.openPage(dep); return; }
-    const fn = { general: "general", sites: "sitesTab", sql: "sqlTab", divisions: "divisions", admins: "admins", integrations: "integrations" }[tab];
+    const fn = { general: "general", access: "accessTab", sites: "sitesTab", sql: "sqlTab", divisions: "divisions", admins: "admins", integrations: "integrations" }[tab];
     try { await this[fn](); } catch (e) { this.pane("settings", `<div class="empty">Could not open this section: ${esc(String(e && e.message || e))}</div>`); }
   },
 
@@ -233,6 +233,33 @@ const Settings = {
     this.own = JSON.parse(JSON.stringify(o));
     return this.own;
   },
+  /* ---- tenant: who can open this division ---- */
+  async accessTab() {
+    const o = await this.ownLoad(); if (!o) return;
+    o.access = o.access || [];
+    const star = o.access.includes("*");
+    this.pane("settings", SetUI.card("Who has access to " + Divisions.label(),
+      "People and Entra groups listed here can switch to this division. Super admins always can.",
+      `${o.can_edit ? "" : `<div class="cfg-warn">Read-only here (Local data mode or no central site).</div>`}
+       ${star ? `<div class="cfg-ok" style="margin-bottom:12px">Everyone who can run the app can see this division (set by a super admin).</div>` : ""}
+       <div id="acChips" class="dp-chips"></div>
+       <div class="set-acc"><div id="acUser"></div><div id="acGroup"></div>${o.super_admin ? `<button class="ghost" type="button" onclick="Settings.acAdd('*')">+ Everyone</button>` : ""}</div>
+       <p class="muted" style="font-size:12px;margin-top:12px">Tip: add an Entra group once, then manage membership in Entra instead of here. You cannot remove your own access.
+       This controls what the app shows; people with access to the SharePoint site can still open the lists directly.</p>`,
+      `<button class="ghost" onclick="Settings.show('access')">Discard changes</button><button class="primary" id="setSave" onclick="Settings.saveOwn(['access'])" disabled>Save access</button>`));
+    this.acRender();
+  },
+  acRender() {
+    const acc = this.own.access;
+    document.getElementById("acChips").innerHTML = acc.filter(a => a !== "*" || this.own.super_admin).map(a => { const l = this.accLabel(a), i = acc.indexOf(a);
+      return `<span class="dp-chip ${l.t}">${l.t === "group" ? "👥 " : ""}${esc(l.name)} <button onclick="Settings.acDel(${i})" title="Remove">&times;</button></span>`; }).join("")
+      || "<span class='muted'>Nobody yet: only super admins can see this division</span>";
+    DirPicker.mount("acUser", "user", it => this.acAdd(it.upn), "Add a person (name or sign-in)…");
+    DirPicker.mount("acGroup", "group", it => this.acAdd("group:" + it.id + "|" + it.name), "Add an Entra group…");
+  },
+  acAdd(v) { if (!this.own.access.includes(v)) this.own.access.push(v); this.markDirty(); this.acRender(); },
+  acDel(i) { this.own.access.splice(i, 1); this.markDirty(); this.acRender(); },
+
   async sitesTab() {
     const o = await this.ownLoad(); if (!o) return;
     this.pane("settings", SetUI.card("Sites", "Each site has a short code. The prefixes tell the app which site a user (by Entra city) or a device (by name) belongs to.",

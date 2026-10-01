@@ -241,11 +241,11 @@ class Api:
         try:
             gc = self._client()
             d = gc.division
-            keys = ("sites", "ad_domain", "sql_server", "timesheet_db", "timesheet_table", "employee_db", "employee_table")
+            keys = ("sites", "access", "ad_domain", "sql_server", "timesheet_db", "timesheet_table", "employee_db", "employee_table")
             return {"ok": True, "id": d["id"], "name": d.get("name", ""), "company_name": d.get("company_name", ""),
                     "intune_category": d.get("intune_category", ""), "super_admin": gc.is_super_admin(),
                     "can_edit": bool(gc._central) and gc.data_mode != "local",
-                    **{k: (d.get(k) if k == "sites" else (d.get(k) or "")) for k in keys}}
+                    **{k: (list(d.get(k) or []) if k in ("sites", "access") else (d.get(k) or "")) for k in keys}}
         except Exception as e:
             return self._fail(e)
 
