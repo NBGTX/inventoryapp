@@ -64,9 +64,9 @@ Install-Module Microsoft.Graph.Authentication -Scope CurrentUser   # once
 | # | Change | Where |
 |---|---|---|
 | A | **Division filtering**: every list read filters `Division eq '<id>'`; every create sets `Division`. | `graph.py` `_items_raw`, `_create_item`, `find_by_serial`, `get_log` |
-| B | **Central site config**: `central_site_host`, `central_site_path`, central list names; division rows read from the `Divisions` list. | `graph.py` `_apply_division`, `divisions.py` `load_registry` |
+| B | **Central site config + registry. Done:** `central` in config.json; divisions read from the `Divisions` list (central wins over config.json; `Enabled = No` hides a division; `Access JSON` = list of emails or `*`, empty = everyone; super admins see all). Access is an app-side filter only. | `graph.py` `refresh_registry`, `visible_registry` |
 | C | **Hub storage swap. Done:** `Hub` reads/writes `Hub Items` rows via `hubstore.py` when the central site is configured (JSON files otherwise). Documents over ~50k chars are split into chunk rows; each write bumps `Rev`, and a stale editor gets a conflict error instead of silently overwriting. Setup HTML is stored as `blob` rows for now (a `Hub Files` library upload is a later improvement). | `hub.py`, `hubstore.py` |
-| D | **UI**: replace 72 hardcoded `LTR`/`BRI` references with sites from `get_divisions`; add the division switcher. | `web/app.js` |
+| D | **UI. Done:** sites, tabs, charts and labels come from the active division; sidebar-header switcher when a user has 2+ divisions. | `web/app.js` `Divisions` |
 | E | **Loader** from the local snapshot into the central lists (section 5). **Done:** `tools\load_central.py` (dry-run default, `--commit`, `--wipe`). Hub JSON: `--hub` / `--hub-only` (needs C, done). | `tools\load_central.py` |
 | F | Bump version on release (`version.py`, `version.txt`, Mock strings). | Rule 3 |
 
@@ -113,3 +113,9 @@ If the Graph PowerShell app is not available, create the lists by hand: see [MAN
 ## 8. Note: typed vs text columns
 
 The PowerShell script creates `Enabled` as Yes/No and `Rev` as Number. The manual/Excel route leaves them as text (SharePoint cannot convert text to Yes/No or Number). The app code must accept both (`Enabled`: true/"yes"/"true"/1; `Rev`: int or numeric string).
+
+## 9. Adding a division
+
+1. Add a row to `Inventory - Divisions` on the central site: Title = short id (lowercase, e.g. `nbgtx`), Display Name, Company Name (exact Entra `companyName`), Intune Category, SharePoint Host + Site Path (the old per-division site, only needed as a migration source), AD Domain, SQL Server, Sites JSON (code, name, city_prefixes, device_prefixes), Access JSON (`[]` = everyone, or `["a@nucor.com"]`), Enabled = Yes.
+2. Users see it in the header switcher within about 5 minutes (restart the app to see it immediately).
+3. Load the division's existing data with the loader: `python tools\load_central.py --division <id>` (needs a snapshot of that division's old site).

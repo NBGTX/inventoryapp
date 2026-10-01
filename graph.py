@@ -197,6 +197,7 @@ class GraphClient:
         self.account_upn: str = ""
         self._master_cache: dict | None = None
         self._master_at = 0.0
+        self._reg_at = 0.0           # monotonic time of the last central registry read
         self._has_dir_read = False           # did the token include Directory.Read.All?
         self._has_auditlog_read = False      # did the token include AuditLog.Read.All?
         self._has_authmethod_read = False    # did the token include UserAuthenticationMethod.Read.All?
@@ -416,6 +417,84 @@ class GraphClient:
             fields = dict(fields)
             fields[self._internal_for(key, "division") or "Division"] = self.division["id"]
         self._req("POST", f"{GRAPH}/sites/{site}/lists/{lid}/items", json={"fields": fields})
+
+    # ---- division registry from the central 'Divisions' list ----------------
+    _REG_TTL = 300.0
+
+    def refresh_registry(self, force: bool = False) -> None:
+        """Merge the central Divisions list into the registry (central wins over config.json;
+        an Enabled=No row hides the division). Never raises: on any problem the config.json
+        registry stays in place. Local data mode and non-central setups skip this."""
+        import json
+        import time as _t
+        if not self._central or self._local:
+            return
+        if not force and self._reg_at and _t.monotonic() - self._reg_at < self._REG_TTL:
+            return
+        try:
+            cmap = self._col_map("divisions")
+            rows = self._items_raw("divisions")
+        except Exception:
+            self._reg_at = _t.monotonic() - (self._REG_TTL - 60.0)   # retry in ~60 s
+            return
+
+        def col(d):
+            return cmap.get(d.lower(), d.replace(" ", ""))
+
+        merged = {d["id"]: d for d in self._div_mod.load_registry(self._base_cfg)}
+        for it in rows:
+            f = it.get("fields", {}) or {}
+            did = str(f.get("Title") or "").strip().lower()
+            if not did or did.upper().startswith("EXAMPLE"):
+                continue
+
+            def g(name, f=f):
+                return str(f.get(col(name)) or "").strip()
+            if g("Enabled").lower() in ("no", "false", "0"):
+                merged.pop(did, None)
+                continue
+
+            def j(name, default, f=f):
+                try:
+                    v = json.loads(g(name) or json.dumps(default))
+                    return v if isinstance(v, type(default)) else default
+                except Exception:
+                    return default
+            base = dict(merged.get(did) or {"id": did, "lists": {}, "legacy_data": did == self._div_mod.DEFAULT_ID})
+            base.update({k: v for k, v in {
+                "name": g("Display Name"), "company_name": g("Company Name"),
+                "intune_category": g("Intune Category"), "sharepoint_hostname": g("SharePoint Host"),
+                "site_path": g("Site Path"), "ad_domain": g("AD Domain"), "sql_server": g("SQL Server"),
+            }.items() if v})
+            base["id"] = did
+            base.setdefault("name", did)
+            base.setdefault("company_name", base["name"])
+            sites = j("Sites JSON", [])
+            if sites:
+                base["sites"] = sites
+            base["access"] = [str(a).strip().lower() for a in j("Access JSON", []) if str(a).strip()]
+            merged[did] = base
+        if merged:
+            self.registry = sorted(merged.values(), key=lambda d: d.get("name", "").lower())
+            keep = self.division["id"]
+            self.division = self._div_mod.find(self.registry, keep)
+            if self.division["id"] != keep:
+                self._store = None
+            self._apply_division()
+        self._reg_at = _t.monotonic()
+
+    def visible_registry(self) -> list:
+        """Divisions this user may switch to. A division's `access` list holds emails ('*' = all);
+        empty = everyone. Super admins see all. NOTE: app-side filter only - SharePoint cannot hide
+        another division's rows from someone with site access (see docs/MIGRATION.md)."""
+        me = (self.account_upn or "").strip().lower()
+        out = []
+        sa = self.is_super_admin()
+        for d in self.registry:
+            acl = d.get("access") or []
+            if sa or not acl or "*" in acl or (me and me in acl):
+                out.append(d)
+        return out or self.registry[:1]
 
     def set_division(self, div_id: str) -> dict:
         """Switch tenant. Keeps the sign-in (same user/tenant); drops every cache that

@@ -164,8 +164,13 @@ class Api:
         try:
             import divisions
             gc = self._client()
+            gc.refresh_registry()
+            vis = gc.visible_registry()
+            if gc.division["id"] not in [d["id"] for d in vis]:
+                gc.set_division(vis[0]["id"])      # saved choice no longer allowed
+                self._hub = None
             return {"ok": True, "current": gc.division["id"],
-                    "divisions": [divisions.public(d) for d in gc.registry]}
+                    "divisions": [divisions.public(d) for d in vis]}
         except Exception as e:
             return self._fail(e)
 
@@ -175,8 +180,9 @@ class Api:
         try:
             import divisions
             gc = self._client()
-            if div_id not in [d["id"] for d in gc.registry]:
-                return {"ok": False, "error": f"Unknown division: {div_id}"}
+            gc.refresh_registry()
+            if div_id not in [d["id"] for d in gc.visible_registry()]:
+                return {"ok": False, "error": f"Unknown division or no access: {div_id}"}
             gc.set_division(div_id)
             self._hub = None
             return {"ok": True, "current": div_id, "division": divisions.public(gc.division)}
