@@ -442,6 +442,8 @@ const App = {
   },
 
   async startup() {
+    // The first division read can run before sign-in finished (empty list, blank name): redo it now that we are signed in.
+    if (!Divisions.list.length) { await Divisions.load(); await Tz.load(); Settings.refreshAccess(); }
     this.renderCached();       // 1) instant: show last-known data from local cache
     await this.reload();       // 2) fast: re-read the SharePoint lists and repaint
     // 3) background: Intune sync (moves + backfill). Deferred a few seconds so it
