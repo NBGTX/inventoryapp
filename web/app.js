@@ -502,6 +502,37 @@ const DirPicker = {
   },
 };
 
+/* Searchable pick list: type to filter (every word must appear somewhere in the option), click or Enter to pick.
+   Keeps the chosen value in a hidden input with id `valueId`, so older code can read it like a <select>. */
+const Combo = {
+  mount(hostId, valueId, items, value, onChange) {
+    const host = document.getElementById(hostId);
+    if (!host) return;
+    const find = v => items.find(i => i.value === v) || items[0];
+    let cur = find(value), shown = [];
+    host.innerHTML = `<div class="dp"><input class="dp-in" autocomplete="off" spellcheck="false"><input type="hidden" id="${attr(valueId)}"><div class="dp-list hidden"></div></div>`;
+    const inp = host.querySelector(".dp-in"), hid = host.querySelector("input[type=hidden]"), list = host.querySelector(".dp-list");
+    const set = it => { cur = it; hid.value = it.value; inp.value = it.label; };
+    set(cur);
+    const draw = q => {
+      const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+      shown = items.filter(i => words.every(w => (i.label + " " + (i.group || "")).toLowerCase().includes(w)));
+      let last = null;
+      list.innerHTML = shown.length ? shown.map((i, n) => {
+        const head = i.group && i.group !== last ? `<div class="dp-grp">${esc(i.group)}</div>` : ""; last = i.group;
+        return head + `<div class="dp-item${i === cur ? " sel" : ""}" data-n="${n}"><b>${esc(i.label)}</b></div>`;
+      }).join("") : `<div class="dp-none">No match</div>`;
+      list.classList.remove("hidden");
+    };
+    const pick = it => { set(it); list.classList.add("hidden"); if (onChange) onChange(it); };
+    inp.addEventListener("focus", () => { inp.select(); draw(""); });
+    inp.addEventListener("input", () => draw(inp.value.trim()));
+    inp.addEventListener("keydown", e => { if (e.key === "Enter" && shown.length && !list.classList.contains("hidden")) { e.preventDefault(); e.stopPropagation(); pick(shown[0]); } });
+    inp.addEventListener("blur", () => setTimeout(() => { list.classList.add("hidden"); inp.value = cur.label; }, 180));
+    list.addEventListener("mousedown", e => { const el = e.target.closest(".dp-item"); if (!el) return; e.preventDefault(); pick(shown[+el.dataset.n]); });
+  },
+};
+
 const App = {
   state: {
     tab: "stock", stock: [], use: [], boneyard: [], account: null, siteTags: ["LTR", "BRI"],
@@ -2568,11 +2599,12 @@ const BGTools = {
           <div class="field" style="flex:2;min-width:200px;margin:0"><label>Teammate name</label>
             <input id="bgpSearch" placeholder="Start typing a name…" autocomplete="off" oninput="BGTools.permTyped()" onkeydown="if(event.key==='Enter'){clearTimeout(BGTools._tt.perm);BGTools.permSearch(false)}"></div>
           <div class="field" style="flex:1;min-width:200px;margin:0"><label>Division</label>
-            <select id="bgpLoc"><option value="co:${attr(Divisions.cur().company_name)}">${esc(Divisions.label())} — ${esc(Divisions.cur().company_name)}</option></select></div>
+            <div id="bgpLocHost"></div></div>
           <button class="primary" onclick="BGTools.permSearch(false)">Search</button>
         </div>
         <div id="bgpBody" style="margin-top:16px"><p class="hint">Results appear here.</p></div>
       </div>`;
+    Combo.mount("bgpLocHost", "bgpLoc", [{ value: "co:" + Divisions.cur().company_name, label: Divisions.label() + " — " + Divisions.cur().company_name, group: "This division" }], "co:" + Divisions.cur().company_name);
     this._loadPermLocations();
     const el = document.getElementById("bgpSearch"); if (el) el.focus();
   },
@@ -2581,18 +2613,18 @@ const BGTools = {
   async _loadPermLocations() {
     try {
       const r = await Backend.call("bg_locations");
-      const sel = document.getElementById("bgpLoc");
-      if (!sel || !r || !r.ok) return;
+      if (!document.getElementById("bgpLocHost") || !r || !r.ok) return;
       this._perm.locations = r.locations || [];
-      const divs = r.divisions || [];
-      sel.innerHTML =
-        `<optgroup label="Nucor divisions">` +
-          divs.map(d => `<option value="co:${attr(d.company)}">${esc(d.label)}</option>`).join("") +
-        `</optgroup><optgroup label="Other BG brands">` +
-          this._perm.locations.map(l => `<option value="dom:${attr(l.domain)}">${esc(l.label)}</option>`).join("") +
-        `</optgroup><option value="">All divisions (whole tenant)</option>`;
-      sel.value = `co:${r.nbgw_company || Divisions.cur().company_name}`;
-    } catch (e) { /* keep the NBGW default */ }
+      const mine = "co:" + (r.nbgw_company || Divisions.cur().company_name);
+      const items = [];
+      (r.divisions || []).forEach(d => items.push({ value: "co:" + d.company, label: d.label, group: ("co:" + d.company) === mine ? "This division" : "Other Nucor divisions" }));
+      this._perm.locations.forEach(l => items.push({ value: "dom:" + l.domain, label: l.label, group: "Other BG brands" }));
+      items.push({ value: "", label: "All divisions (whole tenant)", group: "Everything" });
+      if (!items.some(i => i.value === mine)) items.unshift({ value: mine, label: Divisions.label() + " — " + (r.nbgw_company || Divisions.cur().company_name), group: "This division" });
+      const order = { "This division": 0, "Other Nucor divisions": 1, "Other BG brands": 2, "Everything": 3 };
+      items.sort((a, b) => order[a.group] - order[b.group]);           // stable: keeps the list's own order inside each group
+      Combo.mount("bgpLocHost", "bgpLoc", items, mine);
+    } catch (e) { /* keep the single "this division" entry */ }
   },
   _scopeArgs(v) {
     v = v || "";
