@@ -27,6 +27,7 @@ from graph import GraphClient, GraphError
 _AUTH_FIELDS = ("user", "os_version", "os_install", "device_name")
 # These we only fill when the In Use row is blank (don't clobber nicer stored values).
 _FILL_FIELDS = ("model", "manufacturer", "storage", "site_tag")
+_MAX_FAIL_STREAK = 5
 
 
 def run_sync(gc: GraphClient, commit: bool = False) -> dict:
@@ -37,6 +38,14 @@ def run_sync(gc: GraphClient, commit: bool = False) -> dict:
     ("moved"/"refreshed" kept for the existing UI, which reads their counts.)
     """
     added, updated, errors = [], [], []
+    if commit and getattr(gc, "_central", False) and not gc._local:
+        import schema
+        bad = schema.problems(gc, ("new_stock", "in_use", "log"))
+        if bad:      # refuse to write into lists whose columns the app cannot fill (every write would 400)
+            lines = "; ".join(f"{n}: {', '.join(v)}" for n, v in bad.items())
+            return {"moved": [], "added": 0, "updated": 0, "refreshed": 0, "count": 0, "skipped": 0, "deduped": 0,
+                    "errors": ["Central lists need fixing before a sync can write - " + lines +
+                               ". Run: python tools\\check_central.py"]}
     try:
         devices = gc.get_intune_category_devices()
     except GraphError as e:
@@ -64,7 +73,12 @@ def run_sync(gc: GraphClient, commit: bool = False) -> dict:
     in_use = index(in_use_raw)
     stock = index(gc._items_raw("new_stock"))
 
+    streak = 0                      # consecutive write failures: stop early instead of hammering SharePoint
     for dev in devices:
+        if streak >= _MAX_FAIL_STREAK:
+            errors.append(f"Stopped after {_MAX_FAIL_STREAK} consecutive write failures (see the first error above).")
+            break
+        n_err = len(errors)
         serial = (dev.get("serial") or "").strip()
         if not serial:
             continue
@@ -109,6 +123,7 @@ def run_sync(gc: GraphClient, commit: bool = False) -> dict:
             else:
                 added.append({"serial": serial, "manufacturer": dev.get("manufacturer", ""),
                               "model": dev.get("model", ""), "user": dev.get("user", "")})
+        streak = streak + 1 if len(errors) > n_err else 0
 
     # one summary audit entry per sync run (not one per device)
     if commit and (added or updated):
@@ -503,8 +518,10 @@ def main() -> None:
           f"{result['updated']} {'updated' if commit else 'would update'}.")
     for m in result["moved"]:
         print(f"  + {m['serial']:<18} {m['manufacturer']} {m['model']}  {m['user']}")
-    for e in result["errors"]:
-        print(f"  !! {e}")
+    for e in result["errors"][:5]:
+        print(f"  !! {str(e)[:400]}")
+    if len(result["errors"]) > 5:
+        print(f"  ... and {len(result['errors']) - 5} more error(s)")
     if not commit and (result["moved"] or result["updated"]):
         print("\nRe-run with --commit to apply.")
 
