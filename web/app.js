@@ -2591,6 +2591,7 @@ const CopyPerms = {
     let acct = ""; try { acct = localStorage.getItem("nbg_ad_admin_acct") || ""; } catch (e) {}
     p.innerHTML = `<div class="chart-card">
       <h4 style="margin:0 0 4px">Copy Permissions</h4>${Help.box("bgt-copyperms")}
+      <label class="cp-all"><input type="checkbox" id="cpAll"> Include people from other divisions</label>
       <div class="cp-pick">${["src", "dst"].map(w => `<div class="field"><label>${w === "src" ? "Copy FROM (source)" : "Copy TO (destination)"}</label>
         <input id="cp-${w}" placeholder="Type a name or account…" autocomplete="off" oninput="CopyPerms.typed('${w}')">
         <div class="cp-hits" id="cp-hits-${w}"></div><div class="cp-chosen" id="cp-chosen-${w}"></div></div>`).join("")}</div>
@@ -2607,7 +2608,7 @@ const CopyPerms = {
     if (q.length < 2) { box.innerHTML = ""; return; }
     this._t[w] = setTimeout(async () => {
       box.innerHTML = `<div class="sub-note">Searching AD…</div>`;
-      const r = await Backend.call("ad_user_search", q);
+      const r = await Backend.call("ad_user_search", q, !!(document.getElementById("cpAll") || {}).checked);
       if (!r || !r.ok) { box.innerHTML = `<div class="sub-note" style="color:var(--red)">${esc((r && r.error) || "Search failed.")}</div>`; return; }
       this._hits = this._hits || {}; this._hits[w] = r.users;
       box.innerHTML = r.users.length ? r.users.map((u, i) => `<div class="cp-hit" onclick="CopyPerms.pick('${w}',${i})"><b>${esc(u.name || u.sam)}</b>
@@ -5080,7 +5081,7 @@ Object.assign(Mock, {
          { dn: "CN=Smith\\, Pat,OU=Admins,DC=bg", name: "Smith, Pat (Admin)", sam: "adm.psmith.pa", title: "Systems", dept: "IT", enabled: true }],
   _adg: { "CN=Anderson\\, Sims,OU=Admins,DC=bg": [["IT-Intune-Admins", false], ["IT-ServerOps", false], ["Domain Admins", true], ["VPN-Users", false]], "CN=Smith\\, Pat,OU=Admins,DC=bg": [["VPN-Users", false], ["IT-HelpDesk", false]] },
   _adgl(dn) { return (this._adg[dn] || []).map(([n, p]) => ({ dn: "CN=" + n + ",OU=Groups,DC=bg", name: n, desc: p ? "Protected admin group" : "", security: true, privileged: p })); },
-  async ad_user_search(q) { q = (q || "").toLowerCase(); return { ok: true, users: this._adu.filter(u => (u.name + u.sam).toLowerCase().includes(q)) }; },
+  async ad_user_search(q, all) { q = (q || "").toLowerCase(); return { ok: true, users: this._adu.filter(u => (u.name + u.sam).toLowerCase().includes(q)) }; },
   async ad_perm_compare(a, b) { const s = this._adgl(a), d = this._adgl(b), dn = new Set(d.map(x => x.dn)), sn = new Set(s.map(x => x.dn));
     return { ok: true, src_count: s.length, dst_count: d.length, only_src: s.filter(x => !dn.has(x.dn)), only_dst: d.filter(x => !sn.has(x.dn)), both: s.filter(x => dn.has(x.dn)) }; },
   async ad_perm_copy(a, b, dns, acct, commit) { const names = dns.map(x => x.split(",")[0].slice(3));

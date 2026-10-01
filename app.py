@@ -1760,11 +1760,14 @@ class Api:
             raise PermissionError("Copy permissions is for admins.")
         return (gc.cfg.get("ad_domain") or "bg.nucorsteel.local")
 
-    def ad_user_search(self, q: str) -> dict:
+    def ad_user_search(self, q: str, all_divisions: bool = False) -> dict:
+        """People search; limited to the ACTIVE division's AD company unless all_divisions (Rule 6)."""
         try:
             domain = self._ad_perm_gate()
             import adperms
-            r = adperms.search_users(q, domain)
+            d = self._client().division or {}
+            cos = [] if all_divisions else [d.get("name", ""), d.get("company_name", "")]
+            r = adperms.search_users(q, domain, cos)
             if "__error__" in r:
                 return {"ok": False, "error": r["__error__"]}
             return {"ok": True, "users": r["users"]}

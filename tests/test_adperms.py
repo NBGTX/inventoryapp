@@ -28,6 +28,10 @@ class Pure(unittest.TestCase):
         self.assertEqual(sorted(x["why"] for x in p["skipped"]),
                          ["destination already in this group", "not a security group", "source user is not in this group"])
 
+    def test_scope_keeps_division_and_blank_company_admin_accounts(self):
+        us = [{"company": "NBG - Terrell"}, {"company": "nbg - terrell"}, {"company": ""}, {"company": "NBG - West"}]
+        self.assertEqual(len([u for u in us if adperms.in_scope(u, ["NBG - Terrell", "Other"])]), 3)
+
     def test_powershell_scripts_are_ascii(self):
         for ps in (adperms._READ_PS, adperms._WRITE_PS):
             ps.encode("ascii")

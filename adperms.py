@@ -38,14 +38,14 @@ function One($p, $k) { if ($p[$k] -and $p[$k].Count -gt 0) { return [string]$p[$
 try {
   if ($cfg.mode -eq "search") {
     $q = Esc ([string]$cfg.q)
-    $s = NewSearcher "(&(objectCategory=person)(objectClass=user)(|(anr=$q)(sAMAccountName=$q*)))" 20
-    foreach ($p in "distinguishedName","sAMAccountName","displayName","userPrincipalName","userAccountControl","title","department") { $null = $s.PropertiesToLoad.Add($p) }
+    $s = NewSearcher "(&(objectCategory=person)(objectClass=user)(|(anr=$q)(sAMAccountName=$q*)))" 80
+    foreach ($p in "distinguishedName","sAMAccountName","displayName","userPrincipalName","userAccountControl","title","department","company") { $null = $s.PropertiesToLoad.Add($p) }
     $out = @()
     foreach ($r in $s.FindAll()) {
       $p = $r.Properties
       $uac = 0; if ($p["useraccountcontrol"].Count -gt 0) { $uac = [int]$p["useraccountcontrol"][0] }
       $out += @{ dn = (One $p "distinguishedname"); sam = (One $p "samaccountname"); name = (One $p "displayname"); upn = (One $p "userprincipalname");
-                 title = (One $p "title"); dept = (One $p "department"); enabled = (($uac -band 2) -eq 0) }
+                 title = (One $p "title"); company = (One $p "company"); dept = (One $p "department"); enabled = (($uac -band 2) -eq 0) }
     }
     Write-Output (@{ users = $out } | ConvertTo-Json -Depth 4 -Compress)
   } elseif ($cfg.mode -eq "groups") {
@@ -131,14 +131,23 @@ def _listify(v) -> list:
     return v if isinstance(v, list) else [v]
 
 
-def search_users(q: str, domain: str) -> dict:
+def in_scope(u: dict, companies: list) -> bool:
+    """Keep people whose AD company is one of `companies`. Admin accounts (adm.*) have no company, so blank passes."""
+    co = (u.get("company") or "").strip().lower()
+    return not co or co in {c.strip().lower() for c in companies if c}
+
+
+def search_users(q: str, domain: str, companies: list | None = None) -> dict:
     q = (q or "").strip()
     if len(q) < 2:
         return {"users": []}
     r = _read({"mode": "search", "q": q, "domain": domain})
     if "__error__" in r:
         return r
-    return {"users": sorted(_listify(r.get("users")), key=lambda u: (u.get("name") or u.get("sam") or "").lower())}
+    us = _listify(r.get("users"))
+    if companies:
+        us = [u for u in us if in_scope(u, companies)]
+    return {"users": sorted(us, key=lambda u: (u.get("name") or u.get("sam") or "").lower())[:20]}
 
 
 def user_groups(dn: str, domain: str) -> dict:
