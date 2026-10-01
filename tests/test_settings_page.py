@@ -362,3 +362,71 @@ class ApiInitRace(unittest.TestCase):
         [t.join() for t in ts]
         self.assertEqual(len(made), 1)
         self.assertEqual(len({id(x) for x in seen}), 1)
+
+
+class ProjectHubAddress(unittest.TestCase):
+    def setUp(self):
+        self.gc = make_client()
+        FakeSite(self.gc)
+        self.tmp = tempfile.mkdtemp()
+        self.api = app.Api()
+        self.api._gc = self.gc
+        self.api._hub = Hub(logs_folder=self.tmp, division=self.gc.division)
+        self.gc._base_cfg["super_admins"] = ["adm@nucor.com"]
+        self.gc.account_upn = "adm@nucor.com"
+
+    def test_default_then_own_then_back_to_default(self):
+        r = self.api.get_division_prefs()
+        self.assertEqual((r["project_hub_url"], r["project_hub_effective"]), ("", sc.PROJECT_HUB_DEFAULT))
+        self.assertTrue(self.api.save_division_prefs(None, "projecthub.terrell.example.com/start")["ok"])
+        r = self.api.get_division_prefs()
+        self.assertEqual(r["project_hub_effective"], "https://projecthub.terrell.example.com/start")
+        self.assertTrue(self.api.save_division_prefs(None, "")["ok"])
+        self.assertEqual(self.api.get_division_prefs()["project_hub_effective"], sc.PROJECT_HUB_DEFAULT)
+
+    def test_master_default_applies_when_the_division_has_none(self):
+        self.gc._base_cfg["project_hub_url"] = "https://hub.platform.example.com/"
+        self.assertEqual(self.api.get_division_prefs()["project_hub_effective"], "https://hub.platform.example.com/")
+        self.api.save_division_prefs(None, "https://own.example.com/")
+        self.assertEqual(self.api.get_division_prefs()["project_hub_effective"], "https://own.example.com/")
+
+    def test_saving_one_pref_keeps_the_other(self):
+        self.api.save_division_prefs("America/Chicago", "https://own.example.com/")
+        self.api.save_division_prefs(None, "https://other.example.com/")
+        r = self.api.get_division_prefs()
+        self.assertEqual((r["timezone"], r["project_hub_url"]), ("America/Chicago", "https://other.example.com/"))
+        self.api.save_division_prefs("", None)
+        self.assertEqual(self.api.get_division_prefs()["project_hub_url"], "https://other.example.com/")
+
+    def test_bad_addresses_are_rejected(self):
+        for bad in ("http://insecure.example.com", "javascript:alert(1)", "https://user:pw@example.com/", "https://has space.example.com",
+                    "https://localhost/", "ftp://example.com/", "https://" + "a" * 400 + ".com"):
+            self.assertFalse(self.api.save_division_prefs(None, bad)["ok"], bad)
+        self.assertEqual(self.api.get_division_prefs()["project_hub_url"], "")
+
+    def test_a_hand_edited_bad_value_is_ignored(self):
+        self.api._hubc().save_prefs({"project_hub_url": "javascript:alert(1)"})
+        self.assertEqual(self.api.get_division_prefs()["project_hub_effective"], sc.PROJECT_HUB_DEFAULT)
+
+    def test_plain_users_cannot_change_it(self):
+        self.gc._base_cfg["super_admins"] = []
+        self.gc.account_upn = "plain@nucor.com"
+        self.assertFalse(self.api.save_division_prefs(None, "https://x.example.com/")["ok"])
+
+    def test_catalog_validates_the_platform_default_too(self):
+        self.assertEqual(sc.check_value("project_hub_url", " https://hub.example.com/a "), "https://hub.example.com/a")
+        self.assertEqual(sc.check_value("project_hub_url", ""), "")
+        with self.assertRaises(ValueError):
+            sc.check_value("project_hub_url", "file:///c:/x")
+
+    def test_open_external_only_opens_web_addresses(self):
+        import webbrowser
+        opened = []
+        orig, webbrowser.open = webbrowser.open, lambda u: opened.append(u)
+        try:
+            self.assertFalse(self.api.open_external("file:///C:/Windows/System32/cmd.exe")["ok"])
+            self.assertFalse(self.api.open_external("javascript:alert(1)")["ok"])
+            self.assertTrue(self.api.open_external("https://ok.example.com/")["ok"])
+        finally:
+            webbrowser.open = orig
+        self.assertEqual(opened, ["https://ok.example.com/"])

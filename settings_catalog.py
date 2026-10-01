@@ -24,6 +24,23 @@ def valid_timezone(tz: str) -> bool:
     return tz in _TZ_IDS
 
 
+PROJECT_HUB_DEFAULT = "https://projecthub-dev.nucorservices.com/"
+
+
+def clean_url(v) -> str:
+    """'' (= use the default) or a tidy https:// address. Raises ValueError for anything else."""
+    from urllib.parse import urlparse
+    v = str(v or "").strip()
+    if not v:
+        return ""
+    if len(v) > 300:
+        raise ValueError("That address is too long.")
+    u = urlparse(v if "://" in v else "https://" + v)
+    if u.scheme != "https" or not u.hostname or "." not in u.hostname or u.username or u.password or any(c.isspace() for c in v):
+        raise ValueError("Enter a web address starting with https:// (no spaces, no user name or password).")
+    return u.geturl()
+
+
 def zones() -> list:
     return [{"id": z, "label": label} for z, label in TIMEZONES]
 
@@ -52,6 +69,10 @@ CATALOG = [
     {"key": "default_timezone", "group": "Regional", "label": "Default time zone",
      "kind": "choice", "secret": False, "options": zones(), "status": "active",
      "help": "Used by every division that has not picked its own time zone. Blank = each PC's own time zone."},
+    {"key": "project_hub_url", "group": "Regional", "label": "Default Project Hub address",
+     "kind": "url", "secret": False, "status": "active",
+     "help": "Where the Project Hub sidebar item opens for divisions that have not set their own address (Settings > General). "
+             "Blank = " + PROJECT_HUB_DEFAULT},
     {"key": "intune_enrich_per_sync", "group": "Sync", "label": "Vendor lookups per sync run",
      "kind": "number", "secret": False, "min": 0, "max": 500, "default": 75, "status": "active",
      "help": "How many devices get a Lenovo/Dell/HP spec lookup in one sync. Lower = gentler on vendor APIs, slower to fill in."},
@@ -80,6 +101,8 @@ def check_value(key: str, value: str) -> str:
         return value
     if c["kind"] == "choice" and v and v not in {o["id"] for o in c["options"]}:
         raise ValueError(f"'{v}' is not an allowed value for {c['label']}.")
+    if c["kind"] == "url":
+        return clean_url(v)
     if c["kind"] == "version":
         import version
         if v and not version.parse(v):

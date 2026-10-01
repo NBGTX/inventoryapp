@@ -1285,7 +1285,11 @@ const LogView = {
 const Tz = {
   id: "",
   async load() {
-    try { const r = await Backend.call("get_division_prefs"); this.id = (r && r.ok && r.effective) || ""; } catch (e) { this.id = ""; }
+    try {
+      const r = await Backend.call("get_division_prefs");
+      this.id = (r && r.ok && r.effective) || "";
+      if (r && r.ok && r.project_hub_effective) ProjectHub.URL = r.project_hub_effective;
+    } catch (e) { this.id = ""; }
   },
   o(opts) { return this.id ? { ...opts, timeZone: this.id } : opts; },
   dt(v) { const d = new Date(v); return isNaN(d) ? "" : d.toLocaleString(undefined, this.o({})); },
@@ -1317,7 +1321,7 @@ const Nav = {
    frame → sign-in works) with an injected "← Back to NBG Hub" button, or in a
    separate window. Same mechanism the NBT Sites "fullview" mode uses. */
 const ProjectHub = {
-  URL: "https://projecthub-dev.nucorservices.com/",
+  URL: "https://projecthub-dev.nucorservices.com/",     // replaced per division by Tz.load() (Settings > General)
   // Sidebar click opens Project Hub in the user's DEFAULT browser (where they're
   // already SSO'd) — no embedding. Nav.go still shows a small landing card as a
   // fallback / re-open point.
@@ -4545,6 +4549,7 @@ Object.assign(Mock, {
     { key: "hp_client_id", group: "Vendor APIs", label: "HP warranty API key", kind: "secret", secret: true, status: "active", help: "HP warranty end date and model by serial number. Request the key from HP. Not yet tested against HP's live service: after saving, run python tools/vendor_probe.py hp <serial> once." },
     { key: "hp_client_secret", group: "Vendor APIs", label: "HP warranty API secret", kind: "secret", secret: true, status: "active", help: "Pairs with the HP key." },
     { key: "default_timezone", group: "Regional", label: "Default time zone", kind: "choice", secret: false, status: "active", help: "Used by every division that has not picked its own time zone. Blank = each PC's own time zone." },
+    { key: "project_hub_url", group: "Regional", label: "Default Project Hub address", kind: "url", secret: false, status: "active", help: "Where the Project Hub sidebar item opens for divisions that have not set their own address (Settings > General). Blank = https://projecthub-dev.nucorservices.com/" },
     { key: "intune_enrich_per_sync", group: "Sync", label: "Vendor lookups per sync run", kind: "number", secret: false, min: 0, max: 500, default: 75, status: "active", help: "How many devices get a Lenovo/Dell/HP spec lookup in one sync. Lower = gentler on vendor APIs, slower to fill in." },
     { key: "latest_version", group: "Releases", label: "Latest released version", kind: "version", secret: false, status: "active", help: "The newest NBG Hub build, for example 2026.10.15. Techs on an older build see an 'Update available' notice." },
     { key: "min_version", group: "Releases", label: "Oldest allowed version", kind: "version", secret: false, status: "active", help: "Builds older than this show a red 'Update required' notice. Raise it when a release changes how data is stored." },
@@ -4569,10 +4574,20 @@ Object.assign(Mock, {
   /* division preferences + tenant settings - mirrors Api.get_division_prefs / save_division_prefs / get_own_division / save_own_division */
   _prefs: { timezone: "" },
   async get_division_prefs() {
-    const d = this._ms.default_timezone || "";
-    return { ok: true, timezone: this._prefs.timezone, default: d, effective: this._prefs.timezone || d, zones: this._tzs.map(([id, label]) => ({ id, label })) };
+    const d = this._ms.default_timezone || "", def = this._ms.project_hub_url || "https://projecthub-dev.nucorservices.com/", own = this._prefs.project_hub_url || "";
+    return { ok: true, timezone: this._prefs.timezone, default: d, effective: this._prefs.timezone || d, zones: this._tzs.map(([id, label]) => ({ id, label })),
+      project_hub_url: own, project_hub_default: def, project_hub_effective: own || def };
   },
-  async save_division_prefs(tz) { this._prefs.timezone = tz || ""; return { ok: true, timezone: tz || "" }; },
+  async save_division_prefs(tz, url) {
+    if (tz !== undefined && tz !== null) this._prefs.timezone = tz || "";
+    if (url !== undefined && url !== null) {
+      let u = (url || "").trim();
+      if (u && !/^[a-z]+:\/\//i.test(u)) u = "https://" + u;                  // like the real backend: bare host names get https://
+      if (u && !/^https:\/\/[^\s/@]+\.[^\s/@]+(\/\S*)?$/i.test(u)) return { ok: false, error: "Enter a web address starting with https:// (no spaces, no user name or password)." };
+      this._prefs.project_hub_url = u;
+    }
+    return { ok: true };
+  },
   async get_own_division() {
     const d = this._dv.find(x => x.id === this._divCur) || this._dv[0];
     return { ok: true, id: d.id, name: d.name, company_name: d.company_name, intune_category: d.intune_category, super_admin: true, role: "super", can_edit: true,

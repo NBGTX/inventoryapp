@@ -218,7 +218,7 @@ const Settings = {
     this.tab = tab; this.dirty = false; this.rail();
     await this.show(tab);
   },
-  markDirty() { this.dirty = true; const b = document.getElementById("setSave"); if (b) b.disabled = false; },
+  markDirty(btnId) { this.dirty = true; const b = document.getElementById(btnId || "setSave"); if (b) b.disabled = false; },
   pane(owner, html) {
     const p = document.getElementById("setPane");
     p.dataset.owner = owner;
@@ -252,7 +252,12 @@ const Settings = {
         `<div class="field" style="max-width:420px"><label>Time zone for ${esc(Divisions.label())}</label>
            ${SetUI.select("tzSel", zl.map(z => ({ id: z.id, label: z.label })), this.prefs.timezone, "Settings.tzPreview()", "Use the default (" + def + ")", !canEdit)}</div>
          <p id="tzPrev" class="muted" style="margin:10px 0 0"></p>`,
-        canEdit ? `<button class="primary" id="setSave" onclick="Settings.saveTz()" disabled>Save time zone</button>` : ""));
+        canEdit ? `<button class="primary" id="setSave" onclick="Settings.saveTz()" disabled>Save time zone</button>` : "") +
+      SetUI.card("Project Hub", "Where the Project Hub item in the sidebar opens for " + esc(Divisions.label()) + (canEdit ? "." : ". Division admins can change it."),
+        `<div class="field" style="max-width:560px"><label>Project Hub address</label>
+           <input id="phUrl" value="${attr(this.prefs.project_hub_url || "")}" placeholder="${attr(this.prefs.project_hub_default)}" ${canEdit ? "" : "disabled"} oninput="Settings.markDirty('phSave')"></div>
+         <p class="muted" style="margin:8px 0 0;font-size:12px">Leave blank to use the platform default: ${esc(this.prefs.project_hub_default)}. Must start with https://.</p>`,
+        `<button class="ghost" onclick="Settings.phOpen()">Open this address</button>` + (canEdit ? `<button class="primary" id="phSave" onclick="Settings.savePh()" disabled>Save address</button>` : "")));
     document.getElementById("tzSel").addEventListener("change", () => this.markDirty());
     this.tzPreview();
   },
@@ -263,6 +268,18 @@ const Settings = {
     let t = "";
     try { t = new Date().toLocaleString(undefined, v ? { timeZone: v, dateStyle: "medium", timeStyle: "short" } : { dateStyle: "medium", timeStyle: "short" }); } catch (e) { t = ""; }
     el.textContent = "Right now that is: " + t;
+  },
+  phOpen() {
+    const v = (document.getElementById("phUrl").value || "").trim() || this.prefs.project_hub_default;
+    Backend.call("open_external", /^https?:\/\//i.test(v) ? v : "https://" + v).then(r => { if (r && !r.ok) App.toast(r.error || "Could not open it.", true); });
+  },
+  async savePh() {
+    const r = await Backend.call("save_division_prefs", null, (document.getElementById("phUrl").value || "").trim());
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+    this.dirty = false;
+    await Tz.load();
+    App.toast("Project Hub address saved.");
+    this.general();
   },
   async saveTz() {
     const r = await Backend.call("save_division_prefs", document.getElementById("tzSel").value);
@@ -443,6 +460,7 @@ const Settings = {
       const st = c.status === "planned" ? SetUI.pill("plan", "Not used yet") : (c.kind === "secret" ? (c.is_set ? SetUI.pill("ok", "Set") : SetUI.pill("warn", "Not set")) : "");
       let ctl;
       if (c.kind === "secret") ctl = `<input id="ig${i}" type="password" autocomplete="new-password" placeholder="${c.is_set ? "•••••• set - type to replace" : "paste the value"}">`;
+      else if (c.kind === "url") ctl = `<input id="ig${i}" value="${attr(c.value || "")}" placeholder="https://projecthub.example.com/">`;
       else if (c.kind === "version") ctl = `<input id="ig${i}" value="${attr(c.value || "")}" placeholder="2026.10.15">`;
       else if (c.kind === "choice") ctl = SetUI.select("ig" + i, c.options || [], c.value, "", "(none - use each PC's own)");
       else ctl = `<input id="ig${i}" type="number" min="${c.min}" max="${c.max}" value="${attr(c.value || "")}" placeholder="${c.default} (default)">`;

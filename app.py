@@ -237,27 +237,49 @@ class Api:
         try:
             import settings_catalog as sc
             gc = self._client()
-            tz = (self._hubc().get_prefs().get("timezone") or "").strip()
+            prefs = self._hubc().get_prefs()
+            tz = (prefs.get("timezone") or "").strip()
             tz = tz if sc.valid_timezone(tz) else ""
             dflt = (gc.get_setting("default_timezone") or "").strip()
             dflt = dflt if sc.valid_timezone(dflt) else ""
-            return {"ok": True, "timezone": tz, "default": dflt, "effective": tz or dflt, "zones": sc.zones()}
+            try:
+                ph = sc.clean_url(prefs.get("project_hub_url"))
+            except ValueError:
+                ph = ""                                  # a hand-edited bad value is ignored, never opened
+            try:
+                ph_def = sc.clean_url(gc.get_setting("project_hub_url")) or sc.PROJECT_HUB_DEFAULT
+            except ValueError:
+                ph_def = sc.PROJECT_HUB_DEFAULT
+            return {"ok": True, "timezone": tz, "default": dflt, "effective": tz or dflt, "zones": sc.zones(),
+                    "project_hub_url": ph, "project_hub_default": ph_def, "project_hub_effective": ph or ph_def}
         except Exception as e:
             return self._fail(e)
 
-    def save_division_prefs(self, timezone: str = "") -> dict:
+    def save_division_prefs(self, timezone=None, project_hub_url=None) -> dict:
+        """Admin of the division (or super admin). Only the arguments that are given are changed;
+        timezone "" / project_hub_url "" mean 'use the default'."""
         try:
             import settings_catalog as sc
             self._client().require_division_admin()
-            tz = (timezone or "").strip()
-            if tz and not sc.valid_timezone(tz):
-                return {"ok": False, "error": "Pick a time zone from the list."}
+            prefs_in = {}
+            if timezone is not None:
+                tz = (timezone or "").strip()
+                if tz and not sc.valid_timezone(tz):
+                    return {"ok": False, "error": "Pick a time zone from the list."}
+                prefs_in["timezone"] = tz
+            if project_hub_url is not None:
+                try:
+                    prefs_in["project_hub_url"] = sc.clean_url(project_hub_url)
+                except ValueError as e:
+                    return {"ok": False, "error": str(e)}
+            if not prefs_in:
+                return {"ok": True}
             hub = self._hubc()
             prefs = hub.get_prefs()
-            prefs["timezone"] = tz
+            prefs.update(prefs_in)
             hub.save_prefs(prefs, {"action": "save", "target": "Division preferences",
-                                   "detail": "time zone = " + (tz or "(default)")})
-            return {"ok": True, "timezone": tz}
+                                   "detail": ", ".join(f"{k} = {v or '(default)'}" for k, v in prefs_in.items())})
+            return {"ok": True, **prefs_in}
         except Exception as e:
             return self._fail(e)
 
@@ -688,6 +710,8 @@ class Api:
         browsing. Used for sites set to 'browser' mode."""
         try:
             import webbrowser
+            if not str(url or "").lower().startswith(("https://", "http://")):
+                return {"ok": False, "error": "Only web addresses can be opened."}
             webbrowser.open(url)
             return {"ok": True}
         except Exception as e:
