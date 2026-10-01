@@ -516,7 +516,7 @@ def populate_mfa(gc: GraphClient, commit: bool = True, force: bool = False) -> d
             "unresolved": unresolved, "errors": errors}
 
 
-def sync_all(gc: GraphClient, commit: bool = True, only: list | None = None) -> dict:
+def sync_all(gc: GraphClient, commit: bool = True, only: list | None = None, hub_factory=None) -> dict:
     """Run the normal reconcile + enrich for EVERY enabled division, one after another (super admins, manual).
 
     Each division gets its own client copy (shared sign-in), so the caller's active division and caches are never
@@ -534,15 +534,34 @@ def sync_all(gc: GraphClient, commit: bool = True, only: list | None = None) -> 
         try:
             c = gc.clone_for_snapshot()
             c.set_division(d["id"], persist=False)
-            r = run_sync(c, commit=commit)
-            row.update(count=r.get("count", 0), added=len(r.get("moved", [])), updated=r.get("updated", 0),
-                       deduped=r.get("deduped", 0))
-            row["errors"] += [str(e)[:300] for e in r.get("errors", [])]
-            if not row["errors"]:
-                e = enrich_in_use(c, commit=commit)
-                row["enriched"] = e.get("enriched", 0) + e.get("sites", 0)
-                row["errors"] += [str(x)[:300] for x in e.get("errors", [])]
-            row["ok"] = not row["errors"]
+
+            def body(c=c, row=row):
+                r = run_sync(c, commit=commit)
+                row.update(count=r.get("count", 0), added=len(r.get("moved", [])), updated=r.get("updated", 0),
+                           deduped=r.get("deduped", 0))
+                row["errors"] += [str(e)[:300] for e in r.get("errors", [])]
+                if not row["errors"]:
+                    e = enrich_in_use(c, commit=commit)
+                    row["enriched"] = e.get("enriched", 0) + e.get("sites", 0)
+                    row["errors"] += [str(x)[:300] for x in e.get("errors", [])]
+                row["ok"] = not row["errors"]
+                return row
+
+            if commit:                                # a dry run takes no lock and leaves no status
+                import synclock
+                if hub_factory is None:
+                    from hub import hub_for as hub_factory
+                res, holder = synclock.run_locked(
+                    hub_factory(c), gc.account_name or "", "sync all", body,
+                    lambda r: {"ok": r["ok"], "count": r["count"], "added": r["added"], "updated": r["updated"],
+                               "deduped": r["deduped"], "enriched": r["enriched"], "errors": r["errors"][:3]})
+                if holder is not None:
+                    row["skipped"] = True
+                    row["errors"].append("Skipped: another sync is already running (" + (holder.get("by") or "someone") +
+                                         ((" on " + holder["machine"]) if holder.get("machine") else "") + ").")
+                    continue
+            else:
+                body()
             if commit:
                 c.add_log("Sync (all divisions)", "", "", actor=gc.account_name or "",
                           details=f"{row['count']} devices seen; +{row['added']} ~{row['updated']} dedupe {row['deduped']} "

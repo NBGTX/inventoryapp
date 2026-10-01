@@ -15,7 +15,7 @@ import sys
 
 # Every local module the app imports (some lazily), plus the third-party ones PyInstaller can miss.
 MODULES = ["app", "graph", "hub", "hubstore", "divisions", "localstore", "paths", "schema", "securecache",
-           "settings_catalog", "vendors", "sync", "adlookup", "sqltools", "version", "selftest",
+           "settings_catalog", "vendors", "synclock", "sync", "adlookup", "sqltools", "version", "selftest",
            "msal", "requests", "truststore", "webview", "clr", "clr_loader", "cffi"]
 WEB_FILES = ["index.html", "app.js", "settings.js", "styles.css"]
 

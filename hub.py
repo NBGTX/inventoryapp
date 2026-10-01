@@ -101,6 +101,8 @@ class Hub:
         self.model_dept_path = os.path.join(self.hub, "nbgw-model-departments.json")
         self.sites_path = os.path.join(self.hub, "nbgw-nbt-sites.json")
         self.prefs_path = os.path.join(self.hub, "nbgw-division-prefs.json")
+        self.sync_lock_path = os.path.join(self.hub, "nbgw-sync-lock.json")
+        self.sync_status_path = os.path.join(self.hub, "nbgw-sync-status.json")
         self.upgrades_path = os.path.join(self.hub, "nbgw-upgrade-list.json")
         self.upgrade_log_path = os.path.join(self.hub, "nbgw-upgrade-log.json")
         self.software_path = os.path.join(self.hub, "nbgw-software-inventory.json")
@@ -319,6 +321,32 @@ class Hub:
                         json.dumps(change, ensure_ascii=False))
         except Exception:
             pass
+
+    # ---- sync lock + last-sync status (one pair per division; see synclock.py) --------------
+    def _get_doc(self, path):
+        if self._exists(path):
+            try:
+                d = self._read_json(path)
+                return d if isinstance(d, dict) and d else None
+            except Exception:
+                return None
+        return None
+
+    def get_sync_lock(self):
+        return self._get_doc(self.sync_lock_path)
+
+    def put_sync_lock(self, data: dict) -> None:
+        self._write(self.sync_lock_path, json.dumps(data, ensure_ascii=False))
+
+    def clear_sync_lock(self) -> None:
+        if self._exists(self.sync_lock_path):
+            self._remove(self.sync_lock_path)
+
+    def get_sync_status(self):
+        return self._get_doc(self.sync_status_path)
+
+    def put_sync_status(self, data: dict) -> None:
+        self._write(self.sync_status_path, json.dumps(data, ensure_ascii=False))
 
     # ---- division preferences (time zone ...) -----------------------------
     # {timezone: "America/Chicago"}. Editable by any app user of the division and by super admins.
@@ -912,3 +940,14 @@ class Hub:
             "computer": computer, "user": user,
             "recent": recent, "open_feedback": open_feedback,
         }
+
+
+def hub_for(gc) -> "Hub":
+    """The Hub for `gc`'s ACTIVE division, wherever its data lives (local sandbox, central SharePoint rows, or files)."""
+    if gc.data_mode == "local":
+        import localstore
+        return Hub(logs_folder=localstore.hub_logs_dir(gc.division["id"]), division=gc.division)
+    if gc._central:
+        from hubstore import SharePointHubStore   # central site: hub data lives in SharePoint rows
+        return Hub(division=gc.division, store=SharePointHubStore(gc))
+    return Hub(division=gc.division)

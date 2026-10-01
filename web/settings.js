@@ -152,6 +152,30 @@ const SqlEditor = {
   },
 };
 
+/* ---- "Last sync" line (dashboard) + per-division overview (Platform > Sync all divisions) ---- */
+const SyncLine = {
+  /* one-line text for a status record from synclock.status() */
+  text(st) {
+    if (!st || st.never) return "never synced";
+    const when = Tz.dt(st.ended);
+    const bits = [`${st.count || 0} devices`];
+    if (st.added || st.updated) bits.push(`+${st.added || 0} ~${st.updated || 0}`);
+    if (st.deduped) bits.push(`${st.deduped} duplicates removed`);
+    return `${when}${st.by ? " by " + st.by : ""} · ${bits.join(", ")}${st.ok === false ? " · with errors" : ""}`;
+  },
+  async refresh() {
+    const el = document.getElementById("syncLine");
+    if (!el) return;
+    try {
+      const r = await Backend.call("get_sync_status");
+      if (!r || !r.ok) { el.textContent = ""; return; }
+      const bad = r.stale || r.ok === false;
+      el.innerHTML = `<span style="color:${bad ? "var(--red)" : "var(--muted)"}">Last sync: ${esc(this.text(r))}${r.stale && !r.never ? " (over 36 hours ago)" : ""}</span>`;
+      el.title = (r.errors && r.errors.length) ? r.errors.join("\n") : "";
+    } catch (e) { el.textContent = ""; }
+  },
+};
+
 /* ---- the page ------------------------------------------------------------------------------- */
 const Settings = {
   su: false, role: "user", tab: "general", dirty: false, own: null, prefs: null,
@@ -347,7 +371,18 @@ const Settings = {
     this.pane("settings", SetUI.card("Sync all divisions", "Reads each enabled division's devices from Intune, adds and updates its In Use list, removes duplicate rows, and fills in missing warranty and specs. It runs one division after another and takes a few minutes. It never deletes devices and never moves anything to the boneyard.",
       `<p class="muted" style="margin:0 0 12px">Runs as you, on live data. Each division gets one entry in its activity log. If Intune returns no devices for a division, that division is skipped and left unchanged.</p>
        <div id="syncAllOut"></div>`,
-      `<button class="primary" id="syncAllBtn" onclick="Settings.syncAllRun()">Sync all divisions now</button>`));
+      `<button class="primary" id="syncAllBtn" onclick="Settings.syncAllRun()">Sync all divisions now</button>`)
+      + SetUI.card("Last sync per division", "Whatever last synced each division: the app on someone's PC, or this button.", `<div id="syncOverview"><div class="empty" style="padding:14px">Loading…</div></div>`));
+    this.syncOverview();
+  },
+  async syncOverview() {
+    const host = document.getElementById("syncOverview");
+    if (!host) return;
+    const r = await Backend.call("get_sync_overview");
+    if (!r || !r.ok || !r.divisions) { host.innerHTML = `<div class="muted">Could not read the sync history.</div>`; return; }
+    host.innerHTML = `<table class="ms-table"><thead><tr><th>Division</th><th>Last sync</th><th>Source</th><th></th></tr></thead><tbody>` +
+      r.divisions.map(d => `<tr><td>${esc(d.name)}</td><td>${esc(SyncLine.text(d))}</td><td class="muted">${esc(d.source || "")}</td>
+        <td>${d.never ? SetUI.pill("warn", "Never") : d.stale ? SetUI.pill("warn", "Over 36 hours") : d.ok === false ? SetUI.pill("warn", "Errors") : SetUI.pill("ok", "OK")}</td></tr>`).join("") + `</tbody></table>`;
   },
   async syncAllRun() {
     if (!confirm("Sync every enabled division now?\n\nThis writes to the live In Use lists (adds, updates, removes duplicate rows).")) return;
@@ -363,6 +398,7 @@ const Settings = {
       <td class="muted">${d.errors.length ? esc(d.errors[0]) + (d.errors.length > 1 ? ` (+${d.errors.length - 1} more)` : "") : ""}</td></tr>`).join("");
     out.innerHTML = `<table class="ms-table"><thead><tr><th>Division</th><th>Result</th><th style="text-align:right">Devices seen</th><th style="text-align:right">Added</th><th style="text-align:right">Updated</th><th style="text-align:right">Duplicates removed</th><th style="text-align:right">Filled in</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>`;
     App.toast(r.ok ? "All divisions synced." : "Sync finished with problems: see the table.", !r.ok);
+    this.syncOverview(); SyncLine.refresh();
     try { Dashboard.load(); } catch (e) {}
   },
 

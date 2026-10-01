@@ -128,15 +128,8 @@ class Api:
         return self._hub
 
     def _build_hub(self):
-        from hub import Hub  # lazy import
-        gc = self._client()
-        if gc.data_mode == "local":
-            import localstore
-            return Hub(logs_folder=localstore.hub_logs_dir(gc.division["id"]), division=gc.division)
-        if gc._central:
-            from hubstore import SharePointHubStore   # central site: hub data lives in SharePoint rows
-            return Hub(division=gc.division, store=SharePointHubStore(gc))
-        return Hub(division=gc.division)
+        from hub import hub_for
+        return hub_for(self._client())
 
     # ---- super admins + directory type-ahead (super admin) ----------------------
     def user_lookup(self, query: str, kind: str = "user") -> dict:
@@ -731,10 +724,55 @@ class Api:
             return self._fail(e)
 
     # ---- sync -------------------------------------------------------------
+    @staticmethod
+    def _sync_summary(r: dict) -> dict:
+        errs = [str(e)[:200] for e in (r.get("errors") or [])]
+        return {"ok": not errs, "count": r.get("count", 0), "added": len(r.get("moved") or []), "updated": r.get("updated", 0),
+                "deduped": r.get("deduped", 0), "errors": errs[:3]}
+
+    @staticmethod
+    def _locked(holder: dict) -> dict:
+        h = {k: (holder or {}).get(k, "") for k in ("by", "machine", "started")}
+        return {"ok": True, "moved": [], "added": 0, "updated": 0, "refreshed": 0, "count": 0, "skipped": 0, "deduped": 0,
+                "enriched": 0, "sites": 0, "users": 0, "candidates": 0, "remaining": 0, "errors": [], "locked": h}
+
     def run_sync(self) -> dict:
         try:
+            import synclock
             from sync import run_sync
-            return {"ok": True, **run_sync(self._client(), commit=True)}
+            gc = self._client()
+            res, holder = synclock.run_locked(self._hubc(), gc.account_name or "", "app", lambda: run_sync(gc, commit=True), self._sync_summary)
+            return self._locked(holder) if holder is not None else {"ok": True, **res}
+        except Exception as e:
+            return self._fail(e)
+
+    def get_sync_status(self) -> dict:
+        """Last sync of the ACTIVE division (what the dashboard shows)."""
+        try:
+            import synclock
+            return {"ok": True, **synclock.status(self._hubc())}
+        except Exception as e:
+            return self._fail(e)
+
+    def get_sync_overview(self) -> dict:
+        """Super admins: last sync of every enabled division."""
+        try:
+            import synclock
+            from hub import hub_for
+            gc = self._client()
+            if not gc.is_super_admin():
+                return {"ok": True, "super_admin": False, "divisions": []}
+            out = []
+            for d in gc.registry:
+                if d.get("enabled") is False:
+                    continue
+                try:
+                    c = gc.clone_for_snapshot()
+                    c.set_division(d["id"], persist=False)
+                    out.append({"id": d["id"], "name": d.get("name", d["id"]), **synclock.status(hub_for(c))})
+                except Exception as e:
+                    out.append({"id": d["id"], "name": d.get("name", d["id"]), "never": True, "stale": True, "error": str(e)[:200]})
+            return {"ok": True, "super_admin": True, "divisions": out}
         except Exception as e:
             return self._fail(e)
 
@@ -759,8 +797,13 @@ class Api:
     def enrich_inventory(self) -> dict:
         """Fill missing In Use specs/warranty from the vendor (bounded per call)."""
         try:
+            import synclock
             from sync import enrich_in_use
-            return {"ok": True, **enrich_in_use(self._client(), commit=True)}
+            gc = self._client()
+            res, holder = synclock.run_locked(
+                self._hubc(), gc.account_name or "", "app", lambda: enrich_in_use(gc, commit=True),
+                lambda r: {"enriched": r.get("enriched", 0) + r.get("sites", 0)}, merge=True)
+            return self._locked(holder) if holder is not None else {"ok": True, **res}
         except Exception as e:
             return self._fail(e)
 

@@ -457,6 +457,7 @@ const App = {
     this.checkUpdate();
     this.renderCached();       // 1) instant: show last-known data from local cache
     await this.reload();       // 2) fast: re-read the SharePoint lists and repaint
+    SyncLine.refresh();
     // 3) background: Intune sync (moves + backfill). Deferred a few seconds so it
     // doesn't hammer Graph alongside the dashboard/devices reads during first paint.
     const fl = await Backend.call("get_flags");
@@ -492,6 +493,7 @@ const App = {
     const btn = document.getElementById("syncBtn");
     if (btn) { btn.disabled = true; btn.textContent = "Refreshing…"; }
     Backend.call("run_sync").then(async (r) => {
+      if (r && r.locked) this.toast("Another sync is already running" + (r.locked.by ? " (" + r.locked.by + ")" : "") + ", so this one was skipped.");
       if (r && r.ok) {
         const changed = (r.moved || []).length || r.refreshed || r.deduped;
         await this.reload();   // show the fleet first (fast)
@@ -511,6 +513,7 @@ const App = {
       }
     }).catch(() => {}).finally(() => {
       if (btn) { btn.disabled = false; btn.textContent = "↻ Sync now"; }
+      SyncLine.refresh();
       this.boneyardSweep();   // auto-retire devices gone from AD+Entra+Intune
     });
   },
@@ -1272,6 +1275,7 @@ const Nav = {
     if (view === "projecthub") ProjectHub.load();
     if (view === "bgtools") BGTools.load();
     if (view === "settings") Settings.load();
+    if (view === "dashboard") SyncLine.refresh();
   },
 };
 
@@ -4553,6 +4557,11 @@ Object.assign(Mock, {
   async sync_all_divisions() {
     await new Promise(r => setTimeout(r, 900));
     return { ok: true, divisions: this._dv.map(d => ({ id: d.id, name: d.name, ok: true, count: d.id === "nbgw" ? 466 : 328, added: 0, updated: d.id === "nbgw" ? 3 : 328, deduped: 0, enriched: 12, errors: [] })) };
+  },
+  _syncSt: { ended: "2026-10-01T12:48:00Z", by: "Demo User", source: "app", count: 466, added: 0, updated: 3, deduped: 0, enriched: 12, ok: true, errors: [], age_hours: 2, stale: false, never: false },
+  async get_sync_status() { return { ok: true, ...this._syncSt }; },
+  async get_sync_overview() {
+    return { ok: true, super_admin: true, divisions: this._dv.map(d => d.id === "nbgw" ? { id: d.id, name: d.name, ...this._syncSt } : { id: d.id, name: d.name, never: true, stale: true }) };
   },
   async get_update_info() { return { ok: true, current: "2026.10.01", latest: "", min: "", update_available: false, update_required: false }; },
   async get_my_role() { return { ok: true, role: "super", sections: ["models", "links", "access", "sites", "sql", "perms", "storage"] }; },
