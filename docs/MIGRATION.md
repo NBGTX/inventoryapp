@@ -1,4 +1,4 @@
-# NBGW Hub: migration to a central, multi-division SharePoint store
+# Migration to a central, multi-division SharePoint store
 
 Status: **planning / build-out** (started 2026-10-01). Production (v2026.09.29, run by the previous owner) is untouched.
 
@@ -105,3 +105,7 @@ Source of truth for the load is the **local snapshot**, which is a read-only cop
 - Confirm the owner can consent to / use the Graph PowerShell app in this tenant (script prerequisite).
 - Division list for onboarding: for each, Entra `companyName`, Intune device category, sites (code, city, device prefix), AD domain, SQL server, access list.
 - Decide who maintains the `Divisions` list (the access list controls who sees which division in the switcher).
+
+## 7. Manual alternative
+
+If the Graph PowerShell app is not available, create the lists by hand: see [MANUAL_LIST_SETUP.md](MANUAL_LIST_SETUP.md).

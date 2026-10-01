@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Creates the NBGW Hub CENTRAL SharePoint lists (multi-division) on the main IT site.
+  Creates the CENTRAL multi-division inventory SharePoint lists on the main IT site.
 
 .DESCRIPTION
   DRY RUN by default: connects read-only, shows what it WOULD create. Nothing is
@@ -137,7 +137,7 @@ $defs = @(
 
 # -------------------------------------------------------------------- main ----
 $mode = if ($Commit) { 'COMMIT' } else { 'DRY RUN (nothing is written)' }
-Write-Host "== NBGW Hub central lists: $mode ==" -ForegroundColor Cyan
+Write-Host "== Central inventory lists: $mode ==" -ForegroundColor Cyan
 
 if (-not (Get-Module -ListAvailable -Name Microsoft.Graph.Authentication)) {
     throw "Missing module. Run: Install-Module Microsoft.Graph.Authentication -Scope CurrentUser"
