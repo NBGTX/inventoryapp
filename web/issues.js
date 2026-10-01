@@ -51,7 +51,10 @@ const Issues = {
         <input id="issQ" placeholder="Search title, id, person or division…" value="${attr(this.f.q)}" oninput="Issues.typed(this.value)">
         <select onchange="Issues.set('type',this.value)"><option value="">Bugs and features</option><option value="bug"${this.f.type === "bug" ? " selected" : ""}>Bugs</option><option value="feature"${this.f.type === "feature" ? " selected" : ""}>Feature requests</option></select>
         <select onchange="Issues.set('sort',this.value)">${[["updated", "Recently updated"], ["newest", "Newest"], ["votes", "Most votes"], ["comments", "Most comments"]].map(([v, l]) => `<option value="${v}"${this.f.sort === v ? " selected" : ""}>${l}</option>`).join("")}</select>
-        <label class="sw-chk"><input type="checkbox"${this.f.mine ? " checked" : ""} onchange="Issues.set('mine',this.checked)"> Mine</label>
+        <div class="iss-seg" role="radiogroup" aria-label="Whose issues">
+          <label class="${this.f.mine ? "" : "on"}"><input type="radio" name="issWho" ${this.f.mine ? "" : "checked"} onchange="Issues.set('mine',false)">Everyone's</label>
+          <label class="${this.f.mine ? "on" : ""}"><input type="radio" name="issWho" ${this.f.mine ? "checked" : ""} onchange="Issues.set('mine',true)">Mine</label>
+        </div>
       </div>
       <div class="iss-list">${rows.length ? rows.map(i => `
         <div class="iss-row" onclick="Issues.open('${attr(i.id)}')">
@@ -162,7 +165,7 @@ const Feedback = {
           <div class="field"><label>Title</label><input id="mfbTitle" placeholder="Short summary" maxlength="120" autocomplete="off"></div>
           <div class="field"><label>Details</label>
             <textarea id="mfbDetail" rows="6" placeholder="What happened, what did you expect, and which page were you on? (Steps help.)"></textarea></div>
-          <p class="muted" style="font-size:12px;margin:0">Everyone using NBG Hub can see and comment on this. Do not paste passwords or personal data.</p>
+          <p class="muted" style="font-size:12px;margin:0">Everyone using NBG Hub can see and comment on this. You cannot edit it after you submit (you can add comments), so check it first. Do not paste passwords or personal data.</p>
         </div>
         <div class="modal-foot"><button class="ghost" onclick="Feedback.close()">Cancel</button><button class="primary" onclick="Feedback.submit()">Submit</button></div>
       </div></div>`;

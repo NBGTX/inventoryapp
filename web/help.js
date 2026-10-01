@@ -101,7 +101,7 @@ const Help = {
       html: `
         <p>Issues is the shared list of <b>bugs</b> and <b>feature requests</b> for NBG Hub. It is the same list for every division, so the team that maintains the app sees everything in one place.</p>
         <h5>Reporting</h5>
-        <p>Click <b>+ New issue</b> (or <b>Report bug / feature</b> at the bottom of the sidebar). Choose bug or feature request, give it a short title and describe it: what you did, what you expected and what happened. Everyone using the app can read and comment on it, so do not paste passwords or personal data.</p>
+        <p>Click <b>+ New issue</b> (or <b>Report bug / feature</b> at the bottom of the sidebar). Choose bug or feature request, give it a short title and describe it: what you did, what you expected and what happened. Check it before you submit, because you cannot edit it afterwards (you can still add comments). Everyone using the app can read it, so do not paste passwords or personal data.</p>
         <h5>Finding and following</h5>
         <ul>
           <li>The chips filter by <b>status</b>; the search box matches the title, the id (like #A3F9C1), the reporter and the division. <b>Mine</b> shows issues you reported or that are assigned to you.</li>
@@ -110,7 +110,8 @@ const Help = {
         <h5>Statuses</h5>
         <ul>
           <li><b>Open</b>: new, not looked at yet. <b>Planned</b>: accepted, will be done. <b>In progress</b>: someone is working on it. <b>Done</b>: finished. <b>Won't do</b>: closed without a change (the comments say why).</li>
-          <li>Only <b>super admins</b> change the status, assign people and delete issues. The person who reported an issue can edit its title and description.</li>
+          <li>An issue is <b>read-only once it is filed</b>. Everyone follows it with <b>comments</b> (add detail, answer questions, say you are affected too), votes and watching.</li>
+          <li>Only <b>super admins</b> can edit an issue's title, description or type, change its status, assign people and delete it. If you need your wording changed, comment and a super admin will edit it.</li>
         </ul>
         <h5>E-mails</h5>
         <p>People are e-mailed when an issue is created, changes status or gets a comment, but never about their own actions. Reporters, assignees and watchers hear about their issues; a super admin chooses who gets <b>everything</b> in Settings → Platform → Issue notifications.</p>`

@@ -399,7 +399,7 @@ class Api:
             if not doc:
                 return {"ok": False, "error": "That issue no longer exists."}
             return {"ok": True, "issue": doc, "summary": issues.summary(doc, me["upn"]), "triage": self._client().is_super_admin(),
-                    "can_edit": self._client().is_super_admin() or me["upn"] == (doc.get("reporter") or {}).get("upn")}
+                    "can_edit": self._client().is_super_admin()}
         except Exception as e:
             return self._fail(e)
 
@@ -432,20 +432,18 @@ class Api:
             return self._fail(e)
 
     def issue_update(self, issue_id: str, fields: dict) -> dict:
-        """Status / assignee: super admins only. Title / detail / type: super admins or the person who reported it."""
+        """Super admins only (status, assignee, title, description, type). Everyone else follows an issue with comments."""
         try:
             import issues
             me = self._issue_user()
             gc = self._client()
             fields = fields or {}
             sa = gc.is_super_admin()
-            if ("status" in fields or "assignee" in fields) and not sa:
-                return {"ok": False, "error": "Only a super admin can change the status or assignee."}
+            if not sa:
+                return {"ok": False, "error": "Only a super admin can edit an issue or change its status. Add a comment instead."}
 
             def change(d):
-                if not sa and me["upn"] != (d.get("reporter") or {}).get("upn") and any(k in fields for k in ("title", "detail", "type")):
-                    raise issues.IssueError("You can only edit issues you reported.")
-                ev = issues.apply_triage(d, me, fields) if sa else []
+                ev = issues.apply_triage(d, me, fields)
                 issues.apply_edit(d, me, fields)
                 return ev
             doc, events = self._mutate_issue(issue_id, change)

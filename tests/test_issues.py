@@ -193,12 +193,20 @@ class Board(unittest.TestCase):
         self.assertTrue(self.api.issue_delete(iid)["ok"])
         self.assertEqual(self.api.issues_list()["issues"], [])
 
-    def test_reporter_may_edit_own_issue_but_not_others(self):
+    def test_issues_are_read_only_after_filing_except_for_super_admins(self):
         iid = self.make()
-        self.assertTrue(self.api.issue_update(iid, {"title": "Better title"})["ok"])
-        self.as_("other@nucor.com")
-        self.assertIn("only edit issues you reported", self.api.issue_update(iid, {"title": "Hijack"})["error"])
-        self.assertEqual(self.api.issue_get(iid)["issue"]["title"], "Better title")
+        for fields in ({"title": "Better title"}, {"detail": "changed"}, {"type": "feature"}, {"status": "done"}):
+            self.assertIn("Only a super admin", self.api.issue_update(iid, fields)["error"])         # even the reporter
+        self.assertFalse(self.api.issue_get(iid)["can_edit"])
+        self.assertEqual(self.api.issue_get(iid)["issue"]["title"], "Broken thing")
+        self.assertTrue(self.api.issue_comment(iid, "extra detail here")["ok"])                       # the reporter follows up with comments
+        self.as_("boss@nucor.com", "Boss")
+        self.assertTrue(self.api.issue_get(iid)["can_edit"])
+        r = self.api.issue_update(iid, {"title": "Clearer title", "detail": "new text", "type": "feature", "status": "planned"})
+        self.assertTrue(r["ok"], r)
+        got = self.api.issue_get(iid)["issue"]
+        self.assertEqual((got["title"], got["detail"], got["type"], got["status"]), ("Clearer title", "new text", "feature", "planned"))
+        self.assertTrue(any(h["action"] == "edited" for h in got["history"]))
 
     def test_notifications_follow_the_subscriber_rules(self):
         self.as_("boss@nucor.com", "Boss")
