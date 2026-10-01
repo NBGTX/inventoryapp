@@ -2603,8 +2603,7 @@ const CopyPerms = {
       <div id="cpOut"></div>
       <div class="field cp-acct" style="max-width:380px;margin-top:14px"><label>Your admin account for writing (YubiKey)</label>
         <input id="cpAcct" list="cpAcctList" placeholder="adm.name.pa" value="${attr(acct)}" autocomplete="off">
-        <datalist id="cpAcctList"></datalist><div class="sub-note" id="cpAcctNote" style="margin:4px 0 0"></div></div></div>`;
-    this.loadCards(acct);
+        <datalist id="cpAcctList"></datalist><div class="sub-note" id="cpAcctNote" style="margin:4px 0 0"><a style="cursor:pointer;color:var(--amber)" onclick="CopyPerms.loadCards()">Find the accounts on my YubiKey</a></div></div></div>`;
     if (!acct) Backend.call("get_status").then(st => {        // sign-in may still be resolving: ask again, fill only if the box is still empty
       const el = document.getElementById("cpAcct"), g = this.guessAdmin((st && (st.upn || st.account)) || "");
       if (el && !el.value && g) el.value = g;

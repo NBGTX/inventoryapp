@@ -125,19 +125,17 @@ Save
 '''
 
 
-# Lists the sign-in certificates Windows can see (a YubiKey/smart card shows its PIV certificates here once inserted).
-# Public data only: no PIN is needed and nothing is signed. ASCII only (Windows PowerShell 5.1).
+# Lists the sign-in certificates Windows knows (public data only: no key is opened, no PIN, nothing signed).
+# Which of them are on the inserted card is decided from `certutil -silent -scinfo`. ASCII only (Windows PowerShell 5.1).
 _CERTS_PS = r'''
 $out = @()
 Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue | ForEach-Object {
   $eku = @($_.EnhancedKeyUsageList | ForEach-Object { $_.ObjectId })
   if ($eku -contains "1.3.6.1.4.1.311.20.2.2" -or $eku -contains "1.3.6.1.5.5.7.3.2") {
     $san = $_.Extensions | Where-Object { $_.Oid.Value -eq "2.5.29.17" }
-    if ($san) {
-      $t = $san.Format($false)
-      if ($t -match "Principal Name=([^,\s]+)") {
-        $out += @{ thumb = $_.Thumbprint.ToLower(); upn = $Matches[1]; cn = ($_.Subject -replace ",.*$", "" -replace "^CN=", ""); expires = $_.NotAfter.ToString("yyyy-MM-dd"); valid = ($_.NotAfter -gt (Get-Date)) }
-      }
+    if ($san -and ($san.Format($false) -match "Principal Name=([^,\s]+)")) {
+      $out += @{ thumb = $_.Thumbprint.ToLower(); upn = $Matches[1]; cn = ($_.Subject -replace ",.*$", "" -replace "^CN=", "");
+                 expires = $_.NotAfter.ToString("yyyy-MM-dd"); valid = ($_.NotAfter -gt (Get-Date)) }
     }
   }
 }
@@ -146,9 +144,9 @@ Write-Output (@{ certs = $out } | ConvertTo-Json -Depth 4 -Compress)
 
 
 def _card_hashes() -> set:
-    """SHA1 thumbprints of the certificates on the cards inserted right now (`certutil -scinfo`; no PIN, Windows Hello reader ignored)."""
+    """SHA1 thumbprints of the certificates on the cards inserted now. `-silent` keeps Windows from asking for a PIN."""
     try:
-        p = subprocess.run(["certutil", "-scinfo"], capture_output=True, text=True, timeout=60, creationflags=_NO_WINDOW)
+        p = subprocess.run(["certutil", "-silent", "-scinfo"], capture_output=True, text=True, timeout=30, creationflags=_NO_WINDOW)
     except Exception:
         return set()
     return parse_scinfo(p.stdout or "")
@@ -168,7 +166,7 @@ def parse_scinfo(text: str) -> set:
 
 
 def smartcard_accounts(timeout: int = 30) -> dict:
-    """Distinct, unexpired sign-in certificate accounts (UPNs) Windows can see, e.g. from an inserted YubiKey."""
+    """Distinct, unexpired sign-in certificate accounts whose key is on a card inserted now (UPN + thumbprint)."""
     ps_p = None
     try:
         ps_p = _tmp(".ps1", _CERTS_PS)
@@ -181,7 +179,7 @@ def smartcard_accounts(timeout: int = 30) -> dict:
         seen, out = set(), []
         for c in _listify(json.loads(txt).get("certs")):
             u = (c.get("upn") or "").strip()
-            if u and c.get("valid") and u.lower() not in seen and (c.get("thumb") or "") in on_card:
+            if u and c.get("valid") and (c.get("thumb") or "") in on_card and u.lower() not in seen:
                 seen.add(u.lower())
                 out.append({"upn": u, "cn": c.get("cn", ""), "expires": c.get("expires", ""), "thumb": c["thumb"]})
         return {"accounts": sorted(out, key=lambda x: x["upn"].lower())}
@@ -193,8 +191,6 @@ def smartcard_accounts(timeout: int = 30) -> dict:
                 os.remove(ps_p)
         except OSError:
             pass
-
-
 
 
 def _tmp(suffix: str, text: str | None = None) -> str:
