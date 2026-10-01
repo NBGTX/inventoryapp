@@ -134,10 +134,17 @@ const Issues = {
           <div class="iss-ic">${this.icon(i.type)}</div>
           <div class="iss-main"><div class="iss-title">${esc(i.title)}</div>
             <div class="iss-meta">${esc(i.short)} · opened ${esc(this.ago(i.created_at))} by ${esc((i.reporter || {}).name || "unknown")}${(i.division || {}).name ? " · " + esc(i.division.name) : ""}${i.assignee ? " · assigned to " + esc(i.assignee.name) : ""}</div></div>
-          <div class="iss-side">${this.pill(i.status)}<span title="Votes">👍 ${i.votes}</span>${i.files ? `<span title="Attachments">📎 ${i.files}</span>` : ""}<span title="Comments">💬 ${i.comments}</span></div>
+          <div class="iss-side">${this.pill(i.status)}<button class="iss-vote${i.voted ? ' on' : ''}" title="${i.voted ? 'Remove your vote' : 'Vote for this'}" onclick="Issues.listVote('${attr(i.id)}', event)">👍 ${i.votes}</button>${i.files ? `<span title="Attachments">📎 ${i.files}</span>` : ""}<span title="Comments">💬 ${i.comments}</span></div>
         </div>`).join("") : `<div class="empty">${this.list.length ? "Nothing matches these filters." : "No issues yet. Use New issue to report the first one."}</div>`}</div>`;
   },
   set(k, v) { this.f[k] = v; this.renderList(); },
+  async listVote(id, ev) {
+    if (ev) ev.stopPropagation();
+    const r = await Backend.call("issue_vote", id);
+    if (!r || !r.ok) { App.toast((r && r.error) || "Could not vote.", true); return; }
+    const it = this.list.find(x => x.id === id); if (it) { it.voted = r.voted; it.votes = r.votes; }
+    this.renderList();
+  },
   _t: null,
   typed(v) { clearTimeout(this._t); this._t = setTimeout(() => { this.f.q = v; this.renderList(); const el = document.getElementById("issQ"); if (el) { el.focus(); el.setSelectionRange(v.length, v.length); } }, 200); },
 

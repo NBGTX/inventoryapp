@@ -892,3 +892,7 @@ body.signed-out #signinBanner{display:none!important;}
 .nav-badge.hidden{display:none;}
 .navitem.active .nav-badge{background:#fff;color:var(--med);}
 .iss-st.new{background:rgba(224,165,65,.2);border-color:var(--amber);color:var(--amber);}
+
+.iss-vote{background:transparent;border:1px solid var(--border);border-radius:12px;padding:1px 9px;font-size:12.5px;color:inherit;cursor:pointer;}
+.iss-vote:hover{border-color:var(--amber);}
+.iss-vote.on{background:rgba(224,165,65,.2);border-color:var(--amber);color:var(--amber);}
