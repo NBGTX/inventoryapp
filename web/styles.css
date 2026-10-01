@@ -763,3 +763,5 @@ details.miss-card .miss-row{padding:5px 14px;}
 .side-config.active{border-color:var(--med);color:#fff;background:var(--med);}
 .ac-role{background:var(--card)!important;border:1px solid var(--border)!important;border-radius:9px;padding:0 7px!important;font-size:11px!important;color:var(--muted)!important;cursor:pointer;margin:0 2px;}
 .ac-role.on{background:var(--med)!important;border-color:var(--med)!important;color:#fff!important;}
+.set-acl-table{margin-bottom:12px;}
+.set-acl-table select{background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:6px 8px;color:var(--text);font-size:13px;}

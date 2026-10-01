@@ -22,18 +22,21 @@ const SetUI = {
       list.map(o => `<option value="${attr(o.id)}"${o.id === val ? " selected" : ""}>${esc(o.label)}</option>`).join("") + `</select>`;
   },
   aclParts(e) { const a = /^admin:/i.test(e); return { admin: a, body: a ? e.slice(6) : e }; },
-  /* access-list chips: [role toggle] [remove]; "*" (everyone) has no role and only super admins see it */
-  aclChips(list, onToggle, onDel, showStar) {
-    return list.map((e, i) => {
+  /* access list as a table: Name | Type | Role | remove. "*" (everyone) has a fixed role and only super admins see it */
+  aclTable(list, onRole, onDel, showStar) {
+    const rows = list.map((e, i) => {
       const p = this.aclParts(e);
       if (p.body === "*" && !showStar) return "";
-      const g = /^group:/i.test(p.body);
-      const name = p.body === "*" ? "Everyone" : g ? (p.body.slice(6).split("|").slice(1).join("|") || p.body.slice(6).split("|")[0]) : p.body;
-      const role = p.body === "*" ? "" : `<button type="button" class="ac-role${p.admin ? " on" : ""}" title="${p.admin ? "Division admin - click to make a regular user" : "Regular user - click to make a division admin"}" onclick="${onToggle}(${i})">${p.admin ? "Admin" : "User"}</button>`;
-      return `<span class="dp-chip ${g ? "group" : "user"}">${g ? "👥 " : ""}${esc(name)} ${role}<button onclick="${onDel}(${i})" title="Remove">&times;</button></span>`;
+      const g = /^group:/i.test(p.body), star = p.body === "*";
+      const name = star ? "Everyone" : g ? (p.body.slice(6).split("|").slice(1).join("|") || p.body.slice(6).split("|")[0]) : p.body;
+      const role = star ? `<span class="muted">User</span>`
+        : `<select onchange="${onRole}(${i},this.value)"><option value="user"${p.admin ? "" : " selected"}>User</option><option value="admin"${p.admin ? " selected" : ""}>Admin</option></select>`;
+      return `<tr><td>${esc(name)}</td><td class="muted">${star ? "All app users" : g ? "Entra group" : "Person"}</td><td>${role}</td>
+        <td style="text-align:right"><button class="cfg-del" onclick="${onDel}(${i})" title="Remove">&times;</button></td></tr>`;
     }).join("");
+    return rows ? `<table class="ms-table set-acl-table"><thead><tr><th>Name</th><th>Type</th><th>Role</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : "";
   },
-  toggleRole(list, i) { const p = this.aclParts(list[i]); list[i] = p.admin ? p.body : "admin:" + p.body; },
+  setRole(list, i, role) { const p = this.aclParts(list[i]); list[i] = role === "admin" ? "admin:" + p.body : p.body; },
   pill(kind, text) { return `<span class="set-pill ${kind}">${esc(text)}</span>`; },
 };
 
@@ -259,10 +262,10 @@ const Settings = {
     o.access = o.access || [];
     const star = o.access.includes("*");
     this.pane("settings", SetUI.card("Who has access to " + Divisions.label(),
-      "People and Entra groups listed here can switch to this division. <b>Admins</b> can also change this division's settings and who has access; <b>users</b> only see the settings they need day to day. Click a chip's User/Admin label to change it. Super admins always have full access.",
+      "People and Entra groups listed here can switch to this division. <b>Admins</b> can also change this division's settings and who has access; <b>users</b> only see the settings they need day to day. Set each person's role in the table. Super admins always have full access.",
       `${o.can_edit ? "" : `<div class="cfg-warn">Read-only here (Local data mode or no central site).</div>`}
        ${star ? `<div class="cfg-ok" style="margin-bottom:12px">Everyone who can run the app can see this division (set by a super admin).</div>` : ""}
-       <div id="acChips" class="dp-chips"></div>
+       <div id="acChips"></div>
        <div class="set-acc"><div id="acUser"></div><div id="acGroup"></div>${o.super_admin ? `<button class="ghost" type="button" onclick="Settings.acAdd('*')">+ Everyone</button>` : ""}</div>
        <p class="muted" style="font-size:12px;margin-top:12px">Tip: add an Entra group once, then manage membership in Entra instead of here. You cannot remove your own admin rights.
        This controls what the app shows; people with access to the SharePoint site can still open the lists directly.</p>`,
@@ -271,13 +274,13 @@ const Settings = {
   },
   acRender() {
     const acc = this.own.access;
-    document.getElementById("acChips").innerHTML = SetUI.aclChips(acc, "Settings.acToggle", "Settings.acDel", this.own.super_admin)
+    document.getElementById("acChips").innerHTML = SetUI.aclTable(acc, "Settings.acRole", "Settings.acDel", this.own.super_admin)
       || "<span class='muted'>Nobody yet: only super admins can see this division</span>";
     DirPicker.mount("acUser", "user", it => this.acAdd(it.upn), "Add a person (name or sign-in)…");
     DirPicker.mount("acGroup", "group", it => this.acAdd("group:" + it.id + "|" + it.name), "Add an Entra group…");
   },
   acAdd(v) { if (!this.own.access.includes(v)) this.own.access.push(v); this.markDirty(); this.acRender(); },
-  acToggle(i) { SetUI.toggleRole(this.own.access, i); this.markDirty(); this.acRender(); },
+  acRole(i, r) { SetUI.setRole(this.own.access, i, r); this.markDirty(); },
   acDel(i) { this.own.access.splice(i, 1); this.markDirty(); this.acRender(); },
 
   async sitesTab() {
@@ -433,7 +436,7 @@ const Settings = {
     } else if (this.dvTab === "sites") body = `<div id="dvSites"></div>`;
     else if (this.dvTab === "sql") body = `<div id="dvSql"></div>`;
     else if (this.dvTab === "access") {
-      body = `<div class="field"><label>Who can see this division</label><div id="dvAccChips" class="dp-chips"></div>
+      body = `<div class="field"><label>Who can see this division</label><div id="dvAccChips"></div>
           <div class="set-acc"><div id="dvAccUser"></div><div id="dvAccGroup"></div><button class="ghost" type="button" onclick="Settings.dvAcc('*')">+ Everyone</button></div>
           <p class="muted" style="font-size:12px;margin-top:8px">Empty = super admins only. Mark at least one person or group as <b>Admin</b> so the division can manage itself. This controls what the app shows; people with access to the SharePoint site can still open the lists directly.</p></div>`;
     } else body = `<p class="muted" style="margin-top:0">Only needed to import data from an older per-division SharePoint site.</p>
@@ -452,13 +455,13 @@ const Settings = {
   dvId(v) { this.dv.id = v.toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 20); this.dv._idTouched = true; this.markDirty(); },
   dvAccRender() {
     const acc = this.dv.access || [];
-    document.getElementById("dvAccChips").innerHTML = SetUI.aclChips(acc, "Settings.dvAccToggle", "Settings.dvAccDel", true)
+    document.getElementById("dvAccChips").innerHTML = SetUI.aclTable(acc, "Settings.dvAccRole", "Settings.dvAccDel", true)
       || "<span class='muted'>Nobody yet: only super admins can see this division</span>";
     DirPicker.mount("dvAccUser", "user", it => this.dvAcc(it.upn), "Add a person (name or sign-in)…");
     DirPicker.mount("dvAccGroup", "group", it => this.dvAcc("group:" + it.id + "|" + it.name), "Add an Entra group…");
   },
   dvAcc(v) { const a = this.dv.access = this.dv.access || []; if (!a.includes(v)) a.push(v); this.markDirty(); this.dvAccRender(); },
-  dvAccToggle(i) { SetUI.toggleRole(this.dv.access, i); this.markDirty(); this.dvAccRender(); },
+  dvAccRole(i, r) { SetUI.setRole(this.dv.access, i, r); this.markDirty(); },
   dvAccDel(i) { this.dv.access.splice(i, 1); this.markDirty(); this.dvAccRender(); },
   dvCancel() {
     if (this.dirty && !confirm("Discard your changes to this division?")) return;
