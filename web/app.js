@@ -2639,16 +2639,16 @@ const CopyPerms = {
     if (!r || !r.ok) { msg.textContent = (r && r.error) || "Compare failed."; msg.style.color = "var(--red)"; return; }
     msg.textContent = ""; this.s.cmp = r; this.s.picked = {}; this.s.res = null;
     // safe default: tick ordinary groups, never privileged ones
-    r.only_src.forEach(g => { if (g.security !== false && !g.privileged) this.s.picked[g.dn] = true; });
+    r.only_src.forEach(g => { if (!g.privileged) this.s.picked[g.dn] = true; });
     this.draw();
   },
   grp(g, sel) {
     const tag = (g.privileged ? ` <span class="cp-tag red">privileged</span>` : "") + (g.security === false ? ` <span class="cp-tag">distribution</span>` : "");
-    return `<label class="cp-g"><input type="checkbox" ${sel ? `${this.s.picked[g.dn] ? "checked" : ""} ${g.security === false ? "disabled" : ""} onchange="CopyPerms.tick(this,'${attr(g.dn)}')"` : "disabled"}>
+    return `<label class="cp-g"><input type="checkbox" ${sel ? `${this.s.picked[g.dn] ? "checked" : ""} onchange="CopyPerms.tick(this,'${attr(g.dn)}')"` : "disabled"}>
       <span><b>${esc(g.name)}</b>${tag}<small>${esc(g.desc || "")}</small></span></label>`;
   },
   tick(el, dn) { if (el.checked) this.s.picked[dn] = true; else delete this.s.picked[dn]; this.draw(); },
-  tickAll(on) { this.s.cmp.only_src.forEach(g => { if (g.security !== false && (on === "safe" ? !g.privileged : on)) this.s.picked[g.dn] = true; else delete this.s.picked[g.dn]; }); this.draw(); },
+  tickAll(on) { this.s.cmp.only_src.forEach(g => { if (on === "safe" ? !g.privileged : on) this.s.picked[g.dn] = true; else delete this.s.picked[g.dn]; }); this.draw(); },
   draw() {
     const c = this.s.cmp, n = Object.keys(this.s.picked).length, o = document.getElementById("cpOut");
     const col = (title, list, sel, extra) => `<div class="cp-col"><h5>${title} <span>${list.length}</span></h5>${extra || ""}<div class="cp-list">${list.length ? list.map(g => this.grp(g, sel)).join("") : `<div class="sub-note">None</div>`}</div></div>`;

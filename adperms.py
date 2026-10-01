@@ -167,7 +167,8 @@ def compare(src: list, dst: list) -> dict:
 
 
 def copyable(g: dict) -> bool:
-    return bool(g.get("security", True))
+    """Security groups and distribution lists are both ordinary AD groups with a `member` list: both can be copied."""
+    return bool(g.get("dn"))
 
 
 def plan_copy(src: list, dst: list, wanted: list) -> dict:

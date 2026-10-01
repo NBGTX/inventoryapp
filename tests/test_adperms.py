@@ -20,13 +20,13 @@ class Pure(unittest.TestCase):
         self.assertEqual([g["name"] for g in c["only_dst"]], ["D"])
         self.assertEqual([g["name"] for g in c["both"]], ["B"])
 
-    def test_plan_only_adds_security_groups_source_has_and_destination_lacks(self):
+    def test_plan_only_adds_groups_source_has_and_destination_lacks(self):
         s = [G("A"), G("B"), G("Mail", security=False)]
         d = [G("B")]
         p = adperms.plan_copy(s, d, [G("A")["dn"], G("B")["dn"], G("Mail")["dn"], G("Other")["dn"], G("A")["dn"]])
-        self.assertEqual([g["name"] for g in p["add"]], ["A"])
+        self.assertEqual([g["name"] for g in p["add"]], ["A", "Mail"])          # distribution lists copy like any group
         self.assertEqual(sorted(x["why"] for x in p["skipped"]),
-                         ["destination already in this group", "not a security group", "source user is not in this group"])
+                         ["destination already in this group", "source user is not in this group"])
 
     def test_scope_keeps_division_and_blank_company_admin_accounts(self):
         us = [{"company": "NBG - Terrell"}, {"company": "nbg - terrell"}, {"company": ""}, {"company": "NBG - West"}]
