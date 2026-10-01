@@ -101,6 +101,30 @@ class Api:
                 self._hub = Hub(division=gc.division)
         return self._hub
 
+    # ---- master settings (super admin) ---------------------------------------
+    def get_master_settings(self) -> dict:
+        """Super admins: every setting (secret values masked). Others: just super_admin=False."""
+        try:
+            gc = self._client()
+            if not gc.is_super_admin():
+                return {"ok": True, "super_admin": False, "settings": []}
+            rows = []
+            for k, v in sorted(gc.master_settings(force=True).items()):
+                rows.append({"key": k, "secret": v["secret"], "description": v["description"],
+                             "is_set": bool(v["value"]),
+                             "value": ("" if v["secret"] else v["value"])})
+            return {"ok": True, "super_admin": True, "settings": rows}
+        except Exception as e:
+            return self._fail(e)
+
+    def set_master_setting(self, key: str, value: str, secret: bool = False, description: str = "") -> dict:
+        """Create/update one master setting (super admin only). Value is never logged."""
+        try:
+            self._client().set_setting(key, value, secret=bool(secret), description=description or "")
+            return {"ok": True}
+        except Exception as e:
+            return self._fail(e)
+
     # ---- data mode: live production vs local snapshot sandbox --------------
     def get_data_mode(self) -> dict:
         try:

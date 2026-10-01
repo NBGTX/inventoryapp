@@ -316,6 +316,46 @@ const DataMode = {
   },
 };
 
+/* ---- master settings (super admin, above divisions) ----------------------- */
+const MasterSettings = {
+  async refresh() {
+    const r = await Backend.call("get_master_settings");
+    const b = document.getElementById("msBtn");
+    if (b) b.classList.toggle("hidden", !(r && r.ok && r.super_admin));
+  },
+  async open() {
+    const r = await Backend.call("get_master_settings");
+    if (!r || !r.ok || !r.super_admin) return App.toast((r && r.error) || "Super admin only.", true);
+    const rows = r.settings.map((x, i) => `<tr>
+        <td>${esc(x.key)}${x.secret ? " <span class='ms-tag'>secret</span>" : ""}</td>
+        <td>${x.secret ? (x.is_set ? "•••••• (set)" : "(not set)") : esc(x.value)}</td>
+        <td><button class="ghost" onclick="MasterSettings.edit(${i})">Change</button></td></tr>`).join("");
+    this._rows = r.settings;
+    document.getElementById("modalRoot").innerHTML =
+      `<div class="overlay"><div class="modal" style="width:640px;max-width:94vw;">
+        <div class="modal-head"><h3>Master settings (all divisions)</h3><button onclick="MasterSettings.close()">&times;</button></div>
+        <div class="modal-body">
+          <p style="margin-top:0;color:var(--muted);font-size:13px;">Stored in the central Master Settings list. Secret values are never shown here. Anyone who can run the app can use them.</p>
+          <table class="ms-table"><tr><th>Setting</th><th>Value</th><th></th></tr>${rows || "<tr><td colspan='3'>No settings yet.</td></tr>"}</table>
+        </div>
+        <div class="modal-foot"><button class="ghost" onclick="MasterSettings.edit(-1)">Add setting</button><button class="primary" onclick="MasterSettings.close()">Close</button></div>
+      </div></div>`;
+  },
+  close() { document.getElementById("modalRoot").innerHTML = ""; },
+  async edit(i) {
+    const cur = i >= 0 ? this._rows[i] : { key: "", secret: false, description: "" };
+    const key = i >= 0 ? cur.key : prompt("Setting key (e.g. lenovo_client_id):");
+    if (!key) return;
+    const secret = i >= 0 ? cur.secret : confirm("Is this a secret (value hidden in this screen)?\nOK = secret, Cancel = normal.");
+    const value = prompt("New value for " + key + (secret ? " (will not be shown again)" : "") + ":", secret ? "" : (cur.value || ""));
+    if (value === null) return;
+    const r = await Backend.call("set_master_setting", key.trim(), value, secret, cur.description || "");
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+    App.toast("Saved " + key);
+    this.open();
+  },
+};
+
 const App = {
   state: {
     tab: "stock", stock: [], use: [], boneyard: [], account: null, siteTags: ["LTR", "BRI"],
@@ -327,6 +367,7 @@ const App = {
     Backend.real = real;
     this.loadVersion();
     DataMode.refresh();
+    MasterSettings.refresh();
     document.getElementById("tableWrap").addEventListener("click", e => {
       const b = e.target.closest("button[data-action]");
       if (!b) return;
@@ -4341,6 +4382,16 @@ const Hub = {
 
 /* ---- mock additions for the hub + dashboard (browser preview only) ------- */
 Object.assign(Mock, {
+  /* master settings - mirrors Api.get_master_settings / set_master_setting */
+  _ms: [{ key: "lenovo_client_id", secret: true, is_set: true, value: "", description: "Lenovo warranty API key" },
+        { key: "super_admins", secret: false, is_set: true, value: "demo@nucor.com", description: "Comma-separated emails" }],
+  async get_master_settings() { return { ok: true, super_admin: true, settings: this._ms }; },
+  async set_master_setting(key, value, secret, description) {
+    const x = this._ms.find(r => r.key === key);
+    if (x) { x.is_set = !!value; x.value = secret ? "" : value; }
+    else this._ms.push({ key, secret: !!secret, is_set: !!value, value: secret ? "" : value, description: description || "" });
+    return { ok: true };
+  },
   /* data mode - mirrors Api.get_data_mode / pull_prod_snapshot / set_data_mode */
   _dm: { mode: "live", snap: "" },
   async get_data_mode() { return { ok: true, mode: this._dm.mode, has_snapshot: !!this._dm.snap, snapshot: { taken_at: this._dm.snap, counts: {} } }; },

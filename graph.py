@@ -80,6 +80,7 @@ DEFAULT_CENTRAL_LISTS = {
     "model_specs": "Inventory - Model Specs",
     "log": "Inventory - Activity Log",
     "hub_items": "Inventory - Hub Items",
+    "master_settings": "Inventory - Master Settings",
 }
 _DIVISION_SCOPED = ("new_stock", "in_use", "log")
 SCOPES = [
@@ -193,6 +194,9 @@ class GraphClient:
         self._col_maps: dict[str, dict[str, str]] = {}
         self._resolved: dict[str, dict[str, str | None]] = {}
         self.account_name: str | None = None
+        self.account_upn: str = ""
+        self._master_cache: dict | None = None
+        self._master_at = 0.0
         self._has_dir_read = False           # did the token include Directory.Read.All?
         self._has_auditlog_read = False      # did the token include AuditLog.Read.All?
         self._has_authmethod_read = False    # did the token include UserAuthenticationMethod.Read.All?
@@ -237,6 +241,84 @@ class GraphClient:
             return items
         me = self.division["id"].lower()
         return [i for i in items if self._item_division(i, key) == me]
+
+    # ---- master settings (super admin, above divisions) ---------------------
+    # Stored in the central 'Master Settings' list (Title=key, Value, Secret, Description).
+    # SharePoint permissions make the list read-only for everyone but the Owners. config.json
+    # remains the fallback so nothing breaks before/while a setting is moved. NOTE: anyone who
+    # can run the app can read a secret here (the app has to use it); this centralises and
+    # controls EDITING, it does not hide the value from app users.
+    _MASTER_TTL = 300.0
+
+    def _master_col(self, display: str) -> str:
+        return self._col_map("master_settings").get(display.lower(), display.replace(" ", ""))
+
+    def master_settings(self, force: bool = False) -> dict:
+        """key -> {id, value, secret, description}. Empty when not central / local mode / unreadable."""
+        import time as _t
+        if not self._central or self._local:
+            return {}
+        if not force and self._master_cache is not None and _t.monotonic() - self._master_at < self._MASTER_TTL:
+            return self._master_cache
+        out = {}
+        try:
+            vcol = self._master_col("Value")
+            scol = self._master_col("Secret")
+            dcol = self._master_col("Description")
+            for it in self._items_raw("master_settings"):
+                f = it.get("fields", {}) or {}
+                k = str(f.get("Title") or "").strip()
+                if k and not k.upper().startswith("EXAMPLE"):
+                    out[k] = {"id": it.get("id"), "value": str(f.get(vcol) or ""),
+                              "secret": str(f.get(scol) or "").strip().lower() in ("yes", "true", "1"),
+                              "description": str(f.get(dcol) or "")}
+        except Exception:
+            out = self._master_cache or {}      # keep last good value; never break callers
+        self._master_cache, self._master_at = out, _t.monotonic()
+        return out
+
+    def get_setting(self, key: str, default: str = "") -> str:
+        """Master setting first, then config.json, then default."""
+        v = (self.master_settings().get(key) or {}).get("value", "")
+        if v:
+            return v
+        base = self._base_cfg.get(key)
+        return str(base) if base not in (None, "") else default
+
+    def is_super_admin(self) -> bool:
+        me = (self.account_upn or "").strip().lower()
+        if not me:
+            return False
+        admins = {a.strip().lower() for a in (self._base_cfg.get("super_admins") or []) if isinstance(a, str)}
+        raw = (self.master_settings().get("super_admins") or {}).get("value", "")
+        admins |= {a.strip().lower() for a in raw.replace(";", ",").split(",") if a.strip()}
+        return me in admins
+
+    def set_setting(self, key: str, value: str, secret: bool | None = None, description: str | None = None) -> None:
+        """Create/update one master setting. Super admins only; SharePoint enforces the same."""
+        if not self._central:
+            raise GraphError("Master settings need the central site (config.json 'central').")
+        if self._local:
+            raise GraphError("Local data mode: switch to Live to change master settings.")
+        if not self.is_super_admin():
+            raise GraphError("Only a super admin can change master settings.")
+        key = (key or "").strip()
+        if not key:
+            raise GraphError("Setting key is required.")
+        cur = self.master_settings(force=True).get(key)
+        vals = {self._master_col("Value"): value}
+        if secret is not None:
+            vals[self._master_col("Secret")] = "Yes" if secret else "No"
+        if description is not None:
+            vals[self._master_col("Description")] = description
+        site = self._ensure_site()
+        lid = self._list_id("master_settings")
+        if cur:
+            self._req("PATCH", f"{GRAPH}/sites/{site}/lists/{lid}/items/{cur['id']}/fields", json=vals)
+        else:
+            self._req("POST", f"{GRAPH}/sites/{site}/lists/{lid}/items", json={"fields": {"Title": key, **vals}})
+        self._master_cache = None
+        self.add_log("Setting changed", key, "", actor=self.account_name or "", details="master setting updated")
 
     # ---- local data mode (snapshot sandbox) ---------------------------------
     @property
@@ -428,6 +510,8 @@ class GraphClient:
         self.account_name = (result.get("id_token_claims") or {}).get("name") or (
             accounts[0]["username"] if accounts else None
         )
+        self.account_upn = ((result.get("id_token_claims") or {}).get("preferred_username")
+                            or (accounts[0]["username"] if accounts else "") or "")
         return self._token
 
     def sign_out(self) -> None:
@@ -1190,7 +1274,7 @@ class GraphClient:
         Returns {model, cpu, ram, storage, warranty_end, machine_type, mtm} or None.
         Never raises.
         """
-        key = self.cfg.get("lenovo_client_id")
+        key = self.get_setting("lenovo_client_id")
         serial = (serial or "").strip()
         if not key or not serial:
             return None

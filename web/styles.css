@@ -678,3 +678,8 @@ details.miss-card .miss-row{padding:5px 14px;}
 /* data mode (live vs local snapshot) */
 .dm-btn{font-size:12px;}
 .dm-btn.dm-local{background:rgba(224,165,65,.18);border-color:var(--amber);color:var(--amber);}
+
+/* master settings */
+.ms-table{width:100%;border-collapse:collapse;}
+.ms-table th,.ms-table td{padding:8px 10px;border-bottom:1px solid var(--border);text-align:left;font-size:13px;}
+.ms-tag{background:rgba(224,165,65,.18);color:var(--amber);border-radius:4px;padding:1px 6px;font-size:11px;margin-left:4px;}
