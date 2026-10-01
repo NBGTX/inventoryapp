@@ -1763,13 +1763,31 @@ class GraphClient:
         self._list_ids["log"] = created["id"]
         return created["id"]
 
+    # The Activity Log columns are addressed by DISPLAY name and translated to the list's real internal
+    # names (lists made by "New list from Excel" use field_N). Writing literal names made every central
+    # audit write fail silently.
+    _LOG_COLS = ("Action", "Serial", "Model", "Actor", "Details", "LoggedAt")
+
+    def log_to_internal(self, d: dict) -> dict:
+        """{'Action': ..., 'Title': ...} -> the same values keyed by the list's internal column names."""
+        cm = self._col_map("log") or {}
+        return {(k if k == "Title" else cm.get(k.lower(), k)): v for k, v in d.items()}
+
+    def log_from_internal(self, f: dict) -> dict:
+        """Item fields (internal names) -> display-keyed {'Action': ...}. Unknown names pass through."""
+        cm = self._col_map("log") or {}
+        back = {}
+        for disp in self._LOG_COLS:
+            back[cm.get(disp.lower(), disp)] = disp
+        return {back.get(k, k): v for k, v in (f or {}).items()}
+
     def add_log(self, action: str, serial: str = "", model: str = "",
                 actor: str = "", details: str = "") -> None:
         """Write an audit entry. Never raises - logging must not block the action."""
         try:
             when = _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds") + "Z"
-            fields = {"Title": f"{action} {serial}".strip(), "Action": action, "Serial": serial,
-                      "Model": model, "Actor": actor, "Details": details, "LoggedAt": when}
+            fields = self.log_to_internal({"Title": f"{action} {serial}".strip(), "Action": action, "Serial": serial,
+                                           "Model": model, "Actor": actor, "Details": details, "LoggedAt": when})
             self._create_item("log", fields)
         except Exception:
             pass
@@ -1785,7 +1803,7 @@ class GraphClient:
             ), "log")
         rows = []
         for it in items:
-            f = it.get("fields", {})
+            f = self.log_from_internal(it.get("fields", {}))
             rows.append({
                 "when": f.get("LoggedAt", "") or it.get("createdDateTime", ""),
                 "action": f.get("Action", ""),

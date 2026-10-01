@@ -83,12 +83,19 @@ def plan(gc, store, division_id: str) -> dict:
         existing = gc._items_raw(key)     # division-filtered for new_stock / in_use / log
         have = {}
         for it in existing:
-            have[_key_of(key, it.get("fields", {}) or {})] = it.get("id")
+            ef = it.get("fields", {}) or {}
+            if key == "log":
+                ef = gc.log_from_internal(ef)          # compare by display names, not field_N
+            have[_key_of(key, ef)] = it.get("id")
         add, skip = [], 0
         colmap = store.colmap(key)
         for item in src:
             if key == "log":
-                fields = _log_fields(item)
+                disp = _log_fields(item)
+                fields = gc.log_to_internal(disp)
+                if disp.get("Title") and _key_of(key, disp) in have:
+                    skip += 1
+                    continue
             else:
                 logical = _to_logical(item, colmap, graph.FIELD_ALIASES)
                 fields = gc._fields_for(key, logical)
