@@ -22,3 +22,8 @@ SystemsData/
 # Local tooling
 .claude/
 *.docx
+
+# .NET web app
+webapp/**/bin/
+webapp/**/obj/
+webapp/**/App_Data/
