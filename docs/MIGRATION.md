@@ -85,6 +85,7 @@ Source of truth for the load is the **local snapshot**, which is a read-only cop
    - Model specs: copy as-is (deduplicate by model).
    - Hub JSON: split each file into items (upgrade list to many `upgrade` rows, hot spares to many `hot_spare` rows, and so on); `setups` HTML to `Hub Files`.
 5. **Cutover** (needs a short freeze):
+   0. **Test load done 2026-10-01** (NBGW: 33 New Stock, 15 In Use added to central). At go live: tell the NBGW team to STOP using their old site/exe, then take a fresh snapshot and reload (steps below). Data loaded now is stale by then.
    1. Tell users of the current exe to stop (or switch to read-only).
    2. Pull a final snapshot.
    3. Wipe the central test data (rows with `Division = nbgw` and `test`), then run the loader with `--commit`.
