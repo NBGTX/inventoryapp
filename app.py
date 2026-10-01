@@ -888,8 +888,40 @@ class Api:
             return self._fail(e)
 
     def hub_get_config(self) -> dict:
+        """The division's checklists. When it has none yet, `seed` carries the platform TEMPLATE (or None = use the
+        built-in defaults) so a new division starts from the template, not from NBGW's wording."""
         try:
-            return {"ok": True, "config": self._hubc().get_config()}
+            cfg = self._hubc().get_config()
+            seed = None
+            if not cfg:
+                try:
+                    from hub import template_hub_for
+                    seed = template_hub_for(self._client()).get_config()
+                except Exception:
+                    seed = None
+            return {"ok": True, "config": cfg, "seed": seed}
+        except Exception as e:
+            return self._fail(e)
+
+    def hub_get_template_config(self) -> dict:
+        """The platform template checklists (None = never customised; the built-in defaults apply)."""
+        try:
+            from hub import template_hub_for
+            return {"ok": True, "config": template_hub_for(self._client()).get_config()}
+        except Exception as e:
+            return self._fail(e)
+
+    def hub_save_template_config(self, config: dict, meta: dict = None) -> dict:
+        """Super admins only."""
+        try:
+            from hub import template_hub_for
+            gc = self._client()
+            if not gc.is_super_admin():
+                return {"ok": False, "error": "Only a super admin can change the template checklists."}
+            if not isinstance(config, dict) or not all(k in config for k in ("user", "computerBase", "departments")):
+                return {"ok": False, "error": "That is not a checklist set."}
+            template_hub_for(gc).save_config(config, meta or {})
+            return {"ok": True}
         except Exception as e:
             return self._fail(e)
 

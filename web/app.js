@@ -32,6 +32,30 @@ const Busy = {
   },
 };
 
+/* Switching division (or data mode) reloads the window so every cache starts clean. Remember where the user
+   was and put them back there, instead of dropping them on the dashboard. */
+const Resume = {
+  KEY: "nbg_resume",
+  reload() {
+    try {
+      const a = document.querySelector(".appview.active");
+      sessionStorage.setItem(this.KEY, JSON.stringify({
+        view: a ? a.id.replace("appview-", "") : "dashboard",
+        settingsTab: (typeof Settings !== "undefined" && Settings.tab) || "",
+        devTab: (typeof App !== "undefined" && App.state && App.state.tab) || "" }));
+    } catch (e) {}
+    location.reload();
+  },
+  apply() {
+    let r = null;
+    try { r = JSON.parse(sessionStorage.getItem(this.KEY) || "null"); sessionStorage.removeItem(this.KEY); } catch (e) {}
+    if (!r || !r.view || r.view === "dashboard" || r.view === "projecthub") return;
+    if (r.settingsTab) Settings.tab = r.settingsTab;                    // Settings falls back to General if this tab does not exist in the new division
+    if (r.devTab && ["stock", "use", "boneyard"].includes(r.devTab)) App.state.tab = r.devTab;
+    Nav.go(r.view);
+  },
+};
+
 const Backend = {
   real: false,
   async call(method, ...args) {
@@ -329,12 +353,12 @@ const DataMode = {
     if (r.mode === "local") {
       if (!confirm("Switch back to LIVE production data?")) return;
       const s = await Backend.call("set_data_mode", "live");
-      return s.ok ? location.reload() : alert(s.error);
+      return s.ok ? Resume.reload() : alert(s.error);
     }
     const snap = r.has_snapshot ? (r.snapshot.taken_at || "").replace("T", " ") : "";
     if (r.has_snapshot && confirm("Switch to the LOCAL copy taken " + snap + "?\nWrites stay on this PC; production is not touched.\n\nCancel = pull a fresh copy instead.")) {
       const s = await Backend.call("set_data_mode", "local");
-      return s.ok ? location.reload() : alert(s.error);
+      return s.ok ? Resume.reload() : alert(s.error);
     }
     if (!confirm("Pull a fresh READ-ONLY copy of production into this PC?\n(Replaces the existing local copy and any local changes.)")) return;
     const b = document.getElementById("dmBtn"); if (b) b.textContent = "Data: pulling…";
@@ -342,7 +366,7 @@ const DataMode = {
     if (!p.ok) { alert("Pull failed: " + p.error); return this.refresh(); }
     if (confirm("Copy ready. Switch to LOCAL data now?")) {
       const s = await Backend.call("set_data_mode", "local");
-      return s.ok ? location.reload() : alert(s.error);
+      return s.ok ? Resume.reload() : alert(s.error);
     }
     this.refresh();
   },
@@ -403,7 +427,7 @@ const Divisions = {
     if (!id || id === this.current) return;
     const r = await Backend.call("switch_division", id);
     if (!r || !r.ok) { App.toast((r && r.error) || "Could not switch division.", true); this.renderSwitcher(); return; }
-    location.reload();
+    Resume.reload();
   },
 };
 
@@ -1299,6 +1323,11 @@ const Tz = {
 
 const Nav = {
   go(view) {
+    if (view !== "hub" && typeof Hub !== "undefined" && Hub.templateMode) {
+      Hub.templateMode = false;
+      const b = document.getElementById("tplBanner"); if (b) b.classList.add("hidden");
+      Hub.loadConfig();                           // back to the division's own checklists
+    }
     document.querySelectorAll(".appview").forEach(el => el.classList.remove("active"));
     const v = document.getElementById("appview-" + view);
     if (v) v.classList.add("active");
@@ -3845,14 +3874,47 @@ const Hub = {
 
     const w = await Backend.call("hub_whoami");
     if (w && w.ok) { this.who = w; }
-    const r = await Backend.call("hub_get_config");
-    if (r && r.ok && r.config && r.config.user && r.config.computerBase && r.config.departments) {
-      this.config = r.config;
-    } else {
-      this.config = this.makeDefaults();
-      Backend.call("hub_save_config", this.config, { action: "seed", target: "(entire config)", detail: "defaults" });
-    }
+    await this.loadConfig();
     this.renderActivity();
+  },
+
+  /* A config object is usable only if it has the three parts the app reads. */
+  validCfg(c) { return !!(c && c.user && c.computerBase && c.departments); },
+
+  /* The division's checklists. A division with none yet starts from the platform TEMPLATE (Platform > Template
+     checklists), else from the built-in defaults, and saves that as its own copy. */
+  async loadConfig() {
+    this.templateMode = false;
+    const r = await Backend.call("hub_get_config");
+    if (r && r.ok && this.validCfg(r.config)) { this.config = r.config; return; }
+    const fromTemplate = r && r.ok && this.validCfg(r.seed);
+    this.config = fromTemplate ? this.clone(r.seed) : this.makeDefaults();
+    Backend.call("hub_save_config", this.config, { action: "seed", target: "(entire config)", detail: fromTemplate ? "from the template checklists" : "defaults" });
+  },
+
+  /* Starting point for "Reset": the template if a super admin has made one, else the built-in defaults. */
+  async startingPoint() {
+    const t = await Backend.call("hub_get_template_config");
+    return (t && t.ok && this.validCfg(t.config)) ? this.clone(t.config) : this.makeDefaults();
+  },
+
+  persistConfig(meta) {
+    return Backend.call(this.templateMode ? "hub_save_template_config" : "hub_save_config", this.config, meta);
+  },
+
+  /* Super admins edit the TEMPLATE with the same checklist editor (Settings > Platform > Template checklists). */
+  async editTemplate() {
+    this.templateMode = true;
+    this.config = await this.startingPoint();
+    document.getElementById("tplBanner").classList.remove("hidden");
+    Nav.go("hub");
+    this.go("admin");
+  },
+  async exitTemplate() {
+    document.getElementById("tplBanner").classList.add("hidden");
+    await this.loadConfig();
+    this.go("home");
+    Settings.open("template");
   },
 
   go(v) {
@@ -4399,17 +4461,20 @@ const Hub = {
     if (this.adminTarget.kind === "user") this.config.user.sections = this.adminList;
     else if (this.adminTarget.kind === "base") this.config.computerBase.sections = this.adminList;
     else this.config.departments[this.adminTarget.dept].sections = this.adminList;
-    Backend.call("hub_save_config", this.config, { action: "save", target: label, detail: summary });
-    App.toast("Checklist saved & logged."); this.renderAdmin();
+    this.persistConfig({ action: "save", target: label, detail: summary }).then(r => {
+      if (r && r.ok === false) App.toast(r.error || "Could not save.", true);
+    });
+    App.toast(this.templateMode ? "Template checklist saved." : "Checklist saved & logged."); this.renderAdmin();
   },
   resetOne() {
-    this.openModal("Reset to default?", "This restores the original items for this checklist and discards your edits.", () => {
-      const d = this.makeDefaults(), label = this.adminLabel();
+    this.openModal("Reset to default?", this.templateMode ? "This restores the built-in items for this template checklist and discards your edits."
+      : "This restores this checklist to the platform template and discards your edits.", async () => {
+      const d = this.templateMode ? this.makeDefaults() : await this.startingPoint(), label = this.adminLabel();
       if (this.adminTarget.kind === "user") this.config.user = d.user;
       else if (this.adminTarget.kind === "base") this.config.computerBase = d.computerBase;
       else if (this.config.departments[this.adminTarget.dept]) this.config.departments[this.adminTarget.dept] = d.departments[this.adminTarget.dept] || this.config.departments[this.adminTarget.dept];
-      Backend.call("hub_save_config", this.config, { action: "reset", target: label, detail: "restored defaults" });
-      this.loadAdmin(); App.toast("Reset to default & logged.");
+      this.persistConfig({ action: "reset", target: label, detail: this.templateMode ? "restored built-in defaults" : "restored the template" });
+      this.loadAdmin(); App.toast("Reset & logged.");
     });
   },
 
@@ -4645,7 +4710,10 @@ Object.assign(Mock, {
   _hubChanges: [{ when: "2026-07-20T10:00:00Z", user: "Demo User", action: "save", target: "Shop", detail: "1 section, 13 items" }],
   _hubFeedback: [{ id: "fb-1", type: "feature", title: "Add printer presets", detail: "Prefill printers per site.", status: "open", by: "Demo User", at: "2026-07-20T09:00:00Z" }],
   async hub_whoami() { return { ok: true, user: "Demo User (mock)", logsPath: "(mock shared folder)" }; },
-  async hub_get_config() { return { ok: true, config: this._hubConfig }; },
+  _hubTemplate: null,
+  async hub_get_config() { return { ok: true, config: this._hubConfig, seed: this._hubTemplate }; },
+  async hub_get_template_config() { return { ok: true, config: this._hubTemplate }; },
+  async hub_save_template_config(cfg) { this._hubTemplate = cfg; return { ok: true }; },
   async hub_save_config(cfg) { this._hubConfig = cfg; return { ok: true }; },
   _deptData: {
     departments: ["Detailing", "Engineering", "Sales", "Shared"],
@@ -4947,7 +5015,7 @@ async function _boot(real) {
   let st = null;
   try {
     st = await Backend.call("get_status");                       // silent sign-in
-    if (st && st.signed_in) await Divisions.load();
+    if (st && st.signed_in) { await Divisions.load(); Resume.apply(); }
   } catch (e) {}
   Hub.boot();
   Sites.boot();

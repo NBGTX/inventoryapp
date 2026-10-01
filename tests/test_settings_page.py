@@ -430,3 +430,53 @@ class ProjectHubAddress(unittest.TestCase):
         finally:
             webbrowser.open = orig
         self.assertEqual(opened, ["https://ok.example.com/"])
+
+
+class TemplateChecklists(unittest.TestCase):
+    CFG = {"user": {"sections": []}, "computerBase": {"sections": []}, "departments": {"Eng": {"sections": []}}}
+
+    def setUp(self):
+        import hub as hubmod
+        self.hubmod = hubmod
+        self.gc = make_client(extra={"super_admins": ["boss@nucor.com"]})
+        FakeSite(self.gc)
+        self.gc.account_upn = "boss@nucor.com"
+        self.div_hub = Hub(logs_folder=tempfile.mkdtemp(), division=self.gc.division)
+        self.tpl_dir = tempfile.mkdtemp()
+        self._orig = hubmod.template_hub_for
+        hubmod.template_hub_for = lambda gc: Hub(logs_folder=self.tpl_dir, division={"id": "_template", "name": "T", "legacy_data": False, "sites": []})
+        self.api = app.Api()
+        self.api._gc, self.api._hub = self.gc, self.div_hub
+
+    def tearDown(self):
+        self.hubmod.template_hub_for = self._orig
+
+    def test_new_division_gets_the_template_as_seed_until_it_has_its_own(self):
+        self.assertEqual(self.api.hub_get_config(), {"ok": True, "config": None, "seed": None})       # no template yet: JS uses built-ins
+        self.assertTrue(self.api.hub_save_template_config(self.CFG, {"action": "save"})["ok"])
+        r = self.api.hub_get_config()
+        self.assertIsNone(r["config"])
+        self.assertEqual(r["seed"]["departments"], {"Eng": {"sections": []}})
+        self.api.hub_save_config({"user": 1, "computerBase": 2, "departments": 3}, {"action": "seed"})
+        r = self.api.hub_get_config()
+        self.assertEqual(r["config"]["user"], 1)
+        self.assertIsNone(r["seed"])                                                                    # own copy wins; template untouched
+        self.assertEqual(self.api.hub_get_template_config()["config"]["departments"], {"Eng": {"sections": []}})
+
+    def test_template_and_division_documents_are_separate(self):
+        self.api.hub_save_template_config(self.CFG, {})
+        self.assertIsNone(self.div_hub.get_config())
+
+    def test_only_super_admins_write_the_template_and_it_must_look_like_a_checklist_set(self):
+        self.assertFalse(self.api.hub_save_template_config({"x": 1}, {})["ok"])
+        self.assertFalse(self.api.hub_save_template_config("nope", {})["ok"])
+        self.gc.account_upn = "tech@nucor.com"
+        self.assertIn("super admin", self.api.hub_save_template_config(self.CFG, {})["error"])
+        self.assertIsNone(self.api.hub_get_template_config()["config"])                                 # reading is allowed, nothing was written
+
+    def test_template_hub_is_bound_to_its_own_pseudo_division(self):
+        self.hubmod.template_hub_for = self._orig
+        h = self.hubmod.template_hub_for(self.gc)
+        self.assertEqual(h.division["id"], "_template")
+        self.assertEqual(h._store._div(), "_template")
+        self.assertNotEqual(self.gc.division["id"], "_template")

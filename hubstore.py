@@ -51,9 +51,9 @@ def kind_for_file(stem: str) -> str:
 
 
 class SharePointHubStore:
-    def __init__(self, gc):
+    def __init__(self, gc, div_id: str | None = None):
         self.gc = gc
-        self._div_id = gc.division["id"]       # fixed for this Hub: a later division switch cannot redirect its writes
+        self._div_id = div_id or gc.division["id"]     # fixed for this Hub: a later division switch cannot redirect its writes
         self._rev: dict = {}       # (kind, doc) -> rev seen at last read/write
         self._cache: dict = {}     # kind -> (t, {doc: (text, rev, rows)})
 

@@ -162,6 +162,9 @@
 
       <!-- hub: admin -->
       <section class="hubview" id="hubview-admin">
+        <div id="tplBanner" class="cfg-warn tpl-banner hidden">
+          <span><b>Editing the TEMPLATE checklists.</b> New divisions start from these. This is not any division's own copy.</span>
+          <button class="ghost" onclick="Hub.exitTemplate()">Done editing the template</button></div>
         <div class="admin-bar">
           <select id="adminSelect" onchange="Hub.loadAdmin()"></select>
           <button class="primary" onclick="Hub.saveAdmin()">Save changes</button>

@@ -194,7 +194,7 @@ const Settings = {
   groups() {
     return [
       { title: Divisions.label(), items: this.SECTIONS.filter(x => x[0] === "general" || this.allowed.includes(x[0])) },
-      ...(this.su ? [{ title: "Platform (super admin)", items: [["divisions", "Divisions"], ["admins", "Super admins"], ["sync", "Sync all divisions"], ["roles", "Role access"], ["integrations", "Integrations & options"]] }] : []),
+      ...(this.su ? [{ title: "Platform (super admin)", items: [["divisions", "Divisions"], ["admins", "Super admins"], ["sync", "Sync all divisions"], ["template", "Template checklists"], ["roles", "Role access"], ["integrations", "Integrations & options"]] }] : []),
     ];
   },
   async load() {
@@ -230,7 +230,7 @@ const Settings = {
     this.pane("settings", `<div class="empty">Loading…</div>`);
     const dep = { models: "models", links: "sites", perms: "perms", storage: "storage" }[tab];
     if (dep) { this.pane("depts"); Depts._page = true; await Depts.openPage(dep); return; }
-    const fn = { general: "general", access: "accessTab", sites: "sitesTab", sql: "sqlTab", divisions: "divisions", admins: "admins", roles: "roles", sync: "syncAll", integrations: "integrations" }[tab];
+    const fn = { general: "general", access: "accessTab", sites: "sitesTab", sql: "sqlTab", divisions: "divisions", admins: "admins", roles: "roles", template: "templateTab", sync: "syncAll", integrations: "integrations" }[tab];
     try { await this[fn](); } catch (e) { this.pane("settings", `<div class="empty">Could not open this section: ${esc(String(e && e.message || e))}</div>`); }
   },
 
@@ -382,6 +382,17 @@ const Settings = {
     this.saPersist([...this.sa.admins, upn], "Added " + upn);
   },
   saRemove(i) { const u = this.sa.admins[i]; if (u) this.saPersist(this.sa.admins.filter((_, k) => k !== i), "Removed " + u); },
+
+  /* ---- platform: template checklists (what a new division's Endpoint Provisioning starts from) ---- */
+  async templateTab() {
+    const r = await Backend.call("hub_get_template_config");
+    const custom = !!(r && r.ok && r.config && r.config.user);
+    this.pane("settings", SetUI.card("Template checklists", "The New Computer Setup and New User Setup checklists every new division starts with, and what a division's \"Reset this list\" goes back to.",
+      `<p style="margin:0 0 10px">${custom ? SetUI.pill("ok", "Customised template") : SetUI.pill("warn", "Using the built-in defaults")}</p>
+       <p class="muted" style="margin:0 0 10px">The built-in defaults still contain NBGW-specific steps (server names, account naming). Edit them once here and every division you add later starts clean.</p>
+       <p class="muted" style="margin:0">Divisions that already have checklists (NBGW, Terrell) keep their own and are not changed.</p>`,
+      `<button class="primary" onclick="Hub.editTemplate()">Edit the template checklists</button>`));
+  },
 
   /* ---- platform: sync every division (manual) ---- */
   syncAll() {

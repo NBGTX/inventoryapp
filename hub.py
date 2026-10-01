@@ -951,3 +951,19 @@ def hub_for(gc) -> "Hub":
         from hubstore import SharePointHubStore   # central site: hub data lives in SharePoint rows
         return Hub(division=gc.division, store=SharePointHubStore(gc))
     return Hub(division=gc.division)
+
+
+TEMPLATE_ID = "_template"
+
+
+def template_hub_for(gc) -> "Hub":
+    """The platform-level TEMPLATE hub (checklists new divisions start from). Not a real division: it has no
+    Divisions row, never shows in the switcher, and is only edited by super admins."""
+    div = {"id": TEMPLATE_ID, "name": "Template checklists", "company_name": "", "legacy_data": False, "sites": []}
+    if gc.data_mode == "local":
+        import localstore
+        return Hub(logs_folder=localstore.hub_logs_dir(TEMPLATE_ID), division=div)
+    if gc._central:
+        from hubstore import SharePointHubStore
+        return Hub(division=div, store=SharePointHubStore(gc, div_id=TEMPLATE_ID))
+    return Hub(division=div)
