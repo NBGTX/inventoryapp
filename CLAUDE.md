@@ -87,5 +87,6 @@ Build: needs Python 3.12 (`py -3.12`, `-Python <exe>` or `NBG_PYTHON`), `config.
 - Co-managed devices have no Intune user; owner = Entra registeredOwners.
 - PowerShell helper scripts: ASCII only (em-dash broke 5.1).
 - Agent shell: bash heredocs with backslashes/quotes get mangled. Write scripts with the Write tool, then run them. Edit CRLF files with the Edit tool or CRLF-aware scripts.
+- **SharePoint list-from-Excel guesses column types** (made OS Install Date / Last Sign In / LoggedAt Number -> every write 400s, audit entries silently lost). After creating or editing central lists run `python tools\check_central.py`.
 - **Which account?** Techs sign in with an admin account (`adm.<name>.azure@nucor.onmicrosoft.com`) that holds the Intune role and NBGW site access; the normal account usually does not. Interactive sign-in always shows the account picker. `python tools\signin.py [--switch]` shows who is cached and what it can reach. `super_admins` and Divisions `Access JSON` must list the UPN actually used (the adm one), and that account needs Contribute on the central site.
 - Python 3.14 (this dev box) has no `pywebview`; tools and tests work, the app window does not. Use 3.12.

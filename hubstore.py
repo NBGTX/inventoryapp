@@ -38,8 +38,9 @@ class HubConflict(Exception):
 
 
 def _int(v) -> int:
+    """SharePoint returns a Number column as 1.0 (float) - accept '1', '1.0', 1, 1.0."""
     try:
-        return int(str(v).strip() or 0)
+        return int(float(str(v).strip() or 0))
     except (TypeError, ValueError):
         return 0
 

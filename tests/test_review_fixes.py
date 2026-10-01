@@ -225,3 +225,9 @@ class LoaderSafety(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RevParsing(unittest.TestCase):
+    def test_number_column_values_from_sharepoint(self):
+        for raw, want in ((1, 1), (1.0, 1), ("1", 1), ("1.0", 1), ("", 0), (None, 0), ("x", 0), (12.0, 12)):
+            self.assertEqual(hubstore._int(raw), want, raw)

@@ -56,6 +56,19 @@ For each list:
 
 Leave `Enabled` (Divisions) and `Rev` (Hub Items) as text. Do not change any other column.
 
+## Step 3b. Check the column types (important)
+
+SharePoint's "From Excel" import GUESSES column types. It turned `OS Install Date`, `Last Sign In` (In Use) and
+`LoggedAt` (Activity Log) into Number columns, which makes every sync write fail with `400 badArgument`.
+Run the checker (read-only) and fix whatever it lists:
+
+```powershell
+python tools\check_central.py
+```
+
+Each fix: open the list > gear icon > **List settings** > click the column name > **Column type** = **Single line of text** > OK.
+An empty list loses nothing; a list with data keeps it (numbers convert to text).
+
 ## Step 4. Index the Division columns
 
 Do this on: New Stock, In Use, Activity Log, Hub Items (also index **Kind** on Hub Items).
