@@ -53,6 +53,13 @@ def run_sync(gc: GraphClient, commit: bool = False) -> dict:
         return {"moved": [], "added": 0, "updated": 0, "refreshed": 0,
                 "count": 0, "skipped": 0, "deduped": 0, "errors": [str(e)]}
 
+    # Safety rail: an empty answer from Intune must never read as "the whole fleet left". Nothing is changed
+    # (dedupe included) when Intune returns no devices but the division already has rows.
+    if not devices and gc._items_raw("in_use"):
+        return {"moved": [], "added": 0, "updated": 0, "refreshed": 0, "count": 0, "skipped": 0, "deduped": 0,
+                "errors": ["Intune returned 0 devices for this division, but it already has rows. Nothing was changed "
+                           "(check the Intune category name and your Intune role)."]}
+
     # Self-heal duplicate In Use rows first (see dedupe_in_use for why they occur),
     # then build the reconcile index from the SURVIVING items — reuses this one raw
     # read instead of fetching the list twice.
@@ -507,6 +514,42 @@ def populate_mfa(gc: GraphClient, commit: bool = True, force: bool = False) -> d
                    details=f"populated MFA for {filled} device(s) (Yes {yes}, No {no}); {unresolved} unresolved")
     return {"checked": checked, "filled": filled, "yes": yes, "no": no,
             "unresolved": unresolved, "errors": errors}
+
+
+def sync_all(gc: GraphClient, commit: bool = True, only: list | None = None) -> dict:
+    """Run the normal reconcile + enrich for EVERY enabled division, one after another (super admins, manual).
+
+    Each division gets its own client copy (shared sign-in), so the caller's active division and caches are never
+    touched while this runs. The delete-capable boneyard sweep is NOT part of this. One audit entry per division.
+    Returns {"ok": bool, "divisions": [{id, name, ok, count, added, updated, deduped, enriched, errors}]}."""
+    out = []
+    for d in list(gc.registry):
+        if only is not None and d["id"] not in only:
+            continue
+        if d.get("enabled") is False:
+            continue
+        row = {"id": d["id"], "name": d.get("name", d["id"]), "ok": False, "count": 0, "added": 0, "updated": 0,
+               "deduped": 0, "enriched": 0, "errors": []}
+        out.append(row)
+        try:
+            c = gc.clone_for_snapshot()
+            c.set_division(d["id"], persist=False)
+            r = run_sync(c, commit=commit)
+            row.update(count=r.get("count", 0), added=len(r.get("moved", [])), updated=r.get("updated", 0),
+                       deduped=r.get("deduped", 0))
+            row["errors"] += [str(e)[:300] for e in r.get("errors", [])]
+            if not row["errors"]:
+                e = enrich_in_use(c, commit=commit)
+                row["enriched"] = e.get("enriched", 0) + e.get("sites", 0)
+                row["errors"] += [str(x)[:300] for x in e.get("errors", [])]
+            row["ok"] = not row["errors"]
+            if commit:
+                c.add_log("Sync (all divisions)", "", "", actor=gc.account_name or "",
+                          details=f"{row['count']} devices seen; +{row['added']} ~{row['updated']} dedupe {row['deduped']} "
+                                  f"enriched {row['enriched']}; {len(row['errors'])} error(s)")
+        except Exception as e:
+            row["errors"].append(str(e)[:300])
+    return {"ok": bool(out) and all(r["ok"] for r in out), "divisions": out}
 
 
 def main_enrich(gc, commit: bool) -> None:

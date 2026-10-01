@@ -4550,6 +4550,10 @@ Object.assign(Mock, {
     return { ok: true };
   },
   _ra: { user: [], admin: ["models", "links", "access", "sites", "sql", "perms", "storage"] },
+  async sync_all_divisions() {
+    await new Promise(r => setTimeout(r, 900));
+    return { ok: true, divisions: this._dv.map(d => ({ id: d.id, name: d.name, ok: true, count: d.id === "nbgw" ? 466 : 328, added: 0, updated: d.id === "nbgw" ? 3 : 328, deduped: 0, enriched: 12, errors: [] })) };
+  },
   async get_update_info() { return { ok: true, current: "2026.10.01", latest: "", min: "", update_available: false, update_required: false }; },
   async get_my_role() { return { ok: true, role: "super", sections: ["models", "links", "access", "sites", "sql", "perms", "storage"] }; },
   async get_role_access() {

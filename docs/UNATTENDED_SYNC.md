@@ -76,3 +76,27 @@ Later (web version): the same runner becomes a hosted background service in the 
 ## 7. Interim step that needs no decision
 
 Add the Run lock and status record first (items 4 and 5). They make the existing launch sync safer today (no overlapping runs, visible "last sync") and are required by the scheduled job anyway.
+
+## 8. Recommendations (answers to section 6)
+
+| # | Decision | Recommendation | Why |
+|---|---|---|---|
+| 1 | Identity | **B: app-only with a certificate.** Use a new, separate Entra app registration (the current one is a public client for people). Permissions: `DeviceManagementManagedDevices.Read.All`, `User.Read.All`, `Sites.Selected` granted on the central site only (not tenant-wide `Sites.ReadWrite.All`). Start with a service account (A) only if consent takes weeks, and plan to drop it. | No shared human-like account, no password or refresh token to expire, least privilege, and it is the identity the web version would need anyway. |
+| 2 | Where it runs | One domain-joined, always-on Windows server owned by Systems/IT (the IIS box is a candidate). Scheduled task under a group managed service account (gMSA), certificate in the machine store with the private key readable only by that account. | No person's login or PC is a single point of failure. A gMSA has no password to rotate by hand. |
+| 3 | Alerts | **Teams incoming webhook**, URL kept as a Master Setting. Also show a "Last sync" line in the app, red after 36 hours. | The webhook needs no extra Graph permission (`Mail.Send` would be another consent). Email can be added later. |
+| 4 | Delete sweep | **Manual only.** Never in the scheduled job. | It is the only step that deletes or moves rows, and it has known false-positive paths. A nightly job should only add and update. |
+| 5 | Schedule | **Nightly, 02:00 local**, plus the manual button below for on-demand runs. Add an hourly light run only if someone needs fresher data. | Device changes are not minute-critical, and one run per night keeps Graph and SharePoint throttling away. |
+
+### Build order
+
+1. **Done: manual "Sync all divisions"** (Settings > Platform). Super admins run every enabled division in one click, one division after another, on a separate client per division. Adds and updates only, plus duplicate cleanup and missing warranty and spec fill-in. It never runs the boneyard sweep. One audit entry per division. If Intune returns no devices for a division that already has rows, that division is skipped and left unchanged. This is the same code the scheduled job will call.
+2. **Next, no decision needed:** the run lock (a Hub Items row per division) and the "last sync" status record, so overlapping runs are impossible and the app can show when each division last synced.
+3. **Next, no decision needed:** the remaining safety rails: stop a division if Intune returns fewer than 70% of its previous count, and cap changes per run (about 20% of rows).
+4. **After consent:** app-only auth mode in `GraphClient` and a command-line runner, `tools/run_sync.py --all --commit`, that calls the same function as the button.
+5. **Then:** the Teams alert, and the scheduled task on the server.
+
+### What I need from you for step 4
+
+- An Entra admin who can create the app registration and grant admin consent (the three permissions above, with `Sites.Selected` granted to the central site only).
+- A server and an owner for the scheduled task.
+- A Teams channel and an incoming-webhook URL.

@@ -280,3 +280,93 @@ class VendorLookups(unittest.TestCase):
         gc2 = make_client()
         FakeSite(gc2)
         self.assertIsNone(gc2.lookup_vendor("ABC1234", "Dell"))             # no keys saved: quietly nothing
+
+
+class SyncAllDivisions(unittest.TestCase):
+    def setUp(self):
+        import sync
+        self.sync = sync
+        self.gc = make_client(extra={"super_admins": ["boss@nucor.com"]})
+        self.site = FakeSite(self.gc)
+        self.gc.account_upn = "boss@nucor.com"
+        self.gc.registry = [
+            {"id": "nbgw", "name": "NBGW", "company_name": "c", "intune_category": "NBGW", "sites": [], "lists": {}, "legacy_data": True, "access": []},
+            {"id": "nbgtx", "name": "TX", "company_name": "c", "intune_category": "NBGTX", "sites": [], "lists": {}, "legacy_data": False, "access": []},
+            {"id": "off", "name": "Off", "company_name": "c", "intune_category": "O", "sites": [], "lists": {}, "legacy_data": False, "access": [], "enabled": False},
+        ]
+        self.gc.set_division("nbgw", persist=False)
+        self.seen, self.logged = [], []
+        self._orig = (sync.run_sync, sync.enrich_in_use, graph.GraphClient.add_log)
+        outer = self
+
+        def fake_run(c, commit=False):
+            outer.seen.append((c.division["id"], commit, c is not outer.gc))
+            if c.division["id"] == "nbgtx":
+                return {"moved": [{}, {}], "updated": 5, "deduped": 1, "count": 40, "errors": []}
+            return {"moved": [], "updated": 2, "deduped": 0, "count": 30, "errors": ["boom"] if outer.fail_w else []}
+        sync.run_sync = fake_run
+        sync.enrich_in_use = lambda c, commit=True, cap=None: {"enriched": 3, "sites": 4, "errors": []}
+        graph.GraphClient.add_log = lambda self_, action, serial="", model="", actor="", details="": outer.logged.append((self_.division["id"], action, details))
+        self.fail_w = False
+
+    def tearDown(self):
+        self.sync.run_sync, self.sync.enrich_in_use, graph.GraphClient.add_log = self._orig
+
+    def test_every_enabled_division_runs_on_its_own_client_and_the_callers_division_is_untouched(self):
+        r = self.sync.sync_all(self.gc, commit=True)
+        self.assertEqual([x[0] for x in self.seen], ["nbgw", "nbgtx"])           # the disabled one is skipped
+        self.assertTrue(all(x[1] and x[2] for x in self.seen))                    # commit, and a separate client each
+        self.assertEqual(self.gc.division["id"], "nbgw")
+        self.assertTrue(r["ok"])
+        tx = [d for d in r["divisions"] if d["id"] == "nbgtx"][0]
+        self.assertEqual((tx["count"], tx["added"], tx["updated"], tx["deduped"], tx["enriched"]), (40, 2, 5, 1, 7))
+        self.assertEqual([x[0] for x in self.logged], ["nbgw", "nbgtx"])          # one audit entry per division
+        self.assertTrue(all(x[1] == "Sync (all divisions)" for x in self.logged))
+
+    def test_one_division_failing_does_not_stop_the_others_and_skips_its_enrich(self):
+        self.fail_w = True
+        r = self.sync.sync_all(self.gc, commit=True)
+        self.assertFalse(r["ok"])
+        w = [d for d in r["divisions"] if d["id"] == "nbgw"][0]
+        self.assertEqual((w["ok"], w["errors"], w["enriched"]), (False, ["boom"], 0))
+        self.assertTrue([d for d in r["divisions"] if d["id"] == "nbgtx"][0]["ok"])
+
+    def test_only_filter_and_dry_run_write_no_audit(self):
+        r = self.sync.sync_all(self.gc, commit=False, only=["nbgtx"])
+        self.assertEqual([d["id"] for d in r["divisions"]], ["nbgtx"])
+        self.assertEqual(self.logged, [])
+        self.assertFalse(self.seen[0][1])
+
+    def test_api_is_super_admin_only_live_only(self):
+        api = app.Api()
+        api._gc = self.gc
+        self.gc.account_upn = "nobody@nucor.com"
+        self.assertIn("super admin", api.sync_all_divisions()["error"])
+        self.gc.account_upn = "boss@nucor.com"
+        self.gc.data_mode = "local"
+        self.assertIn("Local data mode", api.sync_all_divisions()["error"])
+        self.assertEqual(self.seen, [])
+
+
+class ZeroDeviceRail(unittest.TestCase):
+    def test_empty_intune_answer_changes_nothing_when_rows_exist(self):
+        import sync
+        gc = make_client()
+        site = FakeSite(gc)
+        site.add("in_use", Title="SER1", Division="nbgw")
+        gc.get_intune_category_devices = lambda: []
+        import schema
+        orig, schema.problems = schema.problems, lambda *a, **k: {}          # the column pre-flight is tested elsewhere
+        try:
+            r = sync.run_sync(gc, commit=True)
+        finally:
+            schema.problems = orig
+        self.assertIn("Intune returned 0 devices", r["errors"][0])
+        self.assertEqual([s for s in site.sent if s[0] in ("POST", "PATCH", "DELETE")], [])
+
+    def test_empty_division_with_no_rows_is_fine(self):
+        import sync
+        gc = make_client()
+        FakeSite(gc)
+        gc.get_intune_category_devices = lambda: []
+        self.assertEqual(sync.run_sync(gc, commit=False)["errors"], [])

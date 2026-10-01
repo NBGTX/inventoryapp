@@ -170,7 +170,7 @@ const Settings = {
   groups() {
     return [
       { title: Divisions.label(), items: this.SECTIONS.filter(x => x[0] === "general" || this.allowed.includes(x[0])) },
-      ...(this.su ? [{ title: "Platform (super admin)", items: [["divisions", "Divisions"], ["admins", "Super admins"], ["roles", "Role access"], ["integrations", "Integrations & options"]] }] : []),
+      ...(this.su ? [{ title: "Platform (super admin)", items: [["divisions", "Divisions"], ["admins", "Super admins"], ["sync", "Sync all divisions"], ["roles", "Role access"], ["integrations", "Integrations & options"]] }] : []),
     ];
   },
   async load() {
@@ -206,7 +206,7 @@ const Settings = {
     this.pane("settings", `<div class="empty">Loading…</div>`);
     const dep = { models: "models", links: "sites", perms: "perms", storage: "storage" }[tab];
     if (dep) { this.pane("depts"); Depts._page = true; await Depts.openPage(dep); return; }
-    const fn = { general: "general", access: "accessTab", sites: "sitesTab", sql: "sqlTab", divisions: "divisions", admins: "admins", roles: "roles", integrations: "integrations" }[tab];
+    const fn = { general: "general", access: "accessTab", sites: "sitesTab", sql: "sqlTab", divisions: "divisions", admins: "admins", roles: "roles", sync: "syncAll", integrations: "integrations" }[tab];
     try { await this[fn](); } catch (e) { this.pane("settings", `<div class="empty">Could not open this section: ${esc(String(e && e.message || e))}</div>`); }
   },
 
@@ -341,6 +341,30 @@ const Settings = {
     this.saPersist([...this.sa.admins, upn], "Added " + upn);
   },
   saRemove(i) { const u = this.sa.admins[i]; if (u) this.saPersist(this.sa.admins.filter((_, k) => k !== i), "Removed " + u); },
+
+  /* ---- platform: sync every division (manual) ---- */
+  syncAll() {
+    this.pane("settings", SetUI.card("Sync all divisions", "Reads each enabled division's devices from Intune, adds and updates its In Use list, removes duplicate rows, and fills in missing warranty and specs. It runs one division after another and takes a few minutes. It never deletes devices and never moves anything to the boneyard.",
+      `<p class="muted" style="margin:0 0 12px">Runs as you, on live data. Each division gets one entry in its activity log. If Intune returns no devices for a division, that division is skipped and left unchanged.</p>
+       <div id="syncAllOut"></div>`,
+      `<button class="primary" id="syncAllBtn" onclick="Settings.syncAllRun()">Sync all divisions now</button>`));
+  },
+  async syncAllRun() {
+    if (!confirm("Sync every enabled division now?\n\nThis writes to the live In Use lists (adds, updates, removes duplicate rows).")) return;
+    const btn = document.getElementById("syncAllBtn"), out = document.getElementById("syncAllOut");
+    btn.disabled = true; btn.textContent = "Syncing… this can take a few minutes";
+    out.innerHTML = `<div class="empty" style="padding:16px">Working through the divisions…</div>`;
+    const r = await Backend.call("sync_all_divisions");
+    btn.disabled = false; btn.textContent = "Sync all divisions now";
+    if (!r || !r.ok) { out.innerHTML = `<div class="cfg-warn">${esc((r && r.error) || "Sync failed.")}</div>`; return; }
+    const num = v => `<td style="text-align:right">${v}</td>`;
+    const rows = r.divisions.map(d => `<tr><td>${esc(d.name)}</td><td>${d.ok ? SetUI.pill("ok", "Done") : SetUI.pill("warn", "Needs attention")}</td>
+      ${num(d.count)}${num(d.added)}${num(d.updated)}${num(d.deduped)}${num(d.enriched)}
+      <td class="muted">${d.errors.length ? esc(d.errors[0]) + (d.errors.length > 1 ? ` (+${d.errors.length - 1} more)` : "") : ""}</td></tr>`).join("");
+    out.innerHTML = `<table class="ms-table"><thead><tr><th>Division</th><th>Result</th><th style="text-align:right">Devices seen</th><th style="text-align:right">Added</th><th style="text-align:right">Updated</th><th style="text-align:right">Duplicates removed</th><th style="text-align:right">Filled in</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>`;
+    App.toast(r.ok ? "All divisions synced." : "Sync finished with problems: see the table.", !r.ok);
+    try { Dashboard.load(); } catch (e) {}
+  },
 
   /* ---- platform: role access (which Settings sections each division role may use) ---- */
   async roles() {

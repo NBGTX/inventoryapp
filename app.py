@@ -738,6 +738,24 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    def sync_all_divisions(self) -> dict:
+        """Super admins: reconcile + enrich every enabled division (manual 'sync everything'). Live data only."""
+        try:
+            from sync import sync_all
+            gc = self._client()
+            if not gc.is_super_admin():
+                return {"ok": False, "error": "Only a super admin can sync every division."}
+            if gc.data_mode == "local":
+                return {"ok": False, "error": "Local data mode: switch to Live to sync."}
+            if not gc._central:
+                return {"ok": False, "error": "Syncing every division needs the central site."}
+            gc.refresh_registry(force=True)
+            r = sync_all(gc, commit=True)
+            self._hub = None
+            return {"ok": True, **r}
+        except Exception as e:
+            return self._fail(e)
+
     def enrich_inventory(self) -> dict:
         """Fill missing In Use specs/warranty from the vendor (bounded per call)."""
         try:
@@ -1940,7 +1958,7 @@ def _long_op(fn):
     return wrapper
 
 
-for _n in ("run_sync", "enrich_inventory", "master_sync", "populate_mfa", "boneyard_sweep"):
+for _n in ("run_sync", "enrich_inventory", "master_sync", "populate_mfa", "boneyard_sweep", "sync_all_divisions"):
     setattr(Api, _n, _long_op(getattr(Api, _n)))
 
 
