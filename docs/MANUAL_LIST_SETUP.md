@@ -56,6 +56,13 @@ For each list:
 
 Leave `Enabled` (Divisions) and `Rev` (Hub Items) as text. Do not change any other column.
 
+## Step 3a. Divisions list: 4 extra columns for the Timesheet tool
+
+Add these to `Inventory - Divisions` (gear icon > List settings > **Create column**, type **Single line of text**, names exactly):
+`Timesheet DB`, `Timesheet Table`, `Employee DB`, `Employee Table`.
+They hold, per division, the SQL database and table names the Timesheet tool uses (for NBGW:
+`NBSTimesheet` / `dbo.WeekLocked` and `NBSEmployeeInfo` / `dbo.SAP_Interface`). Leave blank = the tool is off for that division.
+
 ## Step 3b. Check the column types (important)
 
 SharePoint's "From Excel" import GUESSES column types. It turned `OS Install Date`, `Last Sign In` (In Use) and

@@ -424,7 +424,8 @@ const DivisionAdmin = {
   edit(i) {
     this.cur = i >= 0 ? JSON.parse(JSON.stringify(this.rows[i])) :
       { id: "", name: "", company_name: "", intune_category: "", sharepoint_hostname: "nucor.sharepoint.com", site_path: "",
-        ad_domain: "", sql_server: "", sites: [{ code: "", name: "", city_prefixes: [], device_prefixes: [] }], access: [], enabled: true, _new: true };
+        ad_domain: "", sql_server: "", timesheet_db: "", timesheet_table: "", employee_db: "", employee_table: "",
+        sites: [{ code: "", name: "", city_prefixes: [], device_prefixes: [] }], access: [], enabled: true, _new: true };
     this.form();
   },
   form() {
@@ -445,6 +446,10 @@ const DivisionAdmin = {
           ${f("dvCat", "Intune device category (exact)", d.intune_category)}
           ${f("dvAd", "AD domain (optional)", d.ad_domain)}
           ${f("dvSql", "Timesheet SQL server (optional)", d.sql_server)}
+          ${f("dvTsDb", "Timesheet database (e.g. NBSTimesheet)", d.timesheet_db)}
+          ${f("dvTsTable", "Timesheet week-lock table (e.g. dbo.WeekLocked)", d.timesheet_table)}
+          ${f("dvEmpDb", "Employee database (e.g. NBSEmployeeInfo)", d.employee_db)}
+          ${f("dvEmpTable", "Employee table (e.g. dbo.SAP_Interface)", d.employee_table)}
           ${f("dvHost", "Old SharePoint host (migration source, optional)", d.sharepoint_hostname)}
           ${f("dvPath", "Old SharePoint site path (migration source, optional)", d.site_path)}
           <div class="field"><label>Who can see this division (emails, one per line; empty = everyone, * = everyone)</label>
@@ -462,7 +467,8 @@ const DivisionAdmin = {
     const v = id => (document.getElementById(id).value || "").trim(), d = this.cur;
     const list = t => t.split(",").map(x => x.trim()).filter(Boolean);
     d.id = v("dvId").toLowerCase(); d.name = v("dvName"); d.company_name = v("dvCompany"); d.intune_category = v("dvCat");
-    d.ad_domain = v("dvAd"); d.sql_server = v("dvSql"); d.sharepoint_hostname = v("dvHost"); d.site_path = v("dvPath");
+    d.ad_domain = v("dvAd"); d.sql_server = v("dvSql");
+    d.timesheet_db = v("dvTsDb"); d.timesheet_table = v("dvTsTable"); d.employee_db = v("dvEmpDb"); d.employee_table = v("dvEmpTable"); d.sharepoint_hostname = v("dvHost"); d.site_path = v("dvPath");
     d.access = v("dvAccess").split(/[\n,;]+/).map(x => x.trim()).filter(Boolean);
     d.enabled = document.getElementById("dvEnabled").checked;
     d.sites = [...document.querySelectorAll("tr.dv-site")].map(tr => ({

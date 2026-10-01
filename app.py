@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import sys
 import threading
 import traceback
@@ -953,16 +954,43 @@ class Api:
             raise RuntimeError("Timesheet is not configured for this division (no SQL server in its settings).")
         return srv
 
+    @staticmethod
+    def _sql_ident(name: str) -> str:
+        """[schema].[table] from 'schema.table'/'table'; rejects anything but letters, digits, underscores."""
+        parts = (name or "").strip().split(".")
+        if not parts or len(parts) > 2 or not all(re.match(r"^[A-Za-z0-9_]+$", p) for p in parts):
+            raise RuntimeError(f"Bad SQL name '{name}'.")
+        return ".".join(f"[{p}]" for p in parts)
+
+    def _ts_conf(self) -> dict:
+        """Server + database/table names for THIS division. Every part is required (no cross-division defaults)."""
+        cfg = self._client().cfg
+        server = self._ts_server()
+        out = {"server": server}
+        for key, label in (("timesheet_db", "timesheet database"), ("timesheet_table", "timesheet table"),
+                           ("employee_db", "employee database"), ("employee_table", "employee table")):
+            v = (cfg.get(key) or "").strip()
+            if not v:
+                raise RuntimeError(f"Timesheet is not fully configured for this division (missing {label}).")
+            out[key] = v
+        if not re.match(r"^[A-Za-z0-9_\-]+$", out["timesheet_db"]) or \
+                not re.match(r"^[A-Za-z0-9_\-]+$", out["employee_db"]):
+            raise RuntimeError("Database names may only contain letters, digits, - and _.")
+        out["ts_table"] = self._sql_ident(out["timesheet_table"])
+        out["emp_table"] = self._sql_ident(out["employee_table"])
+        return out
+
     def ts_search(self, query: str) -> dict:
-        """Find employees by first or last name in NBSEmployeeInfo.dbo.SAP_Interface."""
+        """Find employees by first or last name in the division's employee table."""
         q = (query or "").strip()
         if len(q) < 2:
             return {"ok": True, "employees": []}
         try:
             from sqltools import run
-            r = run(self._ts_server(), "NBSEmployeeInfo",
+            c = self._ts_conf()
+            r = run(c["server"], c["employee_db"],
                     "SELECT TOP 25 EmployeeID, FirstName, LastName, Department "
-                    "FROM dbo.SAP_Interface WHERE FirstName LIKE @q OR LastName LIKE @q "
+                    f"FROM {c['emp_table']} WHERE FirstName LIKE @q OR LastName LIKE @q "
                     "ORDER BY LastName, FirstName", {"q": f"%{q}%"})
             if "__error__" in r:
                 return {"ok": False, "error": r["__error__"]}
@@ -974,14 +1002,15 @@ class Api:
             return self._fail(e)
 
     def ts_weeks(self, employid: str) -> dict:
-        """Last 8 weeks' lock status for an employee from NBSTimesheet.dbo.WeekLocked."""
+        """Last 8 weeks' lock status for an employee from the division's timesheet WeekLocked table."""
         emp = (employid or "").strip()
         if not emp:
             return {"ok": False, "error": "No employee id."}
         try:
             from sqltools import run
-            r = run(self._ts_server(), "NBSTimesheet",
-                    "SELECT TOP 8 FiscalYear, FiscalWeek, Locked FROM dbo.WeekLocked "
+            c = self._ts_conf()
+            r = run(c["server"], c["timesheet_db"],
+                    f"SELECT TOP 8 FiscalYear, FiscalWeek, Locked FROM {c['ts_table']} "
                     "WHERE EmployID = @emp ORDER BY FiscalYear DESC, FiscalWeek DESC", {"emp": emp})
             if "__error__" in r:
                 return {"ok": False, "error": r["__error__"]}
@@ -1011,8 +1040,9 @@ class Api:
             from sqltools import run
             # Only flip Locked — leave ModifiedBy/ModifiedDate as they were (per request).
             # Who unlocked it is still captured in the shared hub audit log below.
-            r = run(self._ts_server(), "NBSTimesheet",
-                    "UPDATE dbo.WeekLocked SET Locked = 0 "
+            c = self._ts_conf()
+            r = run(c["server"], c["timesheet_db"],
+                    f"UPDATE {c['ts_table']} SET Locked = 0 "
                     "WHERE EmployID = @emp AND FiscalYear = @fy AND FiscalWeek = @fw AND Locked = 1",
                     {"emp": emp, "fy": fy, "fw": fw}, nonquery=True)
             if "__error__" in r:

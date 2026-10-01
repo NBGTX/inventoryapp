@@ -6,7 +6,8 @@ exactly as before. Later the same shape can be loaded from a central SharePoint 
 
 Division keys:
   id, name, company_name (Entra companyName), intune_category, sharepoint_hostname,
-  site_path, lists, ad_domain, sql_server, legacy_data (True = keep the original
+  site_path, lists, ad_domain, sql_server, timesheet_db, timesheet_table, employee_db, employee_table,
+  legacy_data (True = keep the original
   _EndpointHub folder), sites: [{code, name, city_prefixes[], device_prefixes[]}]
 """
 from __future__ import annotations
@@ -27,6 +28,8 @@ _NBGW_DEFAULT = {
     "lists": {},
     "ad_domain": "bg.nucorsteel.local",
     "sql_server": "BGBRISQL07",
+    "timesheet_db": "NBSTimesheet", "timesheet_table": "dbo.WeekLocked",
+    "employee_db": "NBSEmployeeInfo", "employee_table": "dbo.SAP_Interface",
     "legacy_data": True,
     "sites": [
         {"code": "LTR", "name": "Lathrop, CA", "city_prefixes": ["lathrop"],
@@ -105,7 +108,7 @@ def find(registry: list[dict], div_id: str | None) -> dict:
 def public(d: dict) -> dict:
     """Division fields safe/useful to send to the UI."""
     return {"id": d["id"], "name": d["name"], "company_name": d["company_name"],
-            "ad_domain": d.get("ad_domain", ""), "has_timesheet": bool(d.get("sql_server")),
+            "ad_domain": d.get("ad_domain", ""), "has_timesheet": all(d.get(k) for k in ("sql_server", "timesheet_db", "timesheet_table", "employee_db", "employee_table")),
             "sites": [{"code": s["code"], "name": s.get("name", s["code"])} for s in d.get("sites", [])]}
 
 

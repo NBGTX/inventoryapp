@@ -15,7 +15,8 @@ DEV = {"Division": "text*", "Manufacturer": "text", "Model": "text", "Site Tag":
 SPEC = {
     "divisions": {"Display Name": "text", "Company Name": "text", "Intune Category": "text", "SharePoint Host": "text",
                   "Site Path": "text", "AD Domain": "text", "SQL Server": "text", "Sites JSON": "note",
-                  "Access JSON": "note", "Enabled": "any"},
+                  "Access JSON": "note", "Enabled": "any",
+                  "Timesheet DB": "text", "Timesheet Table": "text", "Employee DB": "text", "Employee Table": "text"},
     "new_stock": {**DEV, "Status": "text", "Date Added": "text"},
     "in_use": {**DEV, "Device Name": "text", "Primary User": "text", "OS Version": "text", "OS Install Date": "text",
                "Last Sign In": "text", "MFA": "text"},

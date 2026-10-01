@@ -235,7 +235,11 @@ class GraphClient:
                     "lists": d.get("lists") or base("lists") or {},
                     "intune_device_category": d.get("intune_category") or base("intune_device_category"),
                     "ad_domain": d.get("ad_domain") or base("ad_domain"),
-                    "timesheet_sql_server": d.get("sql_server") or base("timesheet_sql_server")})
+                    "timesheet_sql_server": d.get("sql_server") or base("timesheet_sql_server"),
+                    # Timesheet database/table names are per division and have NO fallback (an unset value
+                    # must disable the tool, never point it at another division's database).
+                    "timesheet_db": d.get("timesheet_db") or "", "timesheet_table": d.get("timesheet_table") or "",
+                    "employee_db": d.get("employee_db") or "", "employee_table": d.get("employee_table") or ""})
         if self._central:     # all divisions share the central site + lists
             cfg["sharepoint_hostname"] = central.get("site_host") or cfg.get("sharepoint_hostname")
             cfg["site_path"] = central["site_path"]
@@ -489,6 +493,8 @@ class GraphClient:
                 "name": g("Display Name"), "company_name": g("Company Name"),
                 "intune_category": g("Intune Category"), "sharepoint_hostname": g("SharePoint Host"),
                 "site_path": g("Site Path"), "ad_domain": g("AD Domain"), "sql_server": g("SQL Server"),
+                "timesheet_db": g("Timesheet DB"), "timesheet_table": g("Timesheet Table"),
+                "employee_db": g("Employee DB"), "employee_table": g("Employee Table"),
             }.items() if v})
             base["id"] = did
             base.setdefault("name", did)
@@ -551,6 +557,8 @@ class GraphClient:
             out.append({"id": did.lower(), "name": g("Display Name"), "company_name": g("Company Name"),
                         "intune_category": g("Intune Category"), "sharepoint_hostname": g("SharePoint Host"),
                         "site_path": g("Site Path"), "ad_domain": g("AD Domain"), "sql_server": g("SQL Server"),
+                        "timesheet_db": g("Timesheet DB"), "timesheet_table": g("Timesheet Table"),
+                        "employee_db": g("Employee DB"), "employee_table": g("Employee Table"),
                         "sites": j("Sites JSON"), "access": j("Access JSON"),
                         "enabled": g("Enabled").lower() not in ("no", "false", "0")})
         return sorted(out, key=lambda d: d["name"].lower())
@@ -590,6 +598,21 @@ class GraphClient:
                   col("SQL Server"): str(d.get("sql_server") or "").strip(),
                   col("Sites JSON"): json.dumps(sites), col("Access JSON"): json.dumps(access),
                   col("Enabled"): "Yes" if d.get("enabled", True) else "No"}
+        # Timesheet DB/table names: validated, and written only if the list actually has those columns.
+        ident = re.compile(r"^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)?$")
+        missing = []
+        for key, disp in (("timesheet_db", "Timesheet DB"), ("timesheet_table", "Timesheet Table"),
+                          ("employee_db", "Employee DB"), ("employee_table", "Employee Table")):
+            val = str(d.get(key) or "").strip()
+            if val and not ident.match(val):
+                raise GraphError(f"{disp}: letters, digits and underscores only (a table may be schema.name).")
+            if disp.lower() in cmap:
+                fields[cmap[disp.lower()]] = val
+            elif val:
+                missing.append(disp)
+        if missing:
+            raise GraphError("The central Divisions list has no column for: " + ", ".join(missing) +
+                             ". Add them as Single line of text (see docs/MANUAL_LIST_SETUP.md), then save again.")
         site = self._ensure_site()
         lid = self._list_id("divisions")
         cur = next((it for it in self._items_raw("divisions")

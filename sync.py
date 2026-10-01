@@ -532,6 +532,13 @@ def main() -> None:
     commit = "--commit" in sys.argv
     gc = GraphClient()
     gc.sign_in(interactive=True)
+    if "--division" in sys.argv:          # python sync.py --division nbgtx [--enrich] [--commit]
+        want = sys.argv[sys.argv.index("--division") + 1] if sys.argv.index("--division") + 1 < len(sys.argv) else ""
+        gc.refresh_registry(force=True)
+        gc.set_division(want, persist=False)
+        if gc.division["id"] != want:
+            print(f"Unknown division '{want}'. Known: {', '.join(d['id'] for d in gc.registry)}")
+            return
     if "--enrich" in sys.argv:
         return main_enrich(gc, commit)
     result = run_sync(gc, commit=commit)

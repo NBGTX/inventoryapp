@@ -54,3 +54,59 @@ class DivisionGuards(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TimesheetNames(unittest.TestCase):
+    def conf(self, **extra):
+        gc = make_client(central=False)
+        gc.registry.append(dict({"id": "nbgtx", "name": "TX", "company_name": "c", "sites": [], "lists": {}, "legacy_data": False,
+                                 "sql_server": "TXSQL01", "timesheet_db": "TXTime", "timesheet_table": "dbo.Locks",
+                                 "employee_db": "TXEmp", "employee_table": "hr.People"}, **extra))
+        gc.set_division("nbgtx", persist=False)
+        api = app.Api()
+        api._gc = gc
+        return api
+
+    def test_all_four_names_come_from_the_division(self):
+        c = self.conf()._ts_conf()
+        self.assertEqual((c["server"], c["timesheet_db"], c["employee_db"]), ("TXSQL01", "TXTime", "TXEmp"))
+        self.assertEqual((c["ts_table"], c["emp_table"]), ("[dbo].[Locks]", "[hr].[People]"))
+
+    def test_missing_names_disable_the_tool_instead_of_defaulting(self):
+        for k in ("timesheet_db", "timesheet_table", "employee_db", "employee_table"):
+            with self.assertRaises(RuntimeError) as cm:
+                self.conf(**{k: ""})._ts_conf()
+            self.assertIn("not fully configured", str(cm.exception))
+
+    def test_injection_in_names_is_rejected(self):
+        for bad in ("dbo.Locks; DROP TABLE x", "a.b.c", "x y", "dbo.[Locks]", ""):
+            with self.assertRaises(RuntimeError):
+                app.Api._sql_ident(bad)
+        with self.assertRaises(RuntimeError):
+            self.conf(timesheet_db="db;DROP")._ts_conf()
+
+    def test_queries_use_the_division_names_and_stay_parameterized(self):
+        import sqltools
+        seen = []
+        orig = sqltools.run
+        sqltools.run = lambda server, db, sql, params=None, nonquery=False, timeout=45: (seen.append((server, db, sql, params)), {"rows": []})[1]
+        try:
+            api = self.conf()
+            api.ts_weeks("E1")
+            api.ts_search("smith")
+        finally:
+            sqltools.run = orig
+        self.assertEqual(seen[0][:2], ("TXSQL01", "TXTime"))
+        self.assertIn("FROM [dbo].[Locks]", seen[0][2])
+        self.assertEqual(seen[0][3], {"emp": "E1"})
+        self.assertEqual(seen[1][:2], ("TXSQL01", "TXEmp"))
+        self.assertIn("FROM [hr].[People]", seen[1][2])
+        self.assertEqual(seen[1][3], {"q": "%smith%"})
+
+    def test_legacy_nbgw_keeps_its_original_names(self):
+        gc = make_client(central=False)
+        api = app.Api()
+        api._gc = gc
+        c = api._ts_conf()
+        self.assertEqual((c["timesheet_db"], c["ts_table"], c["employee_db"], c["emp_table"]),
+                         ("NBSTimesheet", "[dbo].[WeekLocked]", "NBSEmployeeInfo", "[dbo].[SAP_Interface]"))

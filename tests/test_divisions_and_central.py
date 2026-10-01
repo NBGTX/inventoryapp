@@ -139,3 +139,49 @@ class Registry(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DivisionTimesheetColumns(unittest.TestCase):
+    def setUp(self):
+        self.gc = make_client()
+        cols = dict(_env.DEFAULT_COLS)
+        cols.update({"timesheet db": "field_20", "timesheet table": "field_21", "employee db": "field_22", "employee table": "field_23"})
+        self.site = FakeSite(self.gc, colmaps={"divisions": cols})
+        self.gc._base_cfg["super_admins"] = ["me@nucor.com"]
+        self.gc.account_upn = "me@nucor.com"
+
+    def row(self, **kw):
+        d = {"id": "nbgtx", "name": "TX", "company_name": "NBG - Terrell", "intune_category": "NBGTX", "sites": [],
+             "timesheet_db": "TXTime", "timesheet_table": "dbo.Locks", "employee_db": "TXEmp", "employee_table": "dbo.People"}
+        d.update(kw)
+        return d
+
+    def test_saved_and_read_back_through_the_registry(self):
+        self.gc.save_division_row(self.row())
+        post = [s for s in self.site.sent if s[0] == "POST"][-1][2]["fields"]
+        self.assertEqual((post["field_20"], post["field_21"], post["field_22"], post["field_23"]),
+                         ("TXTime", "dbo.Locks", "TXEmp", "dbo.People"))
+        self.site.add("divisions", Title="nbgtx", DisplayName="TX", CompanyName="NBG - Terrell", IntuneCategory="NBGTX",
+                      field_20="TXTime", field_21="dbo.Locks", field_22="TXEmp", field_23="dbo.People", Enabled="Yes")
+        self.gc._col_map = lambda k: {"display name": "DisplayName", "company name": "CompanyName", "intune category": "IntuneCategory",
+                                      "enabled": "Enabled", "timesheet db": "field_20", "timesheet table": "field_21",
+                                      "employee db": "field_22", "employee table": "field_23"}
+        self.gc.refresh_registry(force=True)
+        tx = next(d for d in self.gc.registry if d["id"] == "nbgtx")
+        self.assertEqual((tx["timesheet_db"], tx["employee_table"]), ("TXTime", "dbo.People"))
+        self.gc.set_division("nbgtx", persist=False)
+        self.assertEqual(self.gc.cfg["timesheet_db"], "TXTime")
+
+    def test_names_with_bad_characters_are_rejected(self):
+        with self.assertRaises(graph.GraphError):
+            self.gc.save_division_row(self.row(timesheet_table="dbo.Locks; DROP"))
+
+    def test_clear_error_when_the_list_has_no_such_columns(self):
+        gc = make_client()
+        FakeSite(gc)                                     # default columns: no Timesheet/Employee columns
+        gc._base_cfg["super_admins"] = ["me@nucor.com"]
+        gc.account_upn = "me@nucor.com"
+        with self.assertRaises(graph.GraphError) as cm:
+            gc.save_division_row(self.row())
+        self.assertIn("Timesheet DB", str(cm.exception))
+        gc.save_division_row(self.row(timesheet_db="", timesheet_table="", employee_db="", employee_table=""))   # blank is fine
