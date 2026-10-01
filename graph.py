@@ -163,6 +163,14 @@ def load_config(path: str | None = None) -> dict:
     return cfg
 
 
+def clean_upn(v) -> str:
+    """Intune sometimes returns a user as <32 hex chars><name>@domain (e.g. a stale object id glued on).
+    Strip that prefix so the value is a real, matchable UPN. Anything else is returned unchanged."""
+    v = str(v or "").strip()
+    m = re.match(r"^[0-9a-fA-F]{32}(?=[A-Za-z][A-Za-z0-9._-]*@)", v)
+    return v[32:] if m else v
+
+
 def _bytes_to_gb(value) -> str:
     try:
         gb = round(int(value) / (1024 ** 3))
@@ -905,7 +913,7 @@ class GraphClient:
             "manufacturer": d.get("manufacturer", ""),
             "model": d.get("model", ""),
             "device_name": d.get("deviceName", ""),
-            "user": d.get("userPrincipalName") or "",
+            "user": clean_upn(d.get("userPrincipalName")),
             "user_display": d.get("userDisplayName") or "",
             "os_version": d.get("osVersion") or "",
             "os": d.get("operatingSystem") or "",
@@ -953,7 +961,7 @@ class GraphClient:
                 "manufacturer": d.get("manufacturer", ""),
                 "model": d.get("model", ""),
                 "device_name": d.get("deviceName", ""),
-                "user": d.get("userPrincipalName") or "",
+                "user": clean_upn(d.get("userPrincipalName")),
                 "os_version": d.get("osVersion") or "",
                 "os_install": d.get("enrolledDateTime") or "",
                 "last_checkin": d.get("lastSyncDateTime") or "",
@@ -1089,7 +1097,7 @@ class GraphClient:
         url = f"{GRAPH}/reports/authenticationMethods/userRegistrationDetails?$top=500"
         try:
             for d in self._get_all(url):
-                upn = (d.get("userPrincipalName") or "").strip().lower()
+                upn = clean_upn(d.get("userPrincipalName")).strip().lower()
                 if upn:
                     out[upn] = {"registered": bool(d.get("isMfaRegistered")),
                                 "capable": bool(d.get("isMfaCapable"))}
@@ -1417,7 +1425,7 @@ class GraphClient:
                 "device_name": name,
                 "manufacturer": d.get("manufacturer", ""),
                 "model": d.get("model", ""),
-                "user": d.get("userPrincipalName") or "",
+                "user": clean_upn(d.get("userPrincipalName")),
                 "os_version": d.get("osVersion") or "",
                 # Intune has no true OS-install date; enrolledDateTime is the proxy.
                 "os_install": d.get("enrolledDateTime") or "",

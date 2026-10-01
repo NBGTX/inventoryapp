@@ -231,3 +231,16 @@ class RevParsing(unittest.TestCase):
     def test_number_column_values_from_sharepoint(self):
         for raw, want in ((1, 1), (1.0, 1), ("1", 1), ("1.0", 1), ("", 0), (None, 0), ("x", 0), (12.0, 12)):
             self.assertEqual(hubstore._int(raw), want, raw)
+
+
+class CleanUpn(unittest.TestCase):
+    def test_strips_glued_hex_prefix_only(self):
+        c = graph.clean_upn
+        self.assertEqual(c("abb60fd585a34220a66f7169bdee9126Don.Corbell@nucor.com"), "Don.Corbell@nucor.com")
+        self.assertEqual(c("911f3fdb9cf8463d8b7238ba0cc4c910navjot.singh@nucor.com"), "navjot.singh@nucor.com")
+        self.assertEqual(c("jane.doe@nucor.com"), "jane.doe@nucor.com")
+        self.assertEqual(c("  Jane.Doe@nucor.com "), "Jane.Doe@nucor.com")
+        self.assertEqual(c(None), "")
+        self.assertEqual(c(""), "")
+        self.assertEqual(c("abb60fd585a34220a66f7169bdee9126@nucor.com"), "abb60fd585a34220a66f7169bdee9126@nucor.com")  # nothing after the hex: leave it
+        self.assertEqual(c("1234567890abcdef@nucor.com"), "1234567890abcdef@nucor.com")     # short hex name: leave it

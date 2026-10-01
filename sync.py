@@ -507,10 +507,33 @@ def populate_mfa(gc: GraphClient, commit: bool = True, force: bool = False) -> d
             "unresolved": unresolved, "errors": errors}
 
 
+def main_enrich(gc, commit: bool) -> None:
+    """python sync.py --enrich [--commit] [--cap N]: fill blank user/site/specs/warranty/MFA on In Use rows."""
+    cap = None
+    if "--cap" in sys.argv:
+        try:
+            cap = int(sys.argv[sys.argv.index("--cap") + 1])
+        except (IndexError, ValueError):
+            print("--cap needs a number")
+            return
+    r = enrich_in_use(gc, commit=commit, cap=cap)
+    print(f"\n{'COMMITTED' if commit else 'DRY RUN'} enrich ({gc.division['id']}): "
+          f"specs/warranty for {r['enriched']} device(s), user for {r['users']}, site for {r['sites']}, "
+          f"MFA for {r['mfas']}; {r['remaining']} specs still pending (vendor calls are capped per run: --cap N).")
+    for e in r["errors"][:5]:
+        print(f"  !! {str(e)[:300]}")
+    if len(r["errors"]) > 5:
+        print(f"  ... and {len(r['errors']) - 5} more error(s)")
+    if not commit:
+        print("\nRe-run with --commit to apply.")
+
+
 def main() -> None:
     commit = "--commit" in sys.argv
     gc = GraphClient()
     gc.sign_in(interactive=True)
+    if "--enrich" in sys.argv:
+        return main_enrich(gc, commit)
     result = run_sync(gc, commit=commit)
 
     print(f"\n{'COMMITTED' if commit else 'DRY RUN'} - saw {result['count']} {gc.division['intune_category']} device(s) in Intune; "
