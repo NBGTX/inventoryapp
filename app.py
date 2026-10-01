@@ -104,6 +104,24 @@ class Api:
                 self._hub = Hub(division=gc.division)
         return self._hub
 
+    # ---- division admin (super admin) ----------------------------------------
+    def get_division_admin(self) -> dict:
+        try:
+            gc = self._client()
+            if not gc.is_super_admin():
+                return {"ok": True, "super_admin": False, "divisions": []}
+            return {"ok": True, "super_admin": True, "divisions": gc.division_rows()}
+        except Exception as e:
+            return self._fail(e)
+
+    def save_division(self, division: dict) -> dict:
+        """Create/update one division in the central Divisions list (super admin only)."""
+        try:
+            self._client().save_division_row(division or {})
+            return {"ok": True}
+        except Exception as e:
+            return self._fail(e)
+
     # ---- master settings (super admin) ---------------------------------------
     def get_master_settings(self) -> dict:
         """Super admins: every setting (secret values masked). Others: just super_admin=False."""

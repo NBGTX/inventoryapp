@@ -81,6 +81,7 @@ DEFAULT_CENTRAL_LISTS = {
     "log": "Inventory - Activity Log",
     "hub_items": "Inventory - Hub Items",
     "master_settings": "Inventory - Master Settings",
+    "hub_files": "Inventory - Hub Files",      # document library: setup HTML etc.
 }
 _DIVISION_SCOPED = ("new_stock", "in_use", "log")
 SCOPES = [
@@ -482,6 +483,93 @@ class GraphClient:
                 self._store = None
             self._apply_division()
         self._reg_at = _t.monotonic()
+
+    # ---- division admin (super admin edits the central Divisions list) -------
+    def _require_division_admin(self) -> None:
+        if not self._central:
+            raise GraphError("Division admin needs the central site (config.json 'central').")
+        if self._local:
+            raise GraphError("Local data mode: switch to Live to change divisions.")
+        if not self.is_super_admin():
+            raise GraphError("Only a super admin can change divisions.")
+
+    def division_rows(self) -> list:
+        """Every Divisions row (including disabled ones) in editor shape. Super admin only."""
+        import json
+        self._require_division_admin()
+        cmap = self._col_map("divisions")
+
+        def col(d):
+            return cmap.get(d.lower(), d.replace(" ", ""))
+        out = []
+        for it in self._items_raw("divisions"):
+            f = it.get("fields", {}) or {}
+            did = str(f.get("Title") or "").strip()
+            if not did or did.upper().startswith("EXAMPLE"):
+                continue
+
+            def g(name, f=f):
+                return str(f.get(col(name)) or "").strip()
+
+            def j(name, f=f):
+                try:
+                    v = json.loads(g(name) or "[]")
+                    return v if isinstance(v, list) else []
+                except Exception:
+                    return []
+            out.append({"id": did.lower(), "name": g("Display Name"), "company_name": g("Company Name"),
+                        "intune_category": g("Intune Category"), "sharepoint_hostname": g("SharePoint Host"),
+                        "site_path": g("Site Path"), "ad_domain": g("AD Domain"), "sql_server": g("SQL Server"),
+                        "sites": j("Sites JSON"), "access": j("Access JSON"),
+                        "enabled": g("Enabled").lower() not in ("no", "false", "0")})
+        return sorted(out, key=lambda d: d["name"].lower())
+
+    def save_division_row(self, d: dict) -> None:
+        """Create or update one Divisions row (validated). Super admin only."""
+        import json
+        import re
+        self._require_division_admin()
+        did = str(d.get("id") or "").strip().lower()
+        if not re.match(r"^[a-z0-9][a-z0-9_-]{1,19}$", did):
+            raise GraphError("Division id: 2-20 characters, lowercase letters, digits, - or _.")
+        name = str(d.get("name") or "").strip()
+        company = str(d.get("company_name") or "").strip()
+        cat = str(d.get("intune_category") or "").strip()
+        if not name or not company or not cat:
+            raise GraphError("Display name, Entra company name and Intune category are required.")
+        sites = []
+        for s in d.get("sites") or []:
+            code = str(s.get("code") or "").strip().upper()
+            if not re.match(r"^[A-Z0-9]{2,6}$", code):
+                raise GraphError(f"Site code '{code}': 2-6 letters or digits.")
+            if code in [x["code"] for x in sites] or code == "OTHER":
+                raise GraphError(f"Site code '{code}' is duplicated or reserved.")
+            clean = lambda v: [str(x).strip() for x in (v or []) if str(x).strip()]
+            sites.append({"code": code, "name": str(s.get("name") or code).strip(),
+                          "city_prefixes": clean(s.get("city_prefixes")), "device_prefixes": clean(s.get("device_prefixes"))})
+        access = [str(a).strip().lower() for a in d.get("access") or [] if str(a).strip()]
+        cmap = self._col_map("divisions")
+
+        def col(x):
+            return cmap.get(x.lower(), x.replace(" ", ""))
+        fields = {"Title": did, col("Display Name"): name, col("Company Name"): company, col("Intune Category"): cat,
+                  col("SharePoint Host"): str(d.get("sharepoint_hostname") or "").strip(),
+                  col("Site Path"): str(d.get("site_path") or "").strip(),
+                  col("AD Domain"): str(d.get("ad_domain") or "").strip(),
+                  col("SQL Server"): str(d.get("sql_server") or "").strip(),
+                  col("Sites JSON"): json.dumps(sites), col("Access JSON"): json.dumps(access),
+                  col("Enabled"): "Yes" if d.get("enabled", True) else "No"}
+        site = self._ensure_site()
+        lid = self._list_id("divisions")
+        cur = next((it for it in self._items_raw("divisions")
+                    if str((it.get("fields") or {}).get("Title") or "").strip().lower() == did), None)
+        if cur:
+            self._req("PATCH", f"{GRAPH}/sites/{site}/lists/{lid}/items/{cur['id']}/fields", json=fields)
+        else:
+            self._req("POST", f"{GRAPH}/sites/{site}/lists/{lid}/items", json={"fields": fields})
+        self._reg_at = 0.0
+        self.refresh_registry(force=True)
+        self.add_log("Division changed", did, "", actor=self.account_name or "", details="division settings saved")
 
     def visible_registry(self) -> list:
         """Divisions this user may switch to. A division's `access` list holds emails ('*' = all);
@@ -1627,7 +1715,7 @@ class GraphClient:
                 actor: str = "", details: str = "") -> None:
         """Write an audit entry. Never raises - logging must not block the action."""
         try:
-            when = _dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+            when = _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds") + "Z"
             fields = {"Title": f"{action} {serial}".strip(), "Action": action, "Serial": serial,
                       "Model": model, "Actor": actor, "Details": details, "LoggedAt": when}
             self._create_item("log", fields)

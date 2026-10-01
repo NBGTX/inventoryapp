@@ -379,7 +379,7 @@ const MasterSettings = {
           <p style="margin-top:0;color:var(--muted);font-size:13px;">Stored in the central Master Settings list. Secret values are never shown here. Anyone who can run the app can use them.</p>
           <table class="ms-table"><tr><th>Setting</th><th>Value</th><th></th></tr>${rows || "<tr><td colspan='3'>No settings yet.</td></tr>"}</table>
         </div>
-        <div class="modal-foot"><button class="ghost" onclick="MasterSettings.edit(-1)">Add setting</button><button class="primary" onclick="MasterSettings.close()">Close</button></div>
+        <div class="modal-foot"><button class="ghost" onclick="DivisionAdmin.open()">Divisions…</button><button class="ghost" onclick="MasterSettings.edit(-1)">Add setting</button><button class="primary" onclick="MasterSettings.close()">Close</button></div>
       </div></div>`;
   },
   close() { document.getElementById("modalRoot").innerHTML = ""; },
@@ -393,6 +393,87 @@ const MasterSettings = {
     const r = await Backend.call("set_master_setting", key.trim(), value, secret, cur.description || "");
     if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
     App.toast("Saved " + key);
+    this.open();
+  },
+};
+
+/* ---- division admin (super admin): add / edit divisions ------------------- */
+const DivisionAdmin = {
+  rows: [], cur: null,
+  async open() {
+    const r = await Backend.call("get_division_admin");
+    if (!r || !r.ok || !r.super_admin) return App.toast((r && r.error) || "Super admin only.", true);
+    this.rows = r.divisions;
+    const list = this.rows.map((d, i) => `<tr><td>${esc(d.name)}</td><td>${esc(d.id)}</td><td>${d.enabled ? "Yes" : "Hidden"}</td>
+      <td><button class="ghost" onclick="DivisionAdmin.edit(${i})">Edit</button></td></tr>`).join("");
+    document.getElementById("modalRoot").innerHTML =
+      `<div class="overlay"><div class="modal" style="width:680px;max-width:94vw;">
+        <div class="modal-head"><h3>Divisions</h3><button onclick="DivisionAdmin.close()">&times;</button></div>
+        <div class="modal-body">
+          <p style="margin-top:0;color:var(--muted);font-size:13px;">Stored in the central Divisions list. Changes show up for users within about 5 minutes (or on restart).</p>
+          <table class="ms-table"><tr><th>Name</th><th>Id</th><th>Visible</th><th></th></tr>${list || "<tr><td colspan='4'>No divisions yet.</td></tr>"}</table>
+        </div>
+        <div class="modal-foot"><button class="ghost" onclick="DivisionAdmin.edit(-1)">Add division</button><button class="primary" onclick="DivisionAdmin.close()">Close</button></div>
+      </div></div>`;
+  },
+  close() { document.getElementById("modalRoot").innerHTML = ""; },
+  edit(i) {
+    this.cur = i >= 0 ? JSON.parse(JSON.stringify(this.rows[i])) :
+      { id: "", name: "", company_name: "", intune_category: "", sharepoint_hostname: "nucor.sharepoint.com", site_path: "",
+        ad_domain: "", sql_server: "", sites: [{ code: "", name: "", city_prefixes: [], device_prefixes: [] }], access: [], enabled: true, _new: true };
+    this.form();
+  },
+  form() {
+    const d = this.cur, f = (id, label, val, extra) => `<div class="field"><label>${label}</label><input id="${id}" value="${attr(val || "")}" ${extra || ""}></div>`;
+    const siteRows = d.sites.map((s, k) => `<tr class="dv-site">
+        <td><input class="dv-code" value="${attr(s.code)}" placeholder="TER" style="width:70px"></td>
+        <td><input class="dv-sname" value="${attr(s.name)}" placeholder="Terrell, TX"></td>
+        <td><input class="dv-city" value="${attr((s.city_prefixes || []).join(", "))}" placeholder="terrell"></td>
+        <td><input class="dv-dev" value="${attr((s.device_prefixes || []).join(", "))}" placeholder="BGTER, BGTRL"></td>
+        <td><button class="ghost" onclick="DivisionAdmin.delSite(${k})">&times;</button></td></tr>`).join("");
+    document.getElementById("modalRoot").innerHTML =
+      `<div class="overlay"><div class="modal" style="width:760px;max-width:96vw;">
+        <div class="modal-head"><h3>${d._new ? "Add division" : "Edit " + esc(d.name)}</h3><button onclick="DivisionAdmin.open()">&times;</button></div>
+        <div class="modal-body" style="max-height:72vh;overflow:auto;">
+          ${f("dvId", "Id (short, lowercase — cannot change later)", d.id, d._new ? "" : "disabled")}
+          ${f("dvName", "Display name", d.name)}
+          ${f("dvCompany", "Entra company name (exact — people are scoped by it)", d.company_name)}
+          ${f("dvCat", "Intune device category (exact)", d.intune_category)}
+          ${f("dvAd", "AD domain (optional)", d.ad_domain)}
+          ${f("dvSql", "Timesheet SQL server (optional)", d.sql_server)}
+          ${f("dvHost", "Old SharePoint host (migration source, optional)", d.sharepoint_hostname)}
+          ${f("dvPath", "Old SharePoint site path (migration source, optional)", d.site_path)}
+          <div class="field"><label>Who can see this division (emails, one per line; empty = everyone, * = everyone)</label>
+            <textarea id="dvAccess" rows="3" style="width:100%;box-sizing:border-box;background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);">${esc((d.access || []).join("\n"))}</textarea></div>
+          <div class="field"><label><input type="checkbox" id="dvEnabled" ${d.enabled ? "checked" : ""}> Visible (untick to hide this division)</label></div>
+          <h4 style="margin:14px 0 6px">Sites</h4>
+          <p style="margin:0 0 6px;color:var(--muted);font-size:12.5px;">Code = short tag shown in the app. City prefix = how a user's Entra city maps to the site. Device prefix = start of the device name (comma separated).</p>
+          <table class="ms-table"><tr><th>Code</th><th>Name</th><th>City starts with</th><th>Device name starts with</th><th></th></tr>${siteRows}</table>
+          <button class="ghost" style="margin-top:8px" onclick="DivisionAdmin.addSite()">+ Add site</button>
+        </div>
+        <div class="modal-foot"><button class="ghost" onclick="DivisionAdmin.open()">Cancel</button><button class="primary" onclick="DivisionAdmin.save()">Save</button></div>
+      </div></div>`;
+  },
+  collect() {
+    const v = id => (document.getElementById(id).value || "").trim(), d = this.cur;
+    const list = t => t.split(",").map(x => x.trim()).filter(Boolean);
+    d.id = v("dvId").toLowerCase(); d.name = v("dvName"); d.company_name = v("dvCompany"); d.intune_category = v("dvCat");
+    d.ad_domain = v("dvAd"); d.sql_server = v("dvSql"); d.sharepoint_hostname = v("dvHost"); d.site_path = v("dvPath");
+    d.access = v("dvAccess").split(/[\n,;]+/).map(x => x.trim()).filter(Boolean);
+    d.enabled = document.getElementById("dvEnabled").checked;
+    d.sites = [...document.querySelectorAll("tr.dv-site")].map(tr => ({
+      code: tr.querySelector(".dv-code").value.trim().toUpperCase(), name: tr.querySelector(".dv-sname").value.trim(),
+      city_prefixes: list(tr.querySelector(".dv-city").value), device_prefixes: list(tr.querySelector(".dv-dev").value) }));
+    return d;
+  },
+  addSite() { this.collect().sites.push({ code: "", name: "", city_prefixes: [], device_prefixes: [] }); this.form(); },
+  delSite(k) { this.collect().sites.splice(k, 1); this.form(); },
+  async save() {
+    const d = this.collect();
+    const r = await Backend.call("save_division", { ...d, sites: d.sites.filter(s => s.code) });
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+    App.toast("Saved " + d.name);
+    await Divisions.load();
     this.open();
   },
 };
@@ -4424,6 +4505,20 @@ const Hub = {
 
 /* ---- mock additions for the hub + dashboard (browser preview only) ------- */
 Object.assign(Mock, {
+  /* division admin - mirrors Api.get_division_admin / save_division */
+  _dv: [
+    { id: "nbgw", name: "NBGW - Nucor Buildings Group West", company_name: "Nucor Buildings Group West", intune_category: "NBGW", sharepoint_hostname: "nucor.sharepoint.com", site_path: "/sites/NBGW/systems", ad_domain: "bg.nucorsteel.local", sql_server: "BGBRISQL07", enabled: true, access: [],
+      sites: [{ code: "LTR", name: "Lathrop, CA", city_prefixes: ["lathrop"], device_prefixes: ["BGLTR", "BGCCN", "BGMOD"] }, { code: "BRI", name: "Brigham City, UT", city_prefixes: ["brigham"], device_prefixes: ["BGBRI"] }] },
+    { id: "nbgtx", name: "NBGTX - NBG Terrell", company_name: "NBG - Terrell", intune_category: "NBGTX", sharepoint_hostname: "", site_path: "", ad_domain: "", sql_server: "", enabled: true, access: [],
+      sites: [{ code: "TER", name: "Terrell, TX", city_prefixes: ["terrell"], device_prefixes: ["BGTER"] }] }],
+  async get_division_admin() { return { ok: true, super_admin: true, divisions: JSON.parse(JSON.stringify(this._dv)) }; },
+  async save_division(d) {
+    if (!/^[a-z0-9][a-z0-9_-]{1,19}$/.test(d.id || "")) return { ok: false, error: "Division id: 2-20 characters, lowercase letters, digits, - or _." };
+    if (!d.name || !d.company_name || !d.intune_category) return { ok: false, error: "Display name, Entra company name and Intune category are required." };
+    const i = this._dv.findIndex(x => x.id === d.id);
+    if (i >= 0) this._dv[i] = d; else this._dv.push(d);
+    return { ok: true };
+  },
   /* master settings - mirrors Api.get_master_settings / set_master_setting */
   _ms: [{ key: "lenovo_client_id", secret: true, is_set: true, value: "", description: "Lenovo warranty API key" },
         { key: "super_admins", secret: false, is_set: true, value: "demo@nucor.com", description: "Comma-separated emails" }],

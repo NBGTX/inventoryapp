@@ -116,7 +116,7 @@ class LocalStore:
         iid = "L" + uuid.uuid4().hex[:12]
         with self._c() as c:
             c.execute("INSERT INTO items(list_key, id, fields, created) VALUES(?,?,?,?)",
-                      (key, iid, json.dumps(fields), _dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"))
+                      (key, iid, json.dumps(fields), _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds") + "Z"))
         return iid
 
     def patch(self, key: str, item_id: str, fields: dict) -> None:

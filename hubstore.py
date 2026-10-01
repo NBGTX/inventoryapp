@@ -12,6 +12,9 @@ Row layout (one list, all divisions):
     Payload  plain-text chunk of the JSON (<= CHUNK chars)
     Rev      integer (stored as text) document revision, identical on every part
 
+Setup HTML and other non-JSON files ("blob" kind) are not rows: they are uploaded to the
+'Inventory - Hub Files' document library, one folder per division.
+
 Concurrency: every write bumps Rev. A write is rejected (HubConflict) if the stored Rev
 changed since THIS Hub instance last read the document, so two people editing the same
 document no longer silently overwrite each other. Readers re-read when parts disagree on
@@ -53,8 +56,57 @@ class SharePointHubStore:
         self._cache: dict = {}     # kind -> (t, {doc: (text, rev, rows)})
 
     # ------------------------------------------------ REST seam (overridden in tests)
-    def _col(self, display: str) -> str:
-        return self.gc._col_map("hub_items").get(display.lower(), display.replace(" ", ""))
+    def _col(self, display: str, key: str = "hub_items") -> str:
+        return self.gc._col_map(key).get(display.lower(), display.replace(" ", ""))
+
+    # ---- blobs: files in the Hub Files document library ----------------
+    def _blob_url(self, name: str, tail: str = "") -> str:
+        from urllib.parse import quote
+        from graph import GRAPH
+        gc = self.gc
+        site = gc._ensure_site()
+        lid = gc._list_id("hub_files")
+        path = quote(f"{gc.division['id']}/{name}", safe="/")
+        return f"{GRAPH}/sites/{site}/lists/{lid}/drive/root:/{path}{tail}"
+
+    def _blob_get(self, name: str):
+        from graph import GraphError
+        try:
+            return self.gc._req("GET", self._blob_url(name, ":/content")).content.decode("utf-8-sig")
+        except GraphError as e:
+            if "404" in str(e):
+                return None
+            raise
+
+    def _blob_head(self, name: str) -> bool:
+        from graph import GraphError
+        try:
+            self.gc._req("GET", self._blob_url(name, "?$select=id"))
+            return True
+        except GraphError as e:
+            if "404" in str(e):
+                return False
+            raise
+
+    def _blob_put(self, name: str, text: str) -> None:
+        from graph import GRAPH
+        gc = self.gc
+        item = gc._req("PUT", self._blob_url(name, ":/content"), data=text.encode("utf-8"),
+                       headers={"Content-Type": "application/octet-stream"}).json()
+        site = gc._ensure_site()
+        lid = gc._list_id("hub_files")
+        li = gc._req("GET", f"{GRAPH}/sites/{site}/lists/{lid}/drive/items/{item['id']}/listItem?$select=id").json()["id"]
+        gc._req("PATCH", f"{GRAPH}/sites/{site}/lists/{lid}/items/{li}/fields",
+                json={self._col("Division", "hub_files"): gc.division["id"], self._col("Kind", "hub_files"): "setup-html",
+                      self._col("Item Id", "hub_files"): name})
+
+    def _blob_del(self, name: str) -> None:
+        from graph import GraphError
+        try:
+            self.gc._req("DELETE", self._blob_url(name))
+        except GraphError as e:
+            if "404" not in str(e):
+                raise
 
     def _fetch_rows(self, kind: str) -> list:
         from graph import GRAPH
@@ -124,16 +176,26 @@ class SharePointHubStore:
         return docs
 
     def read(self, kind: str, doc: str):
+        if kind == "blob":
+            return self._blob_get(doc)
         e = self._docs(kind).get(doc)
         if e is None:
+            self._rev.setdefault((kind, doc), 0)     # we saw it missing: a creator that beats us is a conflict
             return None
         self._rev[(kind, doc)] = e[1]
         return e[0]
 
     def exists(self, kind: str, doc: str) -> bool:
-        return doc in self._docs(kind)
+        if kind == "blob":
+            return self._blob_head(doc)
+        present = doc in self._docs(kind)
+        if not present:
+            self._rev.setdefault((kind, doc), 0)
+        return present
 
     def list_docs(self, kind: str) -> list:
+        if kind == "blob":
+            return []                      # files are fetched by name, never listed
         out = []
         for doc, (text, rev, _rows) in self._docs(kind).items():
             self._rev[(kind, doc)] = rev
@@ -142,6 +204,9 @@ class SharePointHubStore:
 
     # ------------------------------------------------ writing
     def write(self, kind: str, doc: str, text: str) -> None:
+        if kind == "blob":
+            self._blob_put(doc, text)
+            return
         docs = self._docs(kind, force=True)
         e = docs.get(doc)
         cur_rev = e[1] if e else 0
@@ -169,6 +234,9 @@ class SharePointHubStore:
         self._rev[(kind, doc)] = new_rev
 
     def remove(self, kind: str, doc: str) -> None:
+        if kind == "blob":
+            self._blob_del(doc)
+            return
         e = self._docs(kind, force=True).get(doc)
         if e:
             self._apply([("delete", r["id"]) for r in e[2]])
@@ -194,7 +262,10 @@ def scan_folder(logs_dir: str, hub_dir: str):
         for name in sorted(os.listdir(logs_dir)):
             p = os.path.join(logs_dir, name)
             if os.path.isfile(p) and not name.lower().endswith((".tmp", ".json")):
-                yield "blob", name, _read(p)
+                try:
+                    yield "blob", name, _read(p)
+                except (OSError, UnicodeDecodeError):
+                    continue                       # not a text file: skip
 
 
 def _read(path: str) -> str:
