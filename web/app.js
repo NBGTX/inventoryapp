@@ -1120,7 +1120,7 @@ const Wizard = {
     document.getElementById("modalRoot").innerHTML =
       `<div class="overlay"><div class="modal">
         <div class="modal-head"><h3 id="wTitle">Add new machines</h3><button onclick="Wizard.close()">&times;</button></div>
-        <div class="modal-body"><div class="steps"><div id="ws1"></div><div id="ws2"></div><div id="ws3"></div></div><div id="wBody"></div></div>
+        <div class="modal-body">${Help.box("wizard")}<div class="steps"><div id="ws1"></div><div id="ws2"></div><div id="ws3"></div></div><div id="wBody"></div></div>
         <div class="modal-foot" id="wFoot"></div>
       </div></div>`;
     this.render();
@@ -1138,6 +1138,7 @@ const Wizard = {
         <div class="mfr-choices">
           <div class="opt ${this.mfr === "Dell" ? "sel" : ""}" onclick="Wizard.pick('Dell')">Dell</div>
           <div class="opt ${this.mfr === "Lenovo" ? "sel" : ""}" onclick="Wizard.pick('Lenovo')">Lenovo</div>
+          <div class="opt ${this.mfr === "HP" ? "sel" : ""}" onclick="Wizard.pick('HP')">HP</div>
         </div>`;
       foot.innerHTML = `<button class="ghost" onclick="Wizard.close()">Cancel</button>`;
     } else if (this.step === 2) {
@@ -2060,7 +2061,7 @@ const Dashboard = {
       `<div class="overlay"><div class="modal" style="width:960px;max-width:96vw;">
         <div class="modal-head"><h3>Upgrade Forecast — by site</h3><button onclick="Drill.close()">&times;</button></div>
         <div class="modal-body" style="max-height:74vh;overflow:auto;">
-          <p class="sub-note" style="margin:0 0 14px">Every device meeting upgrade criteria, by site. Open the Upgrade list to set priorities, add notes, and Begin Upgrade.</p>
+          
           <div class="up-plan-grid" style="grid-template-columns:repeat(${Math.max(1, Divisions.codes().length)},1fr)">${Divisions.codes().map(column).join("")}</div>
         </div>
         <div class="modal-foot"><button class="ghost" onclick="Drill.close()">Close</button>
@@ -2202,7 +2203,7 @@ const Dashboard = {
       `<div class="overlay"><div class="modal" style="width:860px;max-width:94vw;">
         <div class="modal-head"><h3>${esc(title)} — ${rows.length}</h3><button onclick="Drill.close()">&times;</button></div>
         <div class="modal-body" style="max-height:70vh;overflow:auto;">
-          <p class="sub-note" style="margin:0 0 12px">Set a department for any device. This maps the <b>model</b>, so every in-stock device of that model moves with it.</p>
+          ${Help.box("set-models")}
           ${body}</div></div></div>`;
   },
   async assignDept(model, dept) {
@@ -2300,8 +2301,9 @@ const HotSpares = {
       `<div class="overlay"><div class="modal hs-modal" style="width:960px;max-width:96vw;">
         <div class="modal-head"><h3>Hot Spares — imaged &amp; ready to deploy</h3><button onclick="HotSpares._close()">&times;</button></div>
         <div class="modal-body">
+          ${Help.box("hotspares")}
           <div class="hs-modal-bar">
-            <p class="sub-note" style="margin:0">${total} ready spare${total === 1 ? "" : "s"} for emergency swaps / loaners${warn ? ` · <span class="hs-warn-txt">${warn} need attention</span>` : ""}. Click ＋ on an entry for full details.</p>
+            <p class="sub-note" style="margin:0">${total} ready spare${total === 1 ? "" : "s"} for emergency swaps / loaners${warn ? ` · <span class="hs-warn-txt">${warn} need attention</span>` : ""}.</p>
             <button class="primary" onclick="HotSpares.openAdd()">＋ Add hot spare</button>
           </div>
           <div class="hs-grid">${cols}</div>
@@ -2504,7 +2506,7 @@ const BGTools = {
     p.innerHTML =
       `<div class="chart-card" style="max-width:640px">
         <h4 style="margin:0 0 4px">Timesheet Fix</h4>
-        <p class="sub-note" style="margin:0 0 14px">Search an employee to see the last 8 weeks' timesheet lock status, and unlock a week. Results appear as you type.</p>
+        ${Help.box("bgt-timesheet")}
         <div style="display:flex;gap:8px;align-items:flex-end">
           <div class="field" style="flex:1;margin:0"><label>Employee — first or last name</label>
             <input id="bgtSearch" placeholder="Start typing a name…" autocomplete="off" oninput="BGTools.typed()" onkeydown="if(event.key==='Enter'){clearTimeout(BGTools._typeTimer);BGTools.search()}"></div>
@@ -2597,7 +2599,7 @@ const BGTools = {
     p.innerHTML =
       `<div class="chart-card" style="max-width:780px">
         <h4 style="margin:0 0 4px">Permissions Finder</h4>
-        <p class="sub-note" style="margin:0 0 14px">Find every group a teammate belongs to — directly and through nested groups (Entra) — then filter (e.g. type "boms"). Division narrows the search to one division (${esc(Divisions.label())} by default).</p>
+        ${Help.box("bgt-perms")}
         <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
           <div class="field" style="flex:2;min-width:200px;margin:0"><label>Teammate name</label>
             <input id="bgpSearch" placeholder="Start typing a name…" autocomplete="off" oninput="BGTools.permTyped()" onkeydown="if(event.key==='Enter'){clearTimeout(BGTools._tt.perm);BGTools.permSearch(false)}"></div>
@@ -2716,7 +2718,7 @@ const BGTools = {
     p.innerHTML =
       `<div class="chart-card" style="max-width:860px">
         <h4 style="margin:0 0 4px">Missing Groups</h4>
-        <p class="sub-note" style="margin:0 0 12px">Compare a teammate or a whole department against its <b>group baseline</b> — the groups the majority of that department holds — to find who's missing groups their peers have. Build/adjust baselines in <a onclick="Settings.open('perms')">Settings → Group baselines</a>.</p>
+        ${Help.box("bgt-missing")}
         <div class="miss-modes">
           <button class="miss-mode active" data-m="user" onclick="BGTools.missMode('user')">By teammate</button>
           <button class="miss-mode" data-m="dept" onclick="BGTools.missMode('dept')">By department</button>
@@ -3517,7 +3519,8 @@ const Depts = {
       const pane = document.getElementById("setPane");
       if (!pane || pane.dataset.owner !== "depts") return;        // the user moved to another settings tab
       const t = this.TABS.find(x => x.id === this.activeTab);
-      pane.innerHTML = `<div class="set-card"><div class="set-card-head"><h3>${esc(t ? t.label : "")}</h3></div>
+      pane.innerHTML = Help.box({ models: "set-models", sites: "set-links", perms: "set-perms", storage: "set-storage" }[this.activeTab]) +
+        `<div class="set-card"><div class="set-card-head"><h3>${esc(t ? t.label : "")}</h3></div>
         <div class="set-card-body">${body}</div>${foot}</div>`;
     } else {
       document.getElementById("modalRoot").innerHTML =
@@ -3547,7 +3550,7 @@ const Depts = {
     const names = Object.keys(doc.departments || {}).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
     const cards = names.length ? names.map(n => this._pbCard(n, doc.departments[n])).join("")
       : `<div class="empty" style="padding:22px">No departments analyzed yet. Add one below to build its group baseline.</div>`;
-    return `<p class="sub-note" style="margin:0 0 12px">The groups the <b>majority</b> of each department holds (all Entra groups). Used by <b>BG Tools → Missing Groups</b> to flag teammates missing groups their peers have. Analyze a department, then check/uncheck which groups count as “expected”.</p>
+    return `
       <div class="cfg-ok" style="margin:0 0 12px">Scope: <b>${esc(Divisions.label())} teammates only</b> — Entra company “${esc(doc.company || Divisions.cur().company_name)}”. Department names are shared across divisions, so members are filtered by company, not just department.</div>
       <div class="pb-controls">
         <label class="pb-thr">Majority threshold
@@ -3717,6 +3720,17 @@ const Depts = {
     const host = document.getElementById("cfgStorage"); if (!host) return;
     const r = await Backend.call("hub_storage_info");
     if (!r || !r.ok) { host.innerHTML = `<div class="empty">Could not read storage info.</div>`; return; }
+    if (r.store === "sharepoint") {          // central store: nothing to configure, no folder
+      host.innerHTML = `<div class="cfg-store">
+          <div class="cfg-store-row"><span>Status</span><div><span class="tag ok">Shared</span></div></div>
+          <div class="cfg-store-row"><span>Stored in</span><div>SharePoint: the central NBG Hub Data site (Inventory - Hub Items / Hub Files)</div></div>
+          <div class="cfg-store-row"><span>Site</span><div class="mono">${esc(r.site || "")}</div></div>
+          <div class="cfg-store-row"><span>This division</span><div class="mono">${esc(r.division || Divisions.current)}</div></div>
+        </div>
+        <div class="cfg-ok">✓ Everyone in this division reads and writes the same documents. There is no folder to share or sync.</div>
+        <div class="up-actions"><button class="ghost" onclick="Backend.call('hub_open_folder')">Open the central site</button></div>`;
+      return;
+    }
     const badge = r.shared ? `<span class="tag ok">Shared</span>`
       : `<span class="tag warn">Per-user — NOT shared</span>`;
     const srcLabel = { config: "config.json (logs_folder)", arg: "explicit override", default: "beside the app (default)" }[r.source] || r.source;
@@ -3775,7 +3789,7 @@ const Depts = {
     const filterOpts = `<option value="">All departments</option>` +
       this._depts.map(d => `<option value="${attr(d)}"${this._filterDept === d ? " selected" : ""}>${esc(d)}</option>`).join("") +
       `<option value="Unassigned"${this._filterDept === "Unassigned" ? " selected" : ""}>Unassigned</option>`;
-    return `<p class="sub-note" style="margin:0 0 16px">Tag each model with the department that uses it. In-stock counts roll up by department on the dashboard so you can see your deployable pool per department.</p>
+    return `
       <div class="dept-manage">
         <label>Departments</label>
         <div class="dept-chips" id="deptChips"></div>
@@ -3906,7 +3920,7 @@ const Depts = {
         <td class="dept-cbcell"><button class="cfg-del" title="Remove site" onclick="Depts._sRemove(${i})">&times;</button></td>
       </tr>`).join("")
       : `<tr><td colspan="5"><div class="empty" style="padding:16px">No sites yet — add one below.</div></td></tr>`;
-    return `<p class="sub-note" style="margin:0 0 16px">Add, edit, group, or remove the tools on the <b>NBT Sites</b> tab. Sites are grouped by category. "Opens as": In-app = full window with a Back button (best for sign-in portals); Embedded = inside the page (only works for sites that allow framing).</p>
+    return `
       <div class="dept-manage">
         <label>Categories</label>
         <div class="dept-chips" id="catChips"></div>
@@ -4313,7 +4327,9 @@ const Hub = {
     try { await Backend.call("hub_save_setup", entry, "", ""); } catch (e) {}
   },
   resetChecks() { this.state.checks = {}; this.state.notes = {}; this.renderRun(); App.toast("Checks cleared."); },
-  openFolder() { Backend.call("hub_open_folder"); },
+  openFolder() {
+    Backend.call("hub_open_folder").then(r => { if (r && r.ok === false) App.toast(r.error || "Could not open it.", true); });
+  },
   updateFolderStatus() {
     const el = document.getElementById("folderStatus"); if (!el) return;
     const p = (this.who && this.who.logsPath) || "the Systems shared folder";

@@ -229,6 +229,14 @@ class Hub:
                 "configPath": self.config_path}
 
     def storage_info(self) -> dict:
+        if self._store:                         # central: documents are rows in SharePoint, there is no folder
+            return {"store": "sharepoint", "path": "", "hub": "", "source": "central", "app_dir": _app_dir(),
+                    "exists": True, "shared": True, "pinned": True, "division": self.division.get("id", "")}
+        info = self._file_storage_info()
+        info["store"] = "files"
+        return info
+
+    def _file_storage_info(self) -> dict:
         """Where the shared data actually lives + how confident we are that it's a
         shared/synced location, so the Configuration → Storage panel can guide the
         Option-A pin. Heuristic only — the path alone can't prove OneDrive sync."""

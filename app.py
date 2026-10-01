@@ -1840,15 +1840,33 @@ class Api:
             return self._fail(e)
 
     def hub_open_folder(self) -> dict:
+        """Files mode: open the shared data folder. Central mode: there is no folder, so open the central SharePoint site."""
         try:
-            self._hubc().open_folder()
+            hub = self._hubc()
+            if getattr(hub, "_store", None):
+                gc = self._client()
+                cc = gc._base_cfg.get("central") or {}
+                host = (cc.get("site_host") or "").strip()
+                path = (cc.get("site_path") or "").strip()
+                if not host or not path.startswith("/"):
+                    return {"ok": False, "error": "The central site address is not configured."}
+                import webbrowser
+                webbrowser.open(f"https://{host}{path}")
+                return {"ok": True, "central": True}
+            hub.open_folder()
             return {"ok": True}
         except Exception as e:
             return self._fail(e)
 
     def hub_storage_info(self) -> dict:
         try:
-            return {"ok": True, **self._hubc().storage_info()}
+            gc = self._client()
+            info = self._hubc().storage_info()
+            if info.get("store") == "sharepoint":
+                cc = gc._base_cfg.get("central") or {}
+                info["site"] = f"https://{cc.get('site_host', '')}{cc.get('site_path', '')}"
+            info["data_mode"] = gc.data_mode
+            return {"ok": True, **info}
         except Exception as e:
             return self._fail(e)
 

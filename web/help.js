@@ -1,0 +1,436 @@
+/* ---- In-app help -------------------------------------------------------------
+   Every page and every Settings section has ONE collapsible "How to use" box, closed by default.
+   The text lives here (DOCS) so it is easy to keep in step with the app: edit the entry, nothing else.
+
+     Help.box("dashboard")            -> HTML for the box (use inside any template string)
+     <div class="help-slot" data-help="dashboard"></div>   -> filled automatically at start-up (static pages)
+
+   Whether a box is open is remembered per box on this PC (localStorage; harmless if blocked). */
+
+const Help = {
+  DOCS: {
+    /* ------------------------------------------------------------------ Dashboard */
+    dashboard: {
+      title: "How to use the Dashboard",
+      html: `
+        <p>The Dashboard is a summary of the <b>division you have selected</b> (top of the sidebar). Almost everything on it is clickable: click a tile or bar to see the devices behind the number.</p>
+        <h5>The tiles</h5>
+        <ul>
+          <li><b>Machines in use / in stock</b>: opens the Devices page on that tab.</li>
+          <li><b>Hot spares</b>: imaged, ready-to-deploy loaners. Click for the full list by site and department. A warning sign means a spare is stale or out of compliance.</li>
+          <li><b>No UPN set</b>: devices with no primary user.</li>
+          <li><b>Warranties ≤ 90 days</b>: warranty ends within 90 days (or already expired).</li>
+          <li><b>Upgrade Forecast</b>: devices old enough to need replacing, by site. Open the Upgrade list to prioritize them.</li>
+          <li><b>No check-in N+ days</b>: devices that have not reported to Intune for longer than the stale limit (30 days unless a super admin changed it).</li>
+          <li><b>Users without MFA</b>: people with a device but no registered multi-factor method.</li>
+          <li><b>Not part of this division</b>: devices in the division's Intune category whose user is not in the division's Entra company. Usually a mis-categorized device.</li>
+        </ul>
+        <h5>The cards</h5>
+        <ul>
+          <li><b>Warranty status</b>: click a bar to list the devices in that range.</li>
+          <li><b>Upgrade Forecast by site</b>: the top of the queue. <b>Open list</b> goes to the Upgrades page.</li>
+          <li><b>In stock by department</b>: spare machines grouped by who they are for. <b>Configure</b> opens Settings → Model departments, where you decide which department each model belongs to.</li>
+        </ul>
+        <h5>Refreshing</h5>
+        <p><b>Refresh</b> re-reads everything and shows a confirmation. <b>Last sync</b> (under the title) says when this division's devices were last pulled from Intune. It turns red when that was more than 36 hours ago, never happened, or had errors. Run <b>Sync now</b> on the Devices page, or a super admin can run <b>Sync all divisions</b> in Settings.</p>`
+    },
+    basics: {
+      title: "Getting around the app",
+      html: `
+        <ul>
+          <li><b>Division switcher</b> (top of the sidebar): choose which division you are working in. It only appears if you can see more than one. Switching reloads the app and puts you back on the same page. It is blocked while a long job (a sync, for example) is still running.</li>
+          <li><b>Data: Live / Local</b> (sidebar): <b>Live</b> is real production data. <b>Local</b> is a private copy on this PC: you can test freely and nothing reaches SharePoint. Click it to switch or to pull a fresh copy.</li>
+          <li><b>Spinner chip above your name</b>: a long job (sync, software pull, MFA) is still running. You can move to other pages meanwhile.</li>
+          <li><b>"Saving…" pill</b> at the top: a save is in progress. Wait for it to finish before closing the app.</li>
+          <li><b>Version</b> (bottom of the sidebar): click it to see which version each person is running. A yellow or red version means an update is available or required.</li>
+          <li><b>Report bug / feature</b>: sends a note to the Systems team's shared list.</li>
+          <li><b>Settings</b>: what you see there depends on your role. Everyone sees General; division admins see more; super admins also see the Platform section.</li>
+        </ul>`
+    },
+
+    /* ------------------------------------------------------------------ Endpoint Provisioning */
+    "hub-home": {
+      title: "How to use Endpoint Provisioning",
+      html: `
+        <p>Endpoint Provisioning walks a technician through setting up a <b>new computer</b> or a <b>new user</b>, step by step, and keeps a record of what was done. The checklists belong to the division you are in and are shared with everyone in it.</p>
+        <ol>
+          <li>Click <b>New Computer Setup</b> or <b>New User Setup</b>. For a computer you pick the department next: everyone gets the base build, and your pick adds that department's steps.</li>
+          <li>Fill in the name / hostname and tick off the steps as you do them.</li>
+          <li>Click <b>Save to shared log</b> at any time. The setup appears in the list below with its percentage, and <b>anyone can click it to resume</b> where you stopped.</li>
+        </ol>
+        <p><b>In progress &amp; recent setups</b> lists saved setups, newest first. Click one to open or resume it. <b>Recent program changes</b> is a history of who edited the checklists and when.</p>
+        <p>To change the steps themselves use <b>Edit checklists</b> (top right).</p>`
+    },
+    "hub-dept": {
+      title: "Choosing the department",
+      html: `<p>Pick the department the computer is for. The setup then contains the <b>base build</b> steps (the same for every machine) plus that department's extra software and configuration. You can go <b>Back</b> if you picked the wrong one.</p>`
+    },
+    "hub-run": {
+      title: "How to work through a setup",
+      html: `
+        <ol>
+          <li><b>Name / hostname</b> is required. For a computer, the <b>primary user</b> is required too. Add your name as <b>Technician</b>; the service tag is optional.</li>
+          <li><b>Reserve a computer</b> (computer setups): choose a department and then a device from New Stock to hold it for this setup. A reserved device drops out of the "In stock by department" count until you finish or cancel. Choose <i>none</i> to release it.</li>
+          <li>Tick each step as you finish it. <b>+ Add note</b> under a step records anything unusual. The bar shows overall progress.</li>
+          <li><b>Notes</b> at the top is for the setup as a whole.</li>
+        </ol>
+        <h5>Buttons</h5>
+        <ul>
+          <li><b>Save to shared log</b> (or the floating Save): writes the setup and an HTML record to the shared library. A setup at 100% is saved as <b>complete</b>; otherwise it is resumable by anyone. Your progress is also kept on this PC as you type, so a crash does not lose it.</li>
+          <li><b>Check all</b> ticks every step. <b>Clear checks</b> unticks every step and removes the step notes.</li>
+          <li><b>Open shared folder</b> opens the folder where records are kept (with the central setup there is no folder, so it opens the central SharePoint site instead).</li>
+          <li><b>Cancel setup</b> removes this setup from the shared log (it asks why and records it). <b>Home</b> leaves, and warns you if you have unsaved progress.</li>
+        </ul>`
+    },
+    "hub-admin": {
+      title: "How to edit the checklists",
+      html: `
+        <ol>
+          <li>Pick a list from the drop-down: <b>User setup</b>, the <b>computer base build</b>, or one department's extra steps.</li>
+          <li>Edit the text of any step. The grey <b>Detail</b> line under a step is for paths, server names or anything the technician needs to copy. Leave it blank if not needed.</li>
+          <li>Reorder with the ↑ ↓ buttons or by dragging the handle. ✕ removes a step. <b>+ Add item</b> adds a step to a section; <b>+ Add section</b> adds a new group of steps.</li>
+          <li>Click <b>Save changes</b>. The change is logged under "Recent program changes" with your name.</li>
+        </ol>
+        <p><b>Reset this list</b> throws away your edits to the list on screen and restores it to the <b>template</b> (the starting checklists a super admin maintains in Settings → Platform → Template checklists). Only this list is reset.</p>
+        <p>These edits only change <b>this division's</b> checklists. A super admin editing the template (you will see a banner) changes what <i>new</i> divisions start with.</p>`
+    },
+    "hub-feedback": {
+      title: "Reporting a bug or asking for a feature",
+      html: `<p>Choose <b>Bug</b> or <b>Feature request</b>, give it a short title, describe what happened (or what you would like), and click <b>Submit</b>. It is saved to a shared list the Systems team reads. Open items are listed below the form so you can check whether it has already been reported.</p>`
+    },
+
+    /* ------------------------------------------------------------------ Devices */
+    devices: {
+      title: "How to use Devices",
+      html: `
+        <p>Devices is the live inventory for the division: <b>In stock</b> (new, unassigned machines), <b>In use</b> (assigned machines, kept in step with Intune), and the <b>Boneyard</b> (retired machines).</p>
+        <h5>Finding things</h5>
+        <ul>
+          <li>Type in the search box to filter the current tab. It matches serial, hostname, user, model, OS and site.</li>
+          <li>Extra filters (model, CPU, RAM, last check-in, MFA) appear once there is data to filter. <b>Clear</b> removes them all.</li>
+          <li>Click a column heading to sort. Click the <b>+</b> at the start of a row to see its full details.</li>
+        </ul>
+        <h5>Adding machines</h5>
+        <p>Click <b>Add new machine</b>: choose the maker, paste or scan up to 10 serial numbers, then review what the maker's service lookup found and click <b>Add</b>. See the notes inside that window.</p>
+        <h5>Row buttons</h5>
+        <ul>
+          <li><b>Edit</b> (stock): correct a machine's details.</li>
+          <li><b>Remove</b>: for a stock machine this decommissions it. For one in use you choose <i>Remove</i> or <i>Move back to New Stock</i> to reassign later. Both are written to the activity log with who and why.</li>
+          <li><b>Upgrade</b>: adds the device to the Upgrade list with a priority.</li>
+          <li><b>Restore</b> (Boneyard): puts a retired machine back.</li>
+        </ul>
+        <h5>The buttons at the top</h5>
+        <ul>
+          <li><b>Log</b>: the activity log of every add, move and removal.</li>
+          <li><b>Sync now</b>: pulls this division's devices from Intune into <i>In use</i>, adds new ones, updates the rest and removes duplicate rows. It never deletes devices. The same sync runs by itself when the app opens, unless a super admin turned that off.</li>
+          <li><b>Populate MFA</b>: fills the MFA column from each user's registered methods. It needs a role that can read authentication methods.</li>
+          <li><b>Master sync</b>: a slower, deliberate full refresh that <b>overwrites</b> every device's user, specs, MFA, last check-in and OS from Intune and Entra. Use it when the stored values look wrong.</li>
+        </ul>
+        <h5>Boneyard</h5>
+        <p>A device that is gone from Active Directory, Entra <i>and</i> Intune, and has not checked in for 30+ days, is moved to the Boneyard automatically. It is never deleted. If it comes back, a sync restores it, or use <b>Restore</b>.</p>`
+    },
+    wizard: {
+      title: "How adding machines works",
+      html: `
+        <ol>
+          <li><b>Pick the maker</b> (Dell, Lenovo or HP). The lookup asks that maker's service about each serial.</li>
+          <li><b>Enter serials</b>, one per line (a barcode scanner types the serial and presses Enter, so scanning works). Up to 10 at a time; repeats are ignored.</li>
+          <li><b>Review.</b> Each serial shows a tag:
+            <ul>
+              <li><b>Found</b>: the maker returned the model and warranty (Lenovo also returns CPU, RAM and storage).</li>
+              <li><b>Manual</b>: no lookup result (no key configured, or the maker did not know it). Fill the fields in yourself.</li>
+              <li><b>Duplicate</b>: already in New Stock or In Use. It is skipped.</li>
+              <li><b>Error</b>: the lookup failed. It is skipped.</li>
+            </ul>
+            Edit any field, set the <b>site</b>, or remove a row with ✕, then click <b>Add</b>. New machines go to <b>New Stock</b>.</li>
+        </ol>
+        <p>Dell and HP lookups need a key from a super admin (Settings → Platform → Integrations). Without one those serials come back as <b>Manual</b>.</p>`
+    },
+    hotspares: {
+      title: "How hot spares work",
+      html: `
+        <p>A <b>hot spare</b> is an imaged, ready-to-deploy machine kept for emergency swaps or loaners. The window groups them by site and department and shows live details from Intune (specs, OS install date, last check-in, compliance) joined by serial number.</p>
+        <ul>
+          <li><b>+</b> expands an entry to its full detail. A ⚠ marks a spare that is stale or non-compliant, so it may not be ready.</li>
+          <li>Use the add button to register a spare (serial, site, department, notes about where it is held). Edit or remove entries with their buttons; every change is logged.</li>
+          <li>The department groups are set per division in Settings → General → Inventory options.</li>
+        </ul>`
+    },
+
+    /* ------------------------------------------------------------------ Upgrades */
+    upgrades: {
+      title: "How to use the Upgrade list",
+      html: `
+        <p>The Upgrade list is a prioritized queue of machines waiting for a hardware upgrade. It is shared with everyone in the division.</p>
+        <ol>
+          <li><b>Add a device.</b> From <b>Devices → In use</b> click the upgrade button on a row, or from the Dashboard's <b>Upgrade Forecast</b> list. Choose a <b>priority from 1 to 5</b> (5 = most urgent) and add notes.</li>
+          <li>Each device lands under its <b>site tab</b>. Devices whose site does not match the division's sites go under <b>Other</b>.</li>
+          <li><b>Reorder</b> by dragging, or with the ↑ ↓ buttons. The order is yours to set: priority is a label, not an automatic sort.</li>
+          <li><b>▶ Begin</b> starts a New Computer Setup for that device in Endpoint Provisioning and marks the entry <b>Working</b> with your name. The setup's progress then shows on the list.</li>
+          <li><b>✓</b> checks it off: it leaves the queue and is added to the <b>Log</b> tab with who finished it and when. ✎ edits priority or notes; ✕ removes it without completing.</li>
+        </ol>
+        <p><b>Refresh</b> re-reads the list if someone else changed it.</p>`
+    },
+
+    /* ------------------------------------------------------------------ Software */
+    software: {
+      title: "How to use Software Inventory",
+      html: `
+        <p>This page lists the apps Intune detected on this division's machines and tells you who is <b>missing</b> software their department is expected to have.</p>
+        <ol>
+          <li>Click <b>Refresh from Intune</b> to pull the inventory. It reads every device, so it can take a few minutes; you can use other pages meanwhile. The result is cached and shared, so normal browsing never re-queries Intune. The time of the last pull is shown beside the button.</li>
+          <li>Filter by <b>user or device</b>, by <b>software name</b>, or by <b>department</b>. A department comes from each person's Entra profile.</li>
+          <li>Click an app to see <b>who has it</b> and who does not.</li>
+          <li><b>Mandatory</b> apps are worked out automatically as each department's <b>10 most-installed apps</b>. You can flag or unflag an app as mandatory for a department to override that. Tick <b>Mandatory only</b> to hide everything else.</li>
+        </ol>
+        <p>"Missing" is judged against the <b>newest version</b> of an app only: someone with an old release but not the latest still counts as missing. Versions of one app are grouped under its name. The Dashboard's compliance counts use exactly the same rules.</p>`
+    },
+
+    /* ------------------------------------------------------------------ NBT Sites / Project Hub */
+    sites: {
+      title: "How to use NBT Sites",
+      html: `
+        <p>NBT Sites is a launcher for the Nucor web tools your team uses, grouped by category. Click a tile to open it.</p>
+        <ul>
+          <li>How a tool opens is set per tool: in your <b>default browser</b> (best for sign-in portals), <b>full window</b> inside this app with a green <b>← Back to NBG Hub</b> button, a <b>separate window</b>, or <b>embedded</b> in the page (only works for sites that allow it).</li>
+          <li>While a tool is open inside the app, <b>Reload</b>, <b>Open in window</b> and <b>All sites</b> appear at the top right.</li>
+          <li><b>+ Add site</b> at the end of the list adds your own shortcut (name and address) under <b>Custom</b>. <b>Custom sites are shared with everyone in the division</b>, and removing one removes it for everyone.</li>
+          <li>Division admins manage the categories and the built-in tools in Settings → NBT Sites.</li>
+        </ul>`
+    },
+    projecthub: {
+      title: "About Project Hub",
+      html: `<p>Project Hub signs in with its own Microsoft login, which cannot run inside this app, so it always opens in your <b>default web browser</b> where you are already signed in. Click <b>Open Project Hub</b>. The address is set per division by a division admin in Settings → General → Project Hub (a platform default applies otherwise).</p>`
+    },
+
+    /* ------------------------------------------------------------------ BG Tools */
+    bgt: {
+      title: "About BG Tools",
+      html: `<p>BG Tools are small admin utilities. Pick one of the three tiles: <b>Timesheet Fix</b> (unlock a timesheet week), <b>Permissions Finder</b> (every group a person is in) and <b>Missing Groups</b> (what a person or department lacks compared with its peers). The first two read live from SQL / Entra as <b>you</b>, so you need the matching access. Searches start as you type.</p>`
+    },
+    "bgt-timesheet": {
+      title: "How Timesheet Fix works",
+      html: `
+        <ol>
+          <li>Start typing the employee's first or last name (2 letters or more). Matches appear as you type; click one. Pressing Enter opens a single match straight away.</li>
+          <li>You see the <b>last 8 weeks</b> with fiscal year, week and whether each is <b>Locked</b> or <b>Unlocked</b>.</li>
+          <li>Select a <b>locked</b> week (unlocked weeks cannot be selected), click <b>Unlock week</b>, then <b>Confirm unlock</b>.</li>
+        </ol>
+        <p>Unlocking only flips the week from locked to unlocked: it does not touch who modified the row or when. Every unlock is recorded in the activity log. It uses the SQL server and tables set for your division (Settings → Directory &amp; SQL), and runs with <b>your</b> Windows sign-in. If this division has no timesheet set up you will see a message saying so.</p>
+        <p>Note: the employee table can contain people from other Nucor entities as well as your division.</p>`
+    },
+    "bgt-perms": {
+      title: "How the Permissions Finder works",
+      html: `
+        <ol>
+          <li>Start typing a teammate's name. Matches appear as you type; click one. <b>Division</b> picks whose people are searched: the current division comes first and is selected for you. Click the box and type to find another division or BG brand.</li>
+          <li>You then see <b>every group</b> the person belongs to, directly and through nested groups, from Entra.</li>
+          <li>Use the <b>filter</b> box to narrow the list (for example type <i>boms</i>), and the counts above the list show how many match.</li>
+        </ol>
+        <p>The list of other divisions and brands you can pick is maintained by super admins in Settings → Platform → People-search scopes.</p>`
+    },
+    "bgt-missing": {
+      title: "How Missing Groups works",
+      html: `
+        <p>Missing Groups compares a person (or a whole department) with its <b>group baseline</b>: the groups most people in that department hold. Anything the baseline expects but the person lacks is listed as <b>missing</b>.</p>
+        <ul>
+          <li><b>By teammate</b>: start typing a name, click the match. You see what they are missing and what they have.</li>
+          <li><b>By department</b>: pick a department that has a baseline and click <b>Check</b> to see everyone in it who is missing something.</li>
+        </ul>
+        <p>It only works for departments that have a saved baseline. Build one in <a onclick="Settings.open('perms')">Settings → Group baselines</a> (or use the <b>Analyze</b> button offered when one is missing). Only people in the current division's Entra company are searched, because department names are shared between divisions.</p>`
+    },
+
+    /* ------------------------------------------------------------------ Settings sections (tenant) */
+    "set-general": {
+      title: "About General settings",
+      html: `
+        <ul>
+          <li><b>About this division</b> is read-only: name, id, Entra company, Intune device category and sites. A super admin changes these under Platform → Divisions.</li>
+          <li><b>Time zone</b>: every date and time in the app for this division is shown in this zone. "Use the default" uses the platform default, or each PC's own zone if there is none. The line under the box shows what the time is right now in the zone you pick.</li>
+          <li><b>Inventory options</b> (division admins): <i>Devices to sync from Intune</i> chooses between Windows computers only (the default) and every device type. <i>Hot spare departments</i> are the department groups on the Hot spares window; "Other" is always added at the end.</li>
+          <li><b>Project Hub</b>: where the sidebar's Project Hub item opens for this division. Leave it blank to use the platform default. "Open this address" lets you test it first.</li>
+        </ul>
+        <p>Plain users see this page read-only. Changes are saved with the button on each card.</p>`
+    },
+    "set-access": {
+      title: "How access works",
+      html: `
+        <p>This list controls <b>who can switch to this division</b> and what they can do in Settings.</p>
+        <ul>
+          <li>Search for a <b>person</b> (name or sign-in) or an <b>Entra group</b> and click a result to add them. Adding a group once and managing its members in Entra is usually easiest.</li>
+          <li>The <b>Role</b> column: <b>User</b> can use the division; <b>Admin</b> can also change its settings. Which Settings sections each role sees is set by a super admin under Platform → Role access.</li>
+          <li>Click ✕ to remove an entry. Nothing changes until you click <b>Save access</b>.</li>
+          <li>You cannot save a list that removes your own admin rights. "Everyone" can only be granted by a super admin; if it is on, all app users can see the division.</li>
+          <li>An empty list means only super admins can see the division.</li>
+        </ul>
+        <p>This controls what the <b>app</b> shows. People who can open the underlying SharePoint site could still read the lists directly.</p>`
+    },
+    "set-sites": {
+      title: "How sites work",
+      html: `
+        <p>A site is a physical location in the division. Each has a short <b>code</b> (2 to 6 letters or digits) used on tags, tabs and the dashboard.</p>
+        <ul>
+          <li><b>User city starts with</b>: how a person's Entra city is turned into a site (type the start of the city and press Enter).</li>
+          <li><b>Device name starts with</b>: how a device name is turned into a site, for example <i>BGTER</i>.</li>
+          <li><b>A division with exactly one site</b> puts every device and person in that site, whatever the name or city says. With two or more sites, anything that matches no prefix is shown as <b>Other</b>.</li>
+        </ul>
+        <p>Changing a code regroups devices on the dashboard and lists. Existing records keep their old code until a sync updates them. Click <b>Save sites</b> to apply; <b>Discard changes</b> reloads the saved version.</p>`
+    },
+    "set-sql": {
+      title: "How Directory & SQL works",
+      html: `
+        <p>These settings tell the BG Tools which SQL server and tables belong to this division, and which Active Directory domain to look in.</p>
+        <ol>
+          <li>Type the <b>SQL server</b> (host, or host\\instance) and click <b>Load databases</b>. The list is read from the server with <b>your</b> sign-in; nothing is changed.</li>
+          <li>Choose the <b>timesheet database</b>, then its <b>week-lock table</b>; do the same for the <b>employee database</b> and <b>employee table</b>. The tables load when you pick a database. If loading fails you can use <b>Type names by hand</b>.</li>
+          <li>Leave all four blank if the division has no timesheet tool. <b>Clear all four</b> does that for you.</li>
+          <li>The <b>Active Directory domain</b> is optional (for example the domain used by the device and user lookups).</li>
+        </ol>
+        <p>Click <b>Save</b> to apply. Names may only contain letters, digits and underscores (a table can be written <i>schema.table</i>).</p>`
+    },
+    "set-models": {
+      title: "How Model departments work",
+      html: `
+        <p>Here you say which <b>department each computer model is for</b>. The Dashboard then shows how many spare machines each department has in stock, and the Reserve-a-computer list in Endpoint Provisioning uses the same grouping.</p>
+        <ol>
+          <li>Add or remove <b>departments</b> with the box at the top (press Enter or <b>+ Add</b>).</li>
+          <li>In the table, choose a department for each model. You can also tick several models and use <b>Assign selected to</b> + <b>Apply</b>. Use the search and filter above the table to find models.</li>
+          <li>Click <b>Save</b>. Models you leave unassigned show as <b>Unassigned</b>.</li>
+        </ol>
+        <p>Every model currently in stock or in use is listed, plus any model already mapped.</p>`
+    },
+    "set-links": {
+      title: "How NBT Sites settings work",
+      html: `
+        <ul>
+          <li><b>Categories</b> group the tiles on the NBT Sites page. Add one with the box; ✕ removes it (its sites become Uncategorized).</li>
+          <li>Each row is a tool: a <b>name</b>, its <b>web address</b> (https://…), a <b>category</b> and <b>Opens as</b>:
+            <ul>
+              <li><b>Web browser (SSO)</b>: your default browser, already signed in. Best for portals.</li>
+              <li><b>In-app (full window)</b>: takes over the app window with a Back button. Good for sign-in pages.</li>
+              <li><b>Separate window</b>: a second app window.</li>
+              <li><b>Embedded</b>: inside the page, only for sites that allow being framed.</li>
+            </ul></li>
+          <li>Use <b>+ Add site</b> for a new row and ✕ to remove one. Click <b>Save</b>; <b>Cancel</b> discards your edits.</li>
+        </ul>
+        <p>Anyone can also add a shortcut from the NBT Sites page itself (shared as "Custom").</p>`
+    },
+    "set-perms": {
+      title: "How Group baselines work",
+      html: `
+        <p>A baseline is the list of Entra groups most people in a department hold. <b>Missing Groups</b> (BG Tools) compares people against it. Only people in this division's Entra company are counted, because department names are shared between divisions.</p>
+        <ol>
+          <li><b>Add a department</b>: start typing its name in the box (suggestions appear) and press Enter or click Analyze. The app reads every member's groups from Entra, which can take a while.</li>
+          <li><b>Majority threshold</b> (slider): a group counts as "expected" when at least this share of the department has it.</li>
+          <li>On each department card, <b>tick or untick</b> groups to decide which really count as expected, and add a group by hand if one is missing.</li>
+          <li><b>Re-analyze all</b> refreshes every saved baseline. <b>Rebuild from directory</b> finds every department in this division and rebuilds all baselines from scratch (it replaces the existing ones).</li>
+        </ol>
+        <p>Changes here save <b>automatically</b>; there is no Save button.</p>`
+    },
+    "set-storage": {
+      title: "About Storage",
+      html: `<p>Shows where this division's shared working data (checklists, setups, upgrade list, hot spares and so on) is stored. With the central setup it is kept as rows in the <b>NBG Hub Data</b> SharePoint site and shared by everyone in the division, so there is nothing to configure: <b>Open the central site</b> shows it. Only if the app is running from a plain shared folder (the older setup) does this page show a folder path and warn when that folder is private to one PC.</p>`
+    },
+
+    /* ------------------------------------------------------------------ Settings sections (platform) */
+    "set-divisions": {
+      title: "How to manage divisions",
+      html: `
+        <p>A division is one business unit with its own people, devices, sites and data. This list is shared by everyone; changes reach other users within about 5 minutes or on their next restart.</p>
+        <ul>
+          <li><b>Edit</b> opens a division. Its tabs: <b>Identity</b> (display name, Entra company, Intune category, visible or hidden), <b>Sites</b>, <b>Directory &amp; SQL</b>, <b>Access</b> and <b>Advanced</b> (old SharePoint site, only for importing old data).</li>
+          <li>The <b>Entra company</b> is picked from real company names as you type, and must match exactly: people are scoped by it. The <b>Intune category</b> comes from a list of the categories Intune has. Devices are scoped by it.</li>
+          <li>The <b>Access</b> table works as in "Who has access". Mark at least one person or group as <b>Admin</b> so the division can manage itself.</li>
+          <li><b>Hidden</b> (untick Visible) removes a division from everyone's switcher without deleting anything.</li>
+        </ul>
+        <h5>Adding a division</h5>
+        <p>Click <b>+ Add division</b> and pick a starting point: <b>One site</b>, <b>Several sites</b>, <b>Blank</b>, or <b>Copy an existing division</b> (reuses its SQL server, tables, AD domain and number of sites, but never its identity or access). Fill in the name, Entra company and Intune category, click <b>Save division</b>, then give it people on the Access tab. Its Endpoint Provisioning checklists start from the template.</p>`
+    },
+    "set-admins": {
+      title: "About super admins",
+      html: `<p>Super admins manage the whole platform: every division, who can see it, the Platform settings and integrations. Search for a person by name or sign-in and click to add them; click ✕ to remove one. Use the account people actually sign in with (for example the <i>adm.name.azure@…</i> account if that is the one that holds the Intune role). You cannot remove yourself, and entries marked <b>config</b> come from the app's config file and can only be removed there.</p>`
+    },
+    "set-scopes": {
+      title: "About people-search scopes",
+      html: `
+        <p>The Permissions Finder (BG Tools) searches the people of the division you are in, and can also search the groups listed here.</p>
+        <ul>
+          <li><b>Other BG brands</b>: a name and the brand's <b>email domain</b> (for example example.com).</li>
+          <li><b>Other divisions</b>: a name and the <b>exact Entra company name</b>. Every division in this app is added automatically, so list only divisions that are not set up here.</li>
+          <li><b>+ Add</b> a row, ✕ removes one. Blank rows and duplicates are dropped when you save.</li>
+        </ul>
+        <p>Until you save, the built-in lists are shown; saving makes the lists yours.</p>`
+    },
+    "set-template": {
+      title: "About template checklists",
+      html: `
+        <p>The template holds the <b>starting checklists</b> (New Computer Setup, New User Setup, department steps). A new division copies them the first time it opens Endpoint Provisioning, and a division's <b>Reset this list</b> goes back to them.</p>
+        <ol>
+          <li>Click <b>Edit the template checklists</b>. The normal checklist editor opens with a banner saying you are editing the template, not a division.</li>
+          <li>Edit and <b>Save changes</b> as usual, then click <b>Done editing the template</b>.</li>
+        </ol>
+        <p>Divisions that already have checklists keep their own: editing the template never changes them. Until you customise it, the template is the built-in default, which still contains NBGW-specific steps.</p>`
+    },
+    "set-roles": {
+      title: "How role access works",
+      html: `
+        <p>Tick which Settings sections each role may use. <b>General</b> is always visible to everyone (read-only for users). Super admins always have everything.</p>
+        <ul>
+          <li>The default is: <b>users</b> see General only; <b>division admins</b> see everything for their division.</li>
+          <li>The rule is enforced when saving, not just in the menu: a role without a section cannot save changes to it.</li>
+          <li>It applies to <b>every</b> division. Changing a person's role in a division is done on that division's Access list.</li>
+        </ul>
+        <p>Model departments and NBT Sites data is shared day-to-day information: unticking those only hides the settings page for them.</p>`
+    },
+    "set-sync": {
+      title: "How Sync all divisions works",
+      html: `
+        <ol>
+          <li>Click <b>Sync all divisions now</b> and confirm. It runs the normal sync for each enabled division, one after another: it reads the division's devices from Intune, adds and updates the In Use list, removes duplicate rows and fills in missing warranty and specs.</li>
+          <li>A results table shows, per division, the devices seen, added, updated, duplicates removed and anything filled in. <b>Needs attention</b> shows the first error.</li>
+        </ol>
+        <ul>
+          <li>It never deletes devices and never runs the Boneyard sweep.</li>
+          <li>If Intune returns no devices for a division that already has rows, that division is skipped and left unchanged (a safety check).</li>
+          <li>A division someone else is already syncing is skipped ("another sync is already running"). The lock clears itself after 30 minutes.</li>
+          <li>Each division gets an entry in its activity log, and its <b>Last sync</b> record is updated.</li>
+          <li>It runs as you and only while the app is open. It stops if you close the app.</li>
+        </ul>
+        <p><b>Last sync per division</b> below shows what last synced each division (this button or someone's app), with a warning when it is over 36 hours old.</p>`
+    },
+    "set-integrations": {
+      title: "How integrations & options work",
+      html: `
+        <p>These are platform-wide settings, kept in the central Master Settings list. Each row has its own <b>Save</b> button.</p>
+        <ul>
+          <li><b>Vendor APIs</b>: keys for Lenovo, Dell and HP warranty and spec lookups. Secrets are stored hidden and are <b>never shown again</b>; type a new value to replace one. Dell and HP only give model and warranty date, not CPU or RAM.</li>
+          <li><b>Regional</b>: the default time zone and the default Project Hub address, used by divisions that have not set their own.</li>
+          <li><b>Sync</b>: whether the app syncs when it opens, how many vendor lookups one sync may make, and after how many days without a check-in a device counts as stale.</li>
+          <li><b>Releases</b>: set <i>Latest released version</i> after handing out a new installer so people on older versions see "Update available"; raise <i>Oldest allowed version</i> to show a red "Update required".</li>
+          <li><b>Other stored settings</b> are anything else in the list; the <b>Advanced</b> box adds a setting this screen does not know yet.</li>
+        </ul>
+        <p>Blank means "use the built-in default". Numbers are checked against their allowed range when you save.</p>`
+    },
+  },
+
+  /* ---- plumbing ---- */
+  _key: id => "nbg_help_" + id,
+  isOpen(id) { try { return localStorage.getItem(this._key(id)) === "1"; } catch (e) { return false; } },
+  box(id) {
+    const d = this.DOCS[id];
+    if (!d) return "";
+    return `<details class="help-box" data-help="${attr(id)}"${this.isOpen(id) ? " open" : ""}><summary><span class="help-ic">?</span>${esc(d.title)}</summary><div class="help-body">${d.html}</div></details>`;
+  },
+  /* fill <div class="help-slot" data-help="..."> placeholders (static pages) */
+  mount(root) {
+    (root || document).querySelectorAll(".help-slot[data-help]").forEach(el => { el.outerHTML = this.box(el.dataset.help); });
+  },
+};
+/* remember open/closed per box. `toggle` does not bubble, so listen in the capture phase */
+document.addEventListener("toggle", e => {
+  const el = e.target;
+  if (el && el.classList && el.classList.contains("help-box")) {
+    try { localStorage.setItem(Help._key(el.dataset.help), el.open ? "1" : "0"); } catch (err) { /* private window: just do not remember */ }
+  }
+}, true);
+Help.mount();                        // the static pages are already in the document when this script runs

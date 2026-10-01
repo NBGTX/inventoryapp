@@ -9,8 +9,8 @@
 
 /* ---- small shared widgets ------------------------------------------------- */
 const SetUI = {
-  card(title, sub, body, foot) {
-    return `<div class="set-card"><div class="set-card-head"><h3>${esc(title)}</h3>${sub ? `<p>${sub}</p>` : ""}</div>
+  card(title, sub, body, foot) {          // `sub` is kept for call-site compatibility; explanations now live in help.js
+    return `<div class="set-card"><div class="set-card-head"><h3>${esc(title)}</h3></div>
       <div class="set-card-body">${body}</div>${foot ? `<div class="modal-foot">${foot}</div>` : ""}</div>`;
   },
   /* <select> that always contains the current value, even when it is not in the option list */
@@ -222,7 +222,7 @@ const Settings = {
   pane(owner, html) {
     const p = document.getElementById("setPane");
     p.dataset.owner = owner;
-    if (html !== undefined) p.innerHTML = html;
+    if (html !== undefined) p.innerHTML = (owner === "settings" ? Help.box("set-" + this.tab) : "") + html;
     return p;
   },
   async show(tab, force) {

@@ -370,3 +370,40 @@ class ZeroDeviceRail(unittest.TestCase):
         FakeSite(gc)
         gc.get_intune_category_devices = lambda: []
         self.assertEqual(sync.run_sync(gc, commit=False)["errors"], [])
+
+
+class HelpDocs(unittest.TestCase):
+    """Every help box the pages ask for has text, and no text is orphaned."""
+
+    def read(self, rel):
+        with open(os.path.join(ROOT, rel), encoding="utf-8") as f:
+            return f.read()
+
+    def test_every_requested_help_id_exists_and_every_doc_is_used(self):
+        docs = set(re.findall(r'^\s{4}"?([a-z\-]+)"?: \{\s*$', self.read("web/help.js"), re.M))
+        self.assertGreater(len(docs), 25)
+        used = set(re.findall(r'data-help="([a-z\-]+)"', self.read("web/index.html")))
+        for f in ("web/app.js", "web/settings.js"):
+            used |= set(re.findall(r'Help\.box\("([a-z\-]+)"\)', self.read(f)))
+        used |= {"set-" + t for t in ("general", "access", "sites", "sql", "models", "links", "perms", "storage", "divisions",
+                                        "admins", "scopes", "template", "roles", "sync", "integrations")}
+        self.assertEqual(sorted(used - docs), [])
+        self.assertEqual(sorted(docs - used), [])
+
+    def test_every_settings_section_has_a_help_entry(self):
+        settings = self.read("web/settings.js")
+        sections = re.findall(r'\["([a-z]+)", "[^"]+"(?:, "[a-z]+")?\]', settings.split("SECTIONS:")[1].split("groups()")[0])
+        plat = re.findall(r'\["([a-z]+)", "[^"]+"\]', settings.split("Platform (super admin)")[1].split("]]")[0])
+        helpjs = self.read("web/help.js")
+        for sec in set(sections) | set(plat):
+            self.assertIn(f'"set-{sec}"', helpjs, sec)
+
+    def test_help_boxes_are_collapsible_and_closed_by_default(self):
+        js = self.read("web/help.js")
+        self.assertIn("<details", js)
+        self.assertNotIn("<details open", js)
+
+    def test_help_html_is_well_formed_enough(self):
+        js = self.read("web/help.js")
+        for tag in ("ul", "ol", "li", "p", "b", "h5"):
+            self.assertEqual(len(re.findall(rf"<{tag}[ >]", js)), len(re.findall(rf"</{tag}>", js)), tag)

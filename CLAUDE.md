@@ -63,7 +63,8 @@ Build + deploy process: **docs/BUILD_AND_DEPLOY.md** (installer is per-user, bun
 5. **Timesheet unlock must not change `ModifiedBy`/`ModifiedDate`.** Only `Locked = 0 … AND Locked = 1`. Blake's requirement.
 6. **Scope people/devices by the active division**, never hardcode: Entra `companyName` = `division.company_name`; Intune category = `division.intune_category`; sites/prefixes from `division.sites`. Never scope by department or email domain.
 7. **Destructive/bulk ops behind `commit`/`dry_run`; one audit entry per run** (`gc.add_log` or `hub._change`).
-8. **New code needs offline tests** in `tests/` (fakes via `tests/_env.py`); run them before commit.
+8. **Every page and Settings section has ONE collapsible help box** (`web/help.js` `DOCS`; `Help.box(id)` in templates, `<div class="help-slot" data-help="id">` in index.html; Settings sections use `set-<tab>`). New page/section or changed behavior = update its entry; a test fails if an id is missing or orphaned. Don't write explanatory paragraphs inline.
+9. **New code needs offline tests** in `tests/` (fakes via `tests/_env.py`); run them before commit.
 
 ## Conventions
 

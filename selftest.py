@@ -17,7 +17,7 @@ import sys
 MODULES = ["app", "graph", "hub", "hubstore", "divisions", "localstore", "paths", "schema", "securecache",
            "settings_catalog", "vendors", "synclock", "sync", "adlookup", "sqltools", "version", "selftest",
            "msal", "requests", "truststore", "webview", "clr", "clr_loader", "cffi"]
-WEB_FILES = ["index.html", "app.js", "settings.js", "styles.css", "hub-mark.svg"]
+WEB_FILES = ["index.html", "app.js", "settings.js", "help.js", "styles.css", "hub-mark.svg"]
 
 # Evergreen WebView2 runtime: its "pv" (version) value exists under this client id.
 _WV2_KEY = r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"

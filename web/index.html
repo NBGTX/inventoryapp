@@ -70,13 +70,15 @@
         <div><h2>Dashboard</h2><p>Setups and inventory at a glance. <span id="syncLine" class="sync-line"></span></p></div>
         <button class="ghost" id="dashRefresh" onclick="Dashboard.refresh()">↻ Refresh</button>
       </div>
+      <div class="help-slot" data-help="dashboard"></div>
+      <div class="help-slot" data-help="basics"></div>
       <div id="dashHost"><div class="empty">Loading…</div></div>
     </section>
 
     <!-- ---------- ENDPOINT HUB ---------- -->
     <section class="appview" id="appview-hub">
       <div class="pagehead">
-        <div><h2 id="hubHeadTitle">Endpoint Provisioning</h2><p>Guided computer &amp; user setups, shared from the Systems library.</p></div>
+        <div><h2 id="hubHeadTitle">Endpoint Provisioning</h2><p>Guided computer &amp; user setups.</p></div>
         <div class="actions">
           <button class="ghost" onclick="Hub.go('home')">Home</button>
           <button class="ghost" onclick="Hub.go('admin')">Edit checklists</button>
@@ -85,6 +87,7 @@
 
       <!-- hub: home / activity -->
       <section class="hubview active" id="hubview-home">
+        <div class="help-slot" data-help="hub-home"></div>
         <div class="choice-grid">
           <button class="choice" onclick="Hub.startComputer()">
             <div class="cic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
@@ -104,13 +107,14 @@
       <!-- hub: department picker -->
       <section class="hubview" id="hubview-dept">
         <h3 class="sub">Which department is this machine for?</h3>
-        <p class="submuted">Everything gets the base build; your pick adds that department's steps.</p>
+        <div class="help-slot" data-help="hub-dept"></div>
         <div class="dept-grid" id="deptGrid"></div>
         <div style="margin-top:18px"><button class="ghost" onclick="Hub.go('home')">← Back</button></div>
       </section>
 
       <!-- hub: run / checklist -->
       <section class="hubview" id="hubview-run">
+        <div class="help-slot" data-help="hub-run"></div>
         <div class="save-banner" id="saveBanner"></div>
         <div class="runhead">
           <div class="row1">
@@ -165,6 +169,7 @@
         <div id="tplBanner" class="cfg-warn tpl-banner hidden">
           <span><b>Editing the TEMPLATE checklists.</b> New divisions start from these. This is not any division's own copy.</span>
           <button class="ghost" onclick="Hub.exitTemplate()">Done editing the template</button></div>
+        <div class="help-slot" data-help="hub-admin"></div>
         <div class="admin-bar">
           <select id="adminSelect" onchange="Hub.loadAdmin()"></select>
           <button class="primary" onclick="Hub.saveAdmin()">Save changes</button>
@@ -172,13 +177,13 @@
           <button class="ghost" onclick="Hub.resetOne()">Reset this list</button>
         </div>
         <div id="adminHost"></div>
-        <p class="hint">"Detail" is the small grey note under an item (paths, credentials). Leave blank if not needed.</p>
+
       </section>
 
       <!-- hub: feedback -->
       <section class="hubview" id="hubview-feedback">
         <h3 class="sub">Report a bug / Request a feature</h3>
-        <p class="submuted">Saved to a shared file in the Systems library so the team can track them.</p>
+        <div class="help-slot" data-help="hub-feedback"></div>
         <div class="card">
           <div class="fields">
             <div class="field"><label>Type</label>
@@ -212,6 +217,7 @@
         </div>
       </div>
 
+      <div class="help-slot" data-help="devices"></div>
       <div class="stats">
         <div class="stat clickable stat-add" id="addBtn" onclick="Wizard.open()" title="Add a new machine to inventory"><div class="n">＋</div><div class="l">Add new machine</div></div>
         <div class="stat clickable instock" onclick="App.showTab('stock')" title="View in-stock machines"><div class="n" id="cStock">–</div><div class="l">In stock ›</div></div>
@@ -258,6 +264,7 @@
           <button class="ghost" onclick="Sites.home()">← All sites</button>
         </div>
       </div>
+      <div class="help-slot" data-help="sites"></div>
       <div id="sitesHost"><div class="empty">Loading…</div></div>
     </section>
 
@@ -269,6 +276,7 @@
           <button class="ghost" onclick="ProjectHub.open()">↗ Open Project Hub</button>
         </div>
       </div>
+      <div class="help-slot" data-help="projecthub"></div>
       <div id="projectHubHost"><div class="empty">Loading…</div></div>
     </section>
 
@@ -277,18 +285,20 @@
       <div class="pagehead">
         <div><h2>BG Tools</h2><p>Database and admin utilities. Pick a tool to begin.</p></div>
       </div>
+      <div class="help-slot" data-help="bgt"></div>
       <div id="bgtHost"><div class="empty">Loading…</div></div>
     </section>
 
     <!-- ---------- SOFTWARE INVENTORY ---------- -->
     <section class="appview" id="appview-software">
       <div class="pagehead">
-        <div><h2>Software Inventory</h2><p>Apps installed across <span class="div-label"></span> machines, from Intune. Filter by department, drill into who has each app, and flag mandatory apps to find who's missing them.</p></div>
+        <div><h2>Software Inventory</h2><p>Apps installed on <span class="div-label"></span> machines, from Intune.</p></div>
         <div class="actions">
           <span id="swMeta" class="sub-note" style="margin:0 12px 0 0"></span>
           <button class="ghost" id="swRefreshBtn" onclick="Software.refresh()">↻ Refresh from Intune</button>
         </div>
       </div>
+      <div class="help-slot" data-help="software"></div>
       <div class="sw-tools">
         <input id="swUser" placeholder="Filter by user or device…" oninput="Software.render()">
         <input id="swSoftware" placeholder="Filter by software…" oninput="Software.render()">
@@ -301,9 +311,10 @@
     <!-- ---------- UPGRADE LIST ---------- -->
     <section class="appview" id="appview-upgrades">
       <div class="pagehead">
-        <div><h2>Upgrade List</h2><p>Prioritized queue of devices awaiting a hardware upgrade. Drag to reorder; check off when done.</p></div>
+        <div><h2>Upgrade List</h2><p>Devices waiting for a hardware upgrade, in priority order.</p></div>
         <button class="ghost" onclick="Upgrade.load()">↻ Refresh</button>
       </div>
+      <div class="help-slot" data-help="upgrades"></div>
       <div class="up-tabs" id="upTabs"></div>
       <div id="upHost"><div class="empty">Loading…</div></div>
     </section>
@@ -326,6 +337,7 @@
 
 <script src="app.js"></script>
 <script src="settings.js"></script>
+<script src="help.js"></script>
 <script src="web-shim.js"></script>
 </body>
 </html>
