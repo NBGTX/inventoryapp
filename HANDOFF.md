@@ -5,6 +5,13 @@
 > **Project folder ("project root"):** `C:\Users\Blake.Stevenson\OneDrive - Nucor\Documents\Claude\Inventory Desktop App\`. **This folder is not a git repository.**
 > **Line numbers** are accurate for v2026.09.29 and will drift as the code changes. Each one is paired with a function or object name so you can find it with a search.
 
+> **Update 2026-10-01 (new maintainer):** the project is now in git (`NBGTX/inventoryapp`), renamed **NBG Hub**, and
+> moving to a multi-division central SharePoint store. This handoff describes v2026.09.29 (single division) and is
+> kept as history. Paths such as `C:\Users\Blake.Stevenson\...`, "no git / no tests", the `NBGW Hub` names, the
+> per-user data folder `%LOCALAPPDATA%\NBGW Hub` (now `NBG Hub`, copied on first run) and the hardcoded
+> `build.ps1` Python path are out of date. Current design, tools, rules and cutover plan: **CLAUDE.md** and
+> **docs/MIGRATION.md**.
+
 ### Evidence tags used throughout
 
 | Tag | Meaning |

@@ -9,6 +9,24 @@ It's built with **Python 3.12 + pywebview (Edge WebView2)** and shipped as a sin
 | **README.md** (this file) | What it is, quick start, build and release |
 | **[HANDOFF.md](HANDOFF.md)** | The full developer handoff: architecture, decisions, data stores, known issues, roadmap, open questions |
 | **[CLAUDE.md](CLAUDE.md)** | Condensed rules and context for Claude Code |
+| **[docs/MIGRATION.md](docs/MIGRATION.md)** | Multi-division / central SharePoint store: design, decisions, cutover plan |
+| **[docs/MANUAL_LIST_SETUP.md](docs/MANUAL_LIST_SETUP.md)** | Step-by-step creation of the central lists (+ `docs/CentralLists_Import.xlsx`) |
+
+> **Update 2026-10 (v2026.10.01, in development): multi-division.** The app is no longer NBGW-only. Everything
+> division-specific (Entra `companyName`, Intune category, sites and their city/device prefixes, AD domain, SQL
+> server) lives in a **division registry**, and a header dropdown switches divisions. When `config.json` has a
+> `central` block, all divisions share one SharePoint site (devices, audit log, hub data, registry, master
+> settings, each row stamped with `Division`). Without it the app behaves as the single-division v2026.09.29.
+> The text below still describes the single-division app in places (NBGW names, `SystemsData` JSON); where it
+> disagrees, CLAUDE.md and docs/MIGRATION.md win.
+>
+> `config.json` additions (names only): `central` {`site_host`, `site_path`, `lists`}, optional `divisions`
+> (fallback registry), optional `super_admins` (emails), `logs_folder` (legacy hub folder). The Lenovo key can move
+> to the in-app **Master settings** panel (super admin). `tenant_id` / `client_id` / `central` must stay in the file.
+>
+> Developer tools: `tools\pull_snapshot.py` (read-only copy of production to the local sandbox),
+> `tools\load_central.py` (snapshot to central lists, dry run by default), `tools\bump_version.py`,
+> `tools\Setup-CentralLists.ps1`. Tests: `python -m unittest discover -s tests`.
 
 ---
 
@@ -119,9 +137,10 @@ There are **no automated tests yet**. See the roadmap in HANDOFF §14.
 ## Build and release
 
 ```powershell
-# 1. Bump the version in BOTH files (every build): version.py APP_VERSION, and version.txt
-#    (filevers/prodvers tuples + FileVersion/ProductVersion strings). Format YYYY.MM.DD, then .2, .3 same day.
-# 2. Point build.ps1 line 30 ($py) at YOUR python.exe (it is hardcoded to the previous developer's path).
+# 1. Bump the version everywhere (every build):   python tools\bump_version.py
+#    (version.py, version.txt, Mock strings; build.ps1 refuses to build if they disagree)
+# 2. Python 3.12 is found via "py -3.12"; or pass -Python <path\python.exe>, or set NBG_PYTHON.
+#    build.ps1 also runs the offline tests first (-SkipTests to bypass).
 # 3. Clean build (PyInstaller can reuse a stale cache):
 Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
 powershell -ExecutionPolicy Bypass -File build.ps1        # -> dist\NBG Hub.exe  (+ dist\config.json)
