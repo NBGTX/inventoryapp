@@ -304,6 +304,244 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    # ---- Issues board: bugs and feature requests for the whole platform --------------
+    _sync_notify = False          # tests set True so notifications run inline instead of in a background thread
+
+    def _issue_hub(self):
+        from hub import platform_hub_for
+        return platform_hub_for(self._client())
+
+    def _issue_user(self) -> dict:
+        import issues
+        gc = self._client()
+        gc.sign_in(interactive=False)
+        if not (gc.account_upn or "").strip():
+            raise issues.IssueError("Sign in first.")
+        return issues.person(gc.account_upn, gc.account_name)
+
+    def _mutate_issue(self, iid: str, fn):
+        """Read-change-write one issue, retrying if someone else saved it at the same moment."""
+        import issues
+        hub = self._issue_hub()
+        for _ in range(3):
+            doc = hub.get_issue(iid)
+            if not doc:
+                raise issues.IssueError("That issue no longer exists.")
+            result = fn(doc)
+            try:
+                hub.put_issue(doc)
+                return doc, result
+            except Exception as e:
+                if e.__class__.__name__ != "HubConflict":
+                    raise
+        raise issues.IssueError("Someone else changed this issue at the same moment. Try again.")
+
+    def _notify(self, issue: dict, event: str, actor: dict, extra: str = "") -> None:
+        """Tell the right people (best effort, in the background); the outcome is added to the issue's history."""
+        import threading
+        gc = self._client()
+
+        def run():
+            try:
+                import issues
+                import notify
+                hub = self._issue_hub()
+                subs = notify.subscribers_doc(hub.get_named("issue-subscribers"))
+                to = notify.recipients(issue, event, subs, actor.get("upn", ""))
+                if not to:
+                    return
+                subject, text, body = notify.render(issue, event, actor.get("name", ""), extra)
+                res = notify.deliver(gc, to, subject, text, body, event, issue)
+                note = (f"notified {res['sent']} by {res['via']}" if res["sent"] else
+                        ("not sent: " + res["error"] if res["error"] else ""))
+                if note:
+                    def add(doc):
+                        doc.setdefault("history", []).append({"at": issues.now_iso(), "by": "", "action": "notify", "detail": f"{event}: {note}"})
+                    self._mutate_issue(issue["id"], add)
+            except Exception:
+                pass
+        if self._sync_notify:
+            run()
+        else:
+            threading.Thread(target=run, daemon=True).start()
+
+    def issue_create(self, kind: str, title: str, detail: str = "") -> dict:
+        try:
+            import issues
+            me = self._issue_user()
+            gc = self._client()
+            import version
+            doc = issues.new_issue(kind, title, detail, me, {"id": gc.division["id"], "name": gc.division.get("name", "")}, version.APP_VERSION)
+            doc["watchers"] = [me["upn"]]
+            self._issue_hub().put_issue(doc)
+            self._notify(doc, "new", me)
+            return {"ok": True, "issue": issues.summary(doc, me["upn"])}
+        except Exception as e:
+            return self._fail(e)
+
+    def issues_list(self) -> dict:
+        try:
+            import issues
+            me = self._issue_user()
+            gc = self._client()
+            items = [issues.summary(d, me["upn"]) for d in self._issue_hub().list_issues()]
+            items.sort(key=lambda x: x["updated_at"], reverse=True)
+            return {"ok": True, "issues": items, "triage": gc.is_super_admin(), "me": me["upn"],
+                    "statuses": [{"id": k, "label": v} for k, v in issues.STATUSES]}
+        except Exception as e:
+            return self._fail(e)
+
+    def issue_get(self, issue_id: str) -> dict:
+        try:
+            import issues
+            me = self._issue_user()
+            doc = self._issue_hub().get_issue(issue_id)
+            if not doc:
+                return {"ok": False, "error": "That issue no longer exists."}
+            return {"ok": True, "issue": doc, "summary": issues.summary(doc, me["upn"]), "triage": self._client().is_super_admin(),
+                    "can_edit": self._client().is_super_admin() or me["upn"] == (doc.get("reporter") or {}).get("upn")}
+        except Exception as e:
+            return self._fail(e)
+
+    def issue_comment(self, issue_id: str, text: str) -> dict:
+        try:
+            import issues
+            me = self._issue_user()
+            doc, _ = self._mutate_issue(issue_id, lambda d: issues.apply_comment(d, me, text))
+            self._notify(doc, "comment", me, issues.clean_text(text, "comment")[:500])
+            return {"ok": True, "issue": doc}
+        except Exception as e:
+            return self._fail(e)
+
+    def issue_vote(self, issue_id: str) -> dict:
+        try:
+            import issues
+            me = self._issue_user()
+            doc, on = self._mutate_issue(issue_id, lambda d: issues.toggle(d, "votes", me["upn"]))
+            return {"ok": True, "voted": on, "votes": len(doc.get("votes") or [])}
+        except Exception as e:
+            return self._fail(e)
+
+    def issue_watch(self, issue_id: str) -> dict:
+        try:
+            import issues
+            me = self._issue_user()
+            doc, on = self._mutate_issue(issue_id, lambda d: issues.toggle(d, "watchers", me["upn"]))
+            return {"ok": True, "watching": on}
+        except Exception as e:
+            return self._fail(e)
+
+    def issue_update(self, issue_id: str, fields: dict) -> dict:
+        """Status / assignee: super admins only. Title / detail / type: super admins or the person who reported it."""
+        try:
+            import issues
+            me = self._issue_user()
+            gc = self._client()
+            fields = fields or {}
+            sa = gc.is_super_admin()
+            if ("status" in fields or "assignee" in fields) and not sa:
+                return {"ok": False, "error": "Only a super admin can change the status or assignee."}
+
+            def change(d):
+                if not sa and me["upn"] != (d.get("reporter") or {}).get("upn") and any(k in fields for k in ("title", "detail", "type")):
+                    raise issues.IssueError("You can only edit issues you reported.")
+                ev = issues.apply_triage(d, me, fields) if sa else []
+                issues.apply_edit(d, me, fields)
+                return ev
+            doc, events = self._mutate_issue(issue_id, change)
+            if events:
+                self._notify(doc, "status", me)
+            return {"ok": True, "issue": doc}
+        except Exception as e:
+            return self._fail(e)
+
+    def issue_delete(self, issue_id: str) -> dict:
+        try:
+            if not self._client().is_super_admin():
+                return {"ok": False, "error": "Only a super admin can delete an issue."}
+            self._issue_hub().delete_issue(issue_id)
+            return {"ok": True}
+        except Exception as e:
+            return self._fail(e)
+
+    def issues_import_legacy(self) -> dict:
+        """Super admins: copy the old per-division 'Report bug / feature' lists onto the board (once per item)."""
+        try:
+            import issues
+            from hub import hub_for
+            gc = self._client()
+            if not gc.is_super_admin():
+                return {"ok": False, "error": "Only a super admin can import."}
+            hub = self._issue_hub()
+            have = {d.get("legacy_id") for d in hub.list_issues() if d.get("legacy_id")}
+            added = 0
+            for d in list(gc.registry):
+                try:
+                    c = gc.clone_for_snapshot()
+                    c.set_division(d["id"], persist=False)
+                    for fb in hub_for(c).get_feedback() or []:
+                        key = fb.get("id")
+                        if not key or key in have:
+                            continue
+                        hub.put_issue(issues.legacy_to_issue(fb, d))
+                        have.add(key)
+                        added += 1
+                except Exception:
+                    continue
+            return {"ok": True, "imported": added}
+        except Exception as e:
+            return self._fail(e)
+
+    # ---- who is told about issue events (super admins) ----
+    def get_issue_notifications(self) -> dict:
+        try:
+            import issues
+            import notify
+            gc = self._client()
+            if not gc.is_super_admin():
+                return {"ok": True, "super_admin": False}
+            hub = self._issue_hub()
+            return {"ok": True, "super_admin": True, "subscribers": notify.subscribers_doc(hub.get_named("issue-subscribers")),
+                    "events": issues.EVENTS, "webhook_set": bool(gc.get_setting("notify_webhook_url", "")), "can_mail": gc.can_send_mail()}
+        except Exception as e:
+            return self._fail(e)
+
+    def save_issue_subscribers(self, subscribers: list) -> dict:
+        try:
+            import notify
+            gc = self._client()
+            if not gc.is_super_admin():
+                return {"ok": False, "error": "Only a super admin can change who is notified."}
+            clean = notify.subscribers_doc({"subscribers": subscribers})
+            if len(clean) > 50:
+                return {"ok": False, "error": "At most 50 people."}
+            self._issue_hub().put_named("issue-subscribers", {"subscribers": clean})
+            return {"ok": True, "subscribers": clean}
+        except Exception as e:
+            return self._fail(e)
+
+    def issue_notify_test(self) -> dict:
+        """Send a sample message to the current subscribers so the webhook/mail path can be checked."""
+        try:
+            import issues
+            import notify
+            gc = self._client()
+            if not gc.is_super_admin():
+                return {"ok": False, "error": "Only a super admin can send a test."}
+            me = issues.person(gc.account_upn, gc.account_name)
+            hub = self._issue_hub()
+            subs = notify.subscribers_doc(hub.get_named("issue-subscribers"))
+            demo = issues.new_issue("bug", "Test notification", "This is a test from Settings > Issue notifications.", me,
+                                    {"id": gc.division["id"], "name": gc.division.get("name", "")}, "")
+            to = [{"upn": s["upn"], "name": s["name"]} for s in subs] or [{"upn": me["upn"], "name": me["name"]}]
+            subject, text, body = notify.render(demo, "new", me["name"])
+            res = notify.deliver(gc, to, subject, text, body, "new", demo)
+            if res["sent"]:
+                return {"ok": True, "sent": res["sent"], "via": res["via"]}
+            return {"ok": False, "error": res["error"] or "Nothing was sent."}
+        except Exception as e:
+            return self._fail(e)
+
     # ---- BG Tools people-search scopes (platform-wide; super admin edits) ----
     def _scopes(self) -> dict:
         """Saved scopes if any, else config.json, else the built-in lists."""

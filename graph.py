@@ -984,6 +984,7 @@ class GraphClient:
                 self._token_exp = float(_claims["exp"])
         except Exception:
             pass
+        self._granted_scopes = set(_granted.split())
         self._has_dir_read = "directory.read.all" in _granted
         self._has_auditlog_read = "auditlog.read.all" in _granted
         self._has_authmethod_read = "userauthenticationmethod.read.all" in _granted
@@ -1652,6 +1653,10 @@ class GraphClient:
             pass
         self._loc_cache[key] = loc
         return loc
+
+    def can_send_mail(self) -> bool:
+        """True only if the current token ALREADY has Mail.Send. The app never requests it (that would prompt admin consent)."""
+        return "mail.send" in getattr(self, "_granted_scopes", set())
 
     def division_prefs(self) -> dict:
         """The active division's preferences document (Settings > General), cached for 5 minutes. {} on any problem."""

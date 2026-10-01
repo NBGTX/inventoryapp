@@ -1324,45 +1324,6 @@ const DeleteView = {
   },
 };
 
-/* ---- report bug / feature request (modal, opens over any view) ----------- */
-const Feedback = {
-  open(type) {
-    document.getElementById("modalRoot").innerHTML =
-      `<div class="overlay"><div class="modal" style="width:520px;max-width:94vw;">
-        <div class="modal-head"><h3>Report a bug / request a feature</h3><button onclick="Feedback.close()">&times;</button></div>
-        <div class="modal-body">
-          <p style="margin-top:0;color:var(--muted);font-size:13px;">Saved to a shared file in the Systems library so the team can track it.</p>
-          <div class="field"><label>Type</label>
-            <select id="mfbType"><option value="bug">Bug</option><option value="feature">Feature request</option></select></div>
-          <div class="field"><label>Title</label><input id="mfbTitle" placeholder="Short summary" autofocus></div>
-          <div class="field"><label>Details</label>
-            <textarea id="mfbDetail" rows="4" placeholder="What happened, or what would you like?"
-              style="width:100%;box-sizing:border-box;background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:14px;"></textarea></div>
-        </div>
-        <div class="modal-foot">
-          <button class="ghost" onclick="Feedback.close()">Cancel</button>
-          <button class="primary" onclick="Feedback.submit()">Submit</button>
-        </div></div></div>`;
-    if (type) document.getElementById("mfbType").value = type;
-    document.getElementById("mfbTitle").focus();
-  },
-  close() { document.getElementById("modalRoot").innerHTML = ""; },
-  async submit() {
-    const title = (document.getElementById("mfbTitle").value || "").trim();
-    if (!title) return App.toast("Add a short title.", true);
-    const payload = {
-      type: document.getElementById("mfbType").value,
-      title,
-      detail: (document.getElementById("mfbDetail").value || "").trim(),
-    };
-    const btn = document.querySelector(".modal-foot .primary"); if (btn) btn.disabled = true;
-    const r = await Backend.call("hub_add_feedback", payload);
-    if (!r || !r.ok) { App.toast((r && r.error) || "Could not submit.", true); if (btn) btn.disabled = false; return; }
-    this.close();
-    App.toast(payload.type === "feature" ? "Feature request submitted — thanks!" : "Bug report submitted — thanks!");
-  },
-};
-
 /* ---- log view ------------------------------------------------------------ */
 const LogView = {
   async open() {
@@ -1432,6 +1393,7 @@ const Nav = {
     if (view === "projecthub") ProjectHub.load();
     if (view === "bgtools") BGTools.load();
     if (view === "settings") Settings.load();
+    if (view === "issues") Issues.load();
     if (view === "dashboard") SyncLine.refresh();
   },
 };
@@ -4172,7 +4134,6 @@ const Hub = {
     if (el) el.classList.add("active");
     if (v === "home") this.renderActivity();
     if (v === "admin") { this.buildAdminSelect(); this.loadAdmin(); }
-    if (v === "feedback") this.renderFeedback();
   },
 
   genId(t) { return (t || "setup") + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7); },
@@ -4559,35 +4520,7 @@ const Hub = {
   },
 
   /* ---- feedback ---- */
-  submitFeedback() {
-    const type = document.getElementById("fbType").value;
-    const title = document.getElementById("fbTitle").value.trim();
-    const detail = document.getElementById("fbDetail").value.trim();
-    if (!title) { document.getElementById("fbTitle").focus(); return App.toast("Add a short title.", true); }
-    Backend.call("hub_add_feedback", { type, title, detail }).then(r => {
-      if (!r || !r.ok) return App.toast("Could not save.", true);
-      document.getElementById("fbTitle").value = ""; document.getElementById("fbDetail").value = "";
-      App.toast("Thanks — saved to the shared list."); this.renderFeedback();
-    });
-  },
-  renderFeedback() {
-    const host = document.getElementById("feedbackList");
-    Backend.call("hub_get_feedback").then(r => {
-      const items = (r && r.ok && r.feedback) ? r.feedback : [];
-      document.getElementById("fbCount").textContent = items.length;
-      if (!items.length) { host.innerHTML = `<div class="empty">Nothing reported yet.</div>`; return; }
-      host.innerHTML = "";
-      items.slice(0, 50).forEach(f => {
-        const when = f.at ? Tz.date(f.at, { month: "short", day: "numeric", year: "numeric" }) : "";
-        const row = document.createElement("div"); row.className = "fb-row";
-        row.innerHTML = `<span class="ft ${f.type === "bug" ? "bug" : "feature"}">${f.type === "bug" ? "Bug" : "Feature"}</span>
-          <div class="fbody"><div class="fbtitle">${esc(f.title || "")}</div>
-          ${f.detail ? `<div class="fbdetail">${esc(f.detail)}</div>` : ""}
-          <div class="fbwho">${esc(f.by || "")} · ${when} · ${esc(f.status || "open")}</div></div>`;
-        host.appendChild(row);
-      });
-    });
-  },
+
 
   /* ---- exit guard + modal ---- */
   _modalCb: null,
@@ -4869,6 +4802,7 @@ Object.assign(Mock, {
     { key: "auto_sync", group: "Sync", label: "Sync automatically when the app opens", kind: "choice", secret: false, status: "active", options: [{ id: "on", label: "On (default)" }, { id: "off", label: "Off - only the Sync buttons sync" }], help: "With it on, opening the app starts a sync for the division you are in. Turn it off to stop that on every PC (the NBG_NO_AUTOSYNC setting on a single PC still wins)." },
     { key: "upgrade_cpu_years", group: "Upgrades", label: "Queue for upgrade: processor older than (years)", kind: "number", secret: false, min: 0, max: 15, default: 5, status: "active", help: "A device whose processor generation was released this many years ago or more is added to the Upgrade list. 0 turns this rule off. Needs the device's CPU to be known." },
     { key: "upgrade_warranty_months", group: "Upgrades", label: "Queue for upgrade: warranty ended at least (months)", kind: "number", secret: false, min: 0, max: 60, default: 0, status: "active", help: "A device whose warranty ended this many months ago or more is added to the Upgrade list. 0 (the default) turns this rule off. Works for any maker, because it only needs the warranty date." },
+    { key: "notify_webhook_url", group: "Notifications", label: "Notification webhook (sends the e-mails)", kind: "secret", secret: true, status: "active", help: "The address of a Power Automate flow (trigger: 'When an HTTP request is received') that e-mails or Teams-messages the people the app names. Stored hidden. Without it, issue e-mails can only be sent if the signed-in user's token already has Mail.Send, which it normally does not." },
     { key: "intune_enrich_per_sync", group: "Sync", label: "Vendor lookups per sync run", kind: "number", secret: false, min: 0, max: 500, default: 75, status: "active", help: "How many devices get a Lenovo/Dell/HP spec lookup in one sync. Lower = gentler on vendor APIs, slower to fill in." },
     { key: "latest_version", group: "Releases", label: "Latest released version", kind: "version", secret: false, status: "active", help: "The newest NBG Hub build, for example 2026.10.15. Techs on an older build see an 'Update available' notice." },
     { key: "min_version", group: "Releases", label: "Oldest allowed version", kind: "version", secret: false, status: "active", help: "Builds older than this show a red 'Update required' notice. Raise it when a release changes how data is stored." },
@@ -4950,6 +4884,31 @@ Object.assign(Mock, {
     return { ok: false, error: serial + " was not found in inventory." };
   },
   async hub_clear_upgrade_ignored() { return { ok: true, cleared: 0 }; },
+  /* issues board - mirrors Api.issue_* */
+  _issues: [
+    { id: "iss-demo-1", type: "bug", title: "Hot spares window shows the wrong site", detail: "Opened from the dashboard tile, the LTR column is empty.", status: "open", reporter: { upn: "demo@nucor.com", name: "Demo User" }, division: { id: "nbgw", name: "NBGW" }, version: "2026.10.01", created_at: "2026-10-01T12:00:00Z", updated_at: "2026-10-01T15:00:00Z", assignee: null, votes: ["a@x.com"], watchers: ["demo@nucor.com"], comments: [{ id: "c1", by: "Sims", upn: "s@x.com", at: "2026-10-01T15:00:00Z", text: "Reproduced. Looking." }], history: [{ at: "2026-10-01T12:00:00Z", by: "Demo User", action: "created", detail: "bug reported" }] },
+    { id: "iss-demo-2", type: "feature", title: "Export the Upgrade list to Excel", detail: "", status: "planned", reporter: { upn: "a@x.com", name: "Blake" }, division: { id: "nbgtx", name: "NBG - Terrell" }, version: "2026.10.01", created_at: "2026-09-30T09:00:00Z", updated_at: "2026-09-30T09:00:00Z", assignee: { upn: "dev@x.com", name: "Dev" }, votes: [], watchers: [], comments: [], history: [{ at: "2026-09-30T09:00:00Z", by: "Blake", action: "created", detail: "feature reported" }] }],
+  _sum(d) { return { id: d.id, short: "#" + d.id.slice(-6).toUpperCase(), type: d.type, title: d.title, status: d.status, reporter: d.reporter, division: d.division, created_at: d.created_at, updated_at: d.updated_at, assignee: d.assignee, votes: d.votes.length, comments: d.comments.length, voted: d.votes.includes("demo@nucor.com"), watching: d.watchers.includes("demo@nucor.com"), mine: d.reporter.upn === "demo@nucor.com" }; },
+  async issues_list() { return { ok: true, issues: this._issues.map(d => this._sum(d)), triage: true, me: "demo@nucor.com", statuses: [["open", "Open"], ["planned", "Planned"], ["in_progress", "In progress"], ["done", "Done"], ["wont_do", "Won't do"]].map(([id, label]) => ({ id, label })) }; },
+  async issue_get(id) { const d = this._issues.find(x => x.id === id); return d ? { ok: true, issue: JSON.parse(JSON.stringify(d)), summary: this._sum(d), triage: true, can_edit: true } : { ok: false, error: "That issue no longer exists." }; },
+  async issue_create(kind, title, detail) {
+    if (!(title || "").trim()) return { ok: false, error: "Add a short title." };
+    const d = { id: "iss-" + Date.now(), type: kind, title: title.trim(), detail: detail || "", status: "open", reporter: { upn: "demo@nucor.com", name: "Demo User" }, division: { id: "nbgw", name: "NBGW" }, version: "2026.10.01", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), assignee: null, votes: [], watchers: ["demo@nucor.com"], comments: [], history: [{ at: new Date().toISOString(), by: "Demo User", action: "created", detail: kind + " reported" }] };
+    this._issues.unshift(d); return { ok: true, issue: this._sum(d) };
+  },
+  async issue_comment(id, text) { const d = this._issues.find(x => x.id === id); if (!(text || "").trim()) return { ok: false, error: "Write a comment first." }; d.comments.push({ id: "c" + Date.now(), by: "Demo User", upn: "demo@nucor.com", at: new Date().toISOString(), text }); d.updated_at = new Date().toISOString(); return { ok: true, issue: d }; },
+  async issue_vote(id) { const d = this._issues.find(x => x.id === id), u = "demo@nucor.com", i = d.votes.indexOf(u); if (i >= 0) d.votes.splice(i, 1); else d.votes.push(u); return { ok: true, voted: i < 0, votes: d.votes.length }; },
+  async issue_watch(id) { const d = this._issues.find(x => x.id === id), u = "demo@nucor.com", i = d.watchers.indexOf(u); if (i >= 0) d.watchers.splice(i, 1); else d.watchers.push(u); return { ok: true, watching: i < 0 }; },
+  async issue_update(id, f) {
+    const d = this._issues.find(x => x.id === id); if (f.status) d.status = f.status; if ("assignee" in f) d.assignee = f.assignee;
+    if (f.title !== undefined) d.title = f.title; if (f.detail !== undefined) d.detail = f.detail; d.updated_at = new Date().toISOString(); return { ok: true, issue: d };
+  },
+  async issue_delete(id) { this._issues = this._issues.filter(x => x.id !== id); return { ok: true }; },
+  async issues_import_legacy() { return { ok: true, imported: 0 }; },
+  _subs: [{ upn: "blake@nucor.com", name: "Blake Stevenson", events: ["new", "status", "comment"] }],
+  async get_issue_notifications() { return { ok: true, super_admin: true, subscribers: JSON.parse(JSON.stringify(this._subs)), events: ["new", "status", "comment"], webhook_set: false, can_mail: false }; },
+  async save_issue_subscribers(list) { this._subs = list; return { ok: true, subscribers: list }; },
+  async issue_notify_test() { return { ok: false, error: "No way to send e-mail is set up yet (add a notification webhook in Settings > Integrations)." }; },
   async get_update_info() { return { ok: true, current: "2026.10.01", latest: "", min: "", update_available: false, update_required: false }; },
   async get_my_role() { return { ok: true, role: "super", sections: ["models", "links", "access", "sites", "sql", "perms", "storage"] }; },
   async get_role_access() {

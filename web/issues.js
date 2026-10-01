@@ -1,0 +1,182 @@
+/* ---- Issues board: bugs and feature requests for the whole platform --------------------------------
+   One shared list (all divisions). Anyone signed in reports, comments, votes and watches; super admins triage
+   (status, assignee, delete). The page only displays: every rule is enforced by the Api (issues.py).
+   Uses esc()/attr()/Backend/App/Tz/DirPicker/Ui/Help from app.js. */
+const Issues = {
+  list: [], meta: { triage: false, me: "", statuses: [] }, cur: null, detail: null,
+  f: { status: "open", type: "", mine: false, q: "", sort: "updated" },
+  STATUS_LABEL: { open: "Open", planned: "Planned", in_progress: "In progress", done: "Done", wont_do: "Won't do" },
+
+  async load() {
+    const host = document.getElementById("issuesHost");
+    if (!host) return;
+    if (!this.list.length && !this.cur) host.innerHTML = `<div class="empty">Loading…</div>`;
+    const r = await Backend.call("issues_list");
+    if (!r || !r.ok) { host.innerHTML = `<div class="empty">${esc((r && r.error) || "Could not load the issues.")}<div style="margin-top:10px"><button class="rowbtn" onclick="Issues.load()">↻ Retry</button></div></div>`; return; }
+    this.list = r.issues; this.meta = { triage: !!r.triage, me: r.me || "", statuses: r.statuses || [] };
+    if (this.cur) return this.open(this.cur, true);
+    this.renderList();
+  },
+  refresh(btn) { return Ui.refreshing(btn, () => this.load(), "Issues"); },
+
+  /* ---------------------------------------------------------------- list */
+  ago(iso) {
+    const t = Date.parse(iso || ""); if (isNaN(t)) return "";
+    const m = Math.round((Date.now() - t) / 60000);
+    if (m < 1) return "just now"; if (m < 60) return m + " min ago";
+    const h = Math.round(m / 60); if (h < 24) return h + " h ago";
+    const d = Math.round(h / 24); if (d < 31) return d + " day" + (d === 1 ? "" : "s") + " ago";
+    return Tz.date(iso, { year: "numeric", month: "short", day: "numeric" });
+  },
+  pill(st) { return `<span class="iss-st ${attr(st)}">${esc(this.STATUS_LABEL[st] || st)}</span>`; },
+  icon(t) { return t === "feature" ? "💡" : "🐞"; },
+  filtered() {
+    const f = this.f, q = f.q.toLowerCase().trim(), me = (this.meta.me || "").toLowerCase();
+    let rows = this.list.filter(i => (f.status === "all" || i.status === f.status) && (!f.type || i.type === f.type) && (!f.mine || i.mine)
+      && (!q || (i.title + " " + i.short + " " + ((i.reporter || {}).name || "") + " " + ((i.division || {}).name || "")).toLowerCase().includes(q)));
+    const by = { updated: (a, b) => b.updated_at.localeCompare(a.updated_at), newest: (a, b) => b.created_at.localeCompare(a.created_at),
+                 votes: (a, b) => b.votes - a.votes || b.updated_at.localeCompare(a.updated_at), comments: (a, b) => b.comments - a.comments };
+    return rows.sort(by[f.sort] || by.updated);
+  },
+  renderList() {
+    this.cur = null; this.detail = null;
+    const host = document.getElementById("issuesHost");
+    const count = s => s === "all" ? this.list.length : this.list.filter(i => i.status === s).length;
+    const chips = ["open", "planned", "in_progress", "done", "wont_do", "all"].map(s =>
+      `<button class="iss-chip${this.f.status === s ? " on" : ""}" onclick="Issues.set('status','${s}')">${s === "all" ? "All" : this.STATUS_LABEL[s]} <span>${count(s)}</span></button>`).join("");
+    const rows = this.filtered();
+    host.innerHTML = `
+      <div class="iss-bar">${chips}</div>
+      <div class="iss-tools">
+        <input id="issQ" placeholder="Search title, id, person or division…" value="${attr(this.f.q)}" oninput="Issues.typed(this.value)">
+        <select onchange="Issues.set('type',this.value)"><option value="">Bugs and features</option><option value="bug"${this.f.type === "bug" ? " selected" : ""}>Bugs</option><option value="feature"${this.f.type === "feature" ? " selected" : ""}>Feature requests</option></select>
+        <select onchange="Issues.set('sort',this.value)">${[["updated", "Recently updated"], ["newest", "Newest"], ["votes", "Most votes"], ["comments", "Most comments"]].map(([v, l]) => `<option value="${v}"${this.f.sort === v ? " selected" : ""}>${l}</option>`).join("")}</select>
+        <label class="sw-chk"><input type="checkbox"${this.f.mine ? " checked" : ""} onchange="Issues.set('mine',this.checked)"> Mine</label>
+      </div>
+      <div class="iss-list">${rows.length ? rows.map(i => `
+        <div class="iss-row" onclick="Issues.open('${attr(i.id)}')">
+          <div class="iss-ic">${this.icon(i.type)}</div>
+          <div class="iss-main"><div class="iss-title">${esc(i.title)}</div>
+            <div class="iss-meta">${esc(i.short)} · opened ${esc(this.ago(i.created_at))} by ${esc((i.reporter || {}).name || "unknown")}${(i.division || {}).name ? " · " + esc(i.division.name) : ""}${i.assignee ? " · assigned to " + esc(i.assignee.name) : ""}</div></div>
+          <div class="iss-side">${this.pill(i.status)}<span title="Votes">👍 ${i.votes}</span><span title="Comments">💬 ${i.comments}</span></div>
+        </div>`).join("") : `<div class="empty">${this.list.length ? "Nothing matches these filters." : "No issues yet. Use New issue to report the first one."}</div>`}</div>`;
+  },
+  set(k, v) { this.f[k] = v; this.renderList(); },
+  _t: null,
+  typed(v) { clearTimeout(this._t); this._t = setTimeout(() => { this.f.q = v; this.renderList(); const el = document.getElementById("issQ"); if (el) { el.focus(); el.setSelectionRange(v.length, v.length); } }, 200); },
+
+  /* ---------------------------------------------------------------- detail */
+  async open(id, quiet) {
+    const host = document.getElementById("issuesHost");
+    this.cur = id;
+    if (!quiet) host.innerHTML = `<div class="empty">Loading…</div>`;
+    const r = await Backend.call("issue_get", id);
+    if (!r || !r.ok) { this.cur = null; App.toast((r && r.error) || "Could not open it.", true); return this.load(); }
+    this.detail = r;
+    this.renderDetail();
+  },
+  timeline(d) {
+    const ev = [];
+    (d.comments || []).forEach(c => ev.push({ at: c.at, html: `<div class="iss-cm"><div class="iss-cm-h"><b>${esc(c.by || "someone")}</b> <span>commented ${esc(this.ago(c.at))}</span></div><div class="iss-cm-b">${esc(c.text).replace(/\n/g, "<br>")}</div></div>` }));
+    (d.history || []).filter(h => h.action !== "created").forEach(h => {
+      const what = { status: "changed the status", assigned: "assigned this to", edited: "edited this", notify: "notification" }[h.action] || h.action;
+      ev.push({ at: h.at, html: `<div class="iss-ev">${h.action === "notify" ? "✉ " : "● "}${h.by ? `<b>${esc(h.by)}</b> ` : ""}${esc(what)}${h.detail ? ": " + esc(h.detail) : ""} <span>${esc(this.ago(h.at))}</span></div>` });
+    });
+    return ev.sort((a, b) => a.at.localeCompare(b.at)).map(e => e.html).join("");
+  },
+  renderDetail() {
+    const r = this.detail, d = r.issue, s = r.summary, host = document.getElementById("issuesHost"), tri = !!r.triage;
+    const statusSel = tri ? `<select onchange="Issues.update({status:this.value})">${(this.meta.statuses.length ? this.meta.statuses : Object.entries(this.STATUS_LABEL).map(([id, label]) => ({ id, label })))
+      .map(x => `<option value="${attr(x.id)}"${x.id === d.status ? " selected" : ""}>${esc(x.label)}</option>`).join("")}</select>` : this.pill(d.status);
+    host.innerHTML = `
+      <button class="ghost" onclick="Issues.back()">← All issues</button>
+      <div class="iss-detail">
+        <div class="iss-d-main">
+          <h3 class="iss-d-title">${this.icon(d.type)} ${esc(d.title)} <span class="muted">${esc(s.short)}</span></h3>
+          <div class="iss-d-sub">${this.pill(d.status)} <span class="muted">${esc((d.reporter || {}).name || "unknown")} opened this ${esc(this.ago(d.created_at))}</span></div>
+          ${r.can_edit ? `<div style="margin:6px 0"><button class="ghost" onclick="Issues.editBox()">✎ Edit title / description</button></div><div id="issEdit"></div>` : ""}
+          <div class="iss-desc">${d.detail ? esc(d.detail).replace(/\n/g, "<br>") : `<span class="muted">No description.</span>`}</div>
+          <h4 class="blkhead" style="margin-top:18px">Activity</h4>
+          <div class="iss-tl">${this.timeline(d) || `<span class="muted">Nothing yet.</span>`}</div>
+          <div class="iss-newcm"><textarea id="issCm" rows="3" placeholder="Write a comment…"></textarea>
+            <div style="text-align:right;margin-top:8px"><button class="primary" onclick="Issues.comment()">Comment</button></div></div>
+        </div>
+        <aside class="iss-d-side">
+          <div class="iss-box"><label>Status</label>${statusSel}</div>
+          <div class="iss-box"><label>Assigned to</label>${tri ? `<div id="issAsg"></div>` : ""}
+            <div id="issAsgNow">${d.assignee ? esc(d.assignee.name) + (tri ? ` <button class="rowbtn" onclick="Issues.update({assignee:null})">Unassign</button>` : "") : `<span class="muted">Nobody yet</span>`}</div></div>
+          <div class="iss-box"><label>Type</label>${this.icon(d.type)} ${d.type === "feature" ? "Feature request" : "Bug"}</div>
+          <div class="iss-box"><label>Division</label>${esc((d.division || {}).name || "—")}</div>
+          <div class="iss-box"><label>App version</label>${esc(d.version || "—")}</div>
+          <div class="iss-box"><label>Updated</label>${esc(Tz.dt(d.updated_at))}</div>
+          <div class="iss-box"><button class="ghost" onclick="Issues.vote()">👍 ${s.voted ? "Voted" : "Vote"} · ${s.votes}</button>
+            <button class="ghost" onclick="Issues.watch()" title="Get e-mails about this issue">${s.watching ? "👁 Watching" : "👁 Watch"}</button></div>
+          ${tri ? `<div class="iss-box"><button class="ghost" style="color:var(--red);border-color:var(--red)" onclick="Issues.del()">Delete issue</button></div>` : ""}
+        </aside>
+      </div>`;
+    if (tri) DirPicker.mount("issAsg", "user", it => this.update({ assignee: { upn: it.upn, name: it.name || it.upn } }), "Assign to a person…");
+  },
+  back() { this.cur = null; this.detail = null; this.load(); },
+  editBox() {
+    const d = this.detail.issue, el = document.getElementById("issEdit");
+    el.innerHTML = `<div class="field"><label>Title</label><input id="issEt" value="${attr(d.title)}" maxlength="120"></div>
+      <div class="field"><label>Description</label><textarea id="issEd" rows="5">${esc(d.detail || "")}</textarea></div>
+      <div style="margin:6px 0 12px"><button class="primary" onclick="Issues.saveEdit()">Save</button> <button class="ghost" onclick="document.getElementById('issEdit').innerHTML=''">Cancel</button></div>`;
+  },
+  saveEdit() { return this.update({ title: document.getElementById("issEt").value, detail: document.getElementById("issEd").value }); },
+  async update(fields) {
+    const r = await Backend.call("issue_update", this.cur, fields);
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+    App.toast("Saved."); this.open(this.cur, true);
+  },
+  async comment() {
+    const el = document.getElementById("issCm"), text = (el.value || "").trim();
+    if (!text) return App.toast("Write a comment first.", true);
+    const r = await Backend.call("issue_comment", this.cur, text);
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not comment.", true);
+    this.open(this.cur, true);
+  },
+  async vote() { const r = await Backend.call("issue_vote", this.cur); if (r && r.ok) this.open(this.cur, true); else App.toast((r && r.error) || "Could not vote.", true); },
+  async watch() {
+    const r = await Backend.call("issue_watch", this.cur);
+    if (r && r.ok) { App.toast(r.watching ? "You will get e-mails about this issue." : "You stopped watching this issue."); this.open(this.cur, true); }
+    else App.toast((r && r.error) || "Could not do that.", true);
+  },
+  async del() {
+    if (!confirm("Delete this issue for everyone? This cannot be undone.")) return;
+    const r = await Backend.call("issue_delete", this.cur);
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not delete.", true);
+    App.toast("Issue deleted."); this.back();
+  },
+};
+
+/* The sidebar's "Report bug / feature" button: a small form that files an issue on the board */
+const Feedback = {
+  open(type) {
+    document.getElementById("modalRoot").innerHTML =
+      `<div class="overlay"><div class="modal" style="width:560px;max-width:94vw;">
+        <div class="modal-head"><h3>New issue</h3><button onclick="Feedback.close()">&times;</button></div>
+        <div class="modal-body">
+          <div class="field"><label>What is it?</label>
+            <select id="mfbType"><option value="bug">Bug: something is wrong</option><option value="feature">Feature request: I would like…</option></select></div>
+          <div class="field"><label>Title</label><input id="mfbTitle" placeholder="Short summary" maxlength="120" autocomplete="off"></div>
+          <div class="field"><label>Details</label>
+            <textarea id="mfbDetail" rows="6" placeholder="What happened, what did you expect, and which page were you on? (Steps help.)"></textarea></div>
+          <p class="muted" style="font-size:12px;margin:0">Everyone using NBG Hub can see and comment on this. Do not paste passwords or personal data.</p>
+        </div>
+        <div class="modal-foot"><button class="ghost" onclick="Feedback.close()">Cancel</button><button class="primary" onclick="Feedback.submit()">Submit</button></div>
+      </div></div>`;
+    if (type) document.getElementById("mfbType").value = type;
+    setTimeout(() => { const t = document.getElementById("mfbTitle"); if (t) t.focus(); }, 30);
+  },
+  close() { document.getElementById("modalRoot").innerHTML = ""; },
+  async submit() {
+    const title = (document.getElementById("mfbTitle").value || "").trim();
+    if (!title) return App.toast("Add a short title.", true);
+    const r = await Backend.call("issue_create", document.getElementById("mfbType").value, title, (document.getElementById("mfbDetail").value || "").trim());
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not submit.", true);
+    this.close();
+    App.toast("Thanks: filed as " + r.issue.short + ". Find it under Issues.");
+    if (document.getElementById("appview-issues").classList.contains("active")) Issues.load();
+  },
+};

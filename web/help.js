@@ -44,7 +44,7 @@ const Help = {
           <li><b>Spinner chip above your name</b>: a long job (sync, software pull, MFA) is still running. You can move to other pages meanwhile.</li>
           <li><b>"Saving…" pill</b> at the top: a save is in progress. Wait for it to finish before closing the app.</li>
           <li><b>Version</b> (bottom of the sidebar): click it to see which version each person is running. A yellow or red version means an update is available or required.</li>
-          <li><b>Report bug / feature</b>: sends a note to the Systems team's shared list.</li>
+          <li><b>Report bug / feature</b>: opens a short form that files an issue on the shared Issues board.</li>
           <li><b>Settings</b>: what you see there depends on your role. Everyone sees General; division admins see more; super admins also see the Platform section.</li>
         </ul>`
     },
@@ -95,9 +95,25 @@ const Help = {
         <p><b>Reset this list</b> throws away your edits to the list on screen and restores it to the <b>template</b> (the starting checklists a super admin maintains in Settings → Platform → Template checklists). Only this list is reset.</p>
         <p>These edits only change <b>this division's</b> checklists. A super admin editing the template (you will see a banner) changes what <i>new</i> divisions start with.</p>`
     },
-    "hub-feedback": {
-      title: "Reporting a bug or asking for a feature",
-      html: `<p>Choose <b>Bug</b> or <b>Feature request</b>, give it a short title, describe what happened (or what you would like), and click <b>Submit</b>. It is saved to a shared list the Systems team reads. Open items are listed below the form so you can check whether it has already been reported.</p>`
+    /* ------------------------------------------------------------------ Issues */
+    issues: {
+      title: "How to use Issues",
+      html: `
+        <p>Issues is the shared list of <b>bugs</b> and <b>feature requests</b> for NBG Hub. It is the same list for every division, so the team that maintains the app sees everything in one place.</p>
+        <h5>Reporting</h5>
+        <p>Click <b>+ New issue</b> (or <b>Report bug / feature</b> at the bottom of the sidebar). Choose bug or feature request, give it a short title and describe it: what you did, what you expected and what happened. Everyone using the app can read and comment on it, so do not paste passwords or personal data.</p>
+        <h5>Finding and following</h5>
+        <ul>
+          <li>The chips filter by <b>status</b>; the search box matches the title, the id (like #A3F9C1), the reporter and the division. <b>Mine</b> shows issues you reported or that are assigned to you.</li>
+          <li>Click an issue to read it. <b>Comment</b> to add detail or ask a question; <b>Vote</b> (👍) if you hit it too, which helps decide what to fix first; <b>Watch</b> to get e-mails about it (commenting also watches it).</li>
+        </ul>
+        <h5>Statuses</h5>
+        <ul>
+          <li><b>Open</b>: new, not looked at yet. <b>Planned</b>: accepted, will be done. <b>In progress</b>: someone is working on it. <b>Done</b>: finished. <b>Won't do</b>: closed without a change (the comments say why).</li>
+          <li>Only <b>super admins</b> change the status, assign people and delete issues. The person who reported an issue can edit its title and description.</li>
+        </ul>
+        <h5>E-mails</h5>
+        <p>People are e-mailed when an issue is created, changes status or gets a comment, but never about their own actions. Reporters, assignees and watchers hear about their issues; a super admin chooses who gets <b>everything</b> in Settings → Platform → Issue notifications.</p>`
     },
 
     /* ------------------------------------------------------------------ Devices */
@@ -359,6 +375,19 @@ const Help = {
     "set-admins": {
       title: "About super admins",
       html: `<p>Super admins manage the whole platform: every division, who can see it, the Platform settings and integrations. Search for a person by name or sign-in and click to add them; click ✕ to remove one. Use the account people actually sign in with (for example the <i>adm.name.azure@…</i> account if that is the one that holds the Intune role). You cannot remove yourself, and entries marked <b>config</b> come from the app's config file and can only be removed there.</p>`
+    },
+    "set-issuenotify": {
+      title: "How issue notifications work",
+      html: `
+        <p>When someone files an issue, changes its status or comments, the app tells the right people. Everyone involved in an issue (reporter, assignee, watchers) is told about status changes and comments. <b>The people listed here</b> are told about the events you tick, for <b>every</b> issue.</p>
+        <ol>
+          <li><b>Add a person</b>: type a name or sign-in; the list comes from Entra. Each person starts with all three events ticked: <i>New issue</i>, <i>Status change</i>, <i>New comment</i>. Untick what they do not need, then click <b>Save people</b>.</li>
+          <li><b>How the e-mail leaves the app.</b> The app does not send mail itself. Create a Power Automate flow with the trigger <i>When an HTTP request is received</i> and an action that sends an e-mail (or posts to Teams) to the addresses in the request's <code>to</code> list, using its <code>subject</code> and <code>html</code> fields. Paste the flow's address into Settings → Integrations → Notifications. The badge at the top shows whether that is set.</li>
+          <li>Click <b>Send a test</b> to send a sample to the people on the list (or to you if the list is empty).</li>
+        </ol>
+        <p>No webhook and no mail permission means nothing is sent; the issue's activity log says "not sent" so you can see it. Nothing is sent in Local data mode.</p>
+        <h5>Old reports</h5>
+        <p><b>Import the old lists</b> copies the earlier per-division "Report bug / feature" items onto the board once. Items already copied are skipped.</p>`
     },
     "set-scopes": {
       title: "About people-search scopes",

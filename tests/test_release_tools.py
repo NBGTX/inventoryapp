@@ -386,7 +386,7 @@ class HelpDocs(unittest.TestCase):
         for f in ("web/app.js", "web/settings.js"):
             used |= set(re.findall(r'Help\.box\("([a-z\-]+)"\)', self.read(f)))
         used |= {"set-" + t for t in ("general", "access", "sites", "sql", "models", "links", "perms", "storage", "divisions",
-                                        "admins", "scopes", "template", "roles", "sync", "integrations")}
+                                        "admins", "scopes", "issuenotify", "template", "roles", "sync", "integrations")}
         self.assertEqual(sorted(used - docs), [])
         self.assertEqual(sorted(docs - used), [])
 

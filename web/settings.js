@@ -194,7 +194,7 @@ const Settings = {
   groups() {
     return [
       { title: Divisions.label(), items: this.SECTIONS.filter(x => x[0] === "general" || this.allowed.includes(x[0])) },
-      ...(this.su ? [{ title: "Platform (super admin)", items: [["divisions", "Divisions"], ["admins", "Super admins"], ["sync", "Sync all divisions"], ["scopes", "People-search scopes"], ["template", "Template checklists"], ["roles", "Role access"], ["integrations", "Integrations & options"]] }] : []),
+      ...(this.su ? [{ title: "Platform (super admin)", items: [["divisions", "Divisions"], ["admins", "Super admins"], ["sync", "Sync all divisions"], ["issuenotify", "Issue notifications"], ["scopes", "People-search scopes"], ["template", "Template checklists"], ["roles", "Role access"], ["integrations", "Integrations & options"]] }] : []),
     ];
   },
   async load() {
@@ -232,7 +232,7 @@ const Settings = {
     this.pane("settings", `<div class="empty">Loading…</div>`);
     const dep = { models: "models", links: "sites", perms: "perms", storage: "storage" }[tab];
     if (dep) { this.pane("depts"); Depts._page = true; await Depts.openPage(dep); return; }
-    const fn = { general: "general", access: "accessTab", sites: "sitesTab", sql: "sqlTab", divisions: "divisions", admins: "admins", roles: "roles", template: "templateTab", scopes: "scopesTab", sync: "syncAll", integrations: "integrations" }[tab];
+    const fn = { general: "general", access: "accessTab", sites: "sitesTab", sql: "sqlTab", divisions: "divisions", admins: "admins", roles: "roles", template: "templateTab", scopes: "scopesTab", issuenotify: "issueNotifyTab", sync: "syncAll", integrations: "integrations" }[tab];
     try { await this[fn](); } catch (e) { this.pane("settings", `<div class="empty">Could not open this section: ${esc(String(e && e.message || e))}</div>`); }
   },
 
@@ -404,6 +404,51 @@ const Settings = {
   },
   saRemove(i) { const u = this.sa.admins[i]; if (u) this.saPersist(this.sa.admins.filter((_, k) => k !== i), "Removed " + u); },
 
+  /* ---- platform: who is e-mailed about Issues ---- */
+  async issueNotifyTab() {
+    const r = await Backend.call("get_issue_notifications");
+    if (!r || !r.ok || !r.super_admin) return this.pane("settings", `<div class="empty">${esc((r && r.error) || "Super admins only.")}</div>`);
+    this.inf = { subs: r.subscribers.map(x => ({ ...x, events: [...x.events] })), webhook: r.webhook_set, mail: r.can_mail, events: r.events };
+    const how = r.webhook_set ? SetUI.pill("ok", "Webhook set") : r.can_mail ? SetUI.pill("ok", "Direct mail available") : SetUI.pill("warn", "Nothing can send e-mail yet");
+    this.pane("settings", SetUI.card("Issue notifications", "",
+      `<p style="margin:0 0 12px">${how}
+         <button class="ghost" style="margin-left:10px" onclick="Settings.open('integrations')">Set the webhook</button>
+         <button class="ghost" onclick="Settings.inTest()">Send a test</button></p>
+       <div id="inTable"></div>
+       <div style="margin-top:12px;max-width:520px" id="inPick"></div>
+       <h4 style="margin:22px 0 6px">Old reports</h4>
+       <button class="ghost" onclick="Settings.inImport()">Import the old "Report bug / feature" lists onto the board</button>`,
+      `<button class="ghost" onclick="Settings.discard('issuenotify')">Discard changes</button><button class="primary" id="setSave" onclick="Settings.inSave()" disabled>Save people</button>`));
+    this.inDraw();
+  },
+  inDraw() {
+    const t = this.inf, label = { new: "New issue", status: "Status change", comment: "New comment" };
+    document.getElementById("inTable").innerHTML = t.subs.length
+      ? `<table class="ms-table"><thead><tr><th>Person</th>${t.events.map(e => `<th style="text-align:center">${label[e] || e}</th>`).join("")}<th></th></tr></thead><tbody>` +
+        t.subs.map((s, i) => `<tr><td>${esc(s.name)} <span class="muted">${esc(s.upn)}</span></td>` +
+          t.events.map(e => `<td style="text-align:center"><input type="checkbox" class="cb"${s.events.includes(e) ? " checked" : ""} onchange="Settings.inEv(${i},'${e}',this.checked)"></td>`).join("") +
+          `<td style="text-align:right"><button class="cfg-del" onclick="Settings.inDel(${i})" title="Remove">&times;</button></td></tr>`).join("") + `</tbody></table>`
+      : `<p class="muted">Nobody is notified yet. Add people below.</p>`;
+    DirPicker.mount("inPick", "user", it => this.inAdd(it), "Add a person to notify (name or sign-in)…");
+  },
+  inAdd(it) { const u = (it.upn || "").toLowerCase(); if (!u || this.inf.subs.some(s => s.upn === u)) return App.toast("Already on the list."); this.inf.subs.push({ upn: u, name: it.name || u, events: [...this.inf.events] }); this.markDirty(); this.inDraw(); },
+  inDel(i) { this.inf.subs.splice(i, 1); this.markDirty(); this.inDraw(); },
+  inEv(i, e, on) { const ev = this.inf.subs[i].events; const k = ev.indexOf(e); if (on && k < 0) ev.push(e); if (!on && k >= 0) ev.splice(k, 1); this.markDirty(); },
+  async inSave() {
+    const r = await Backend.call("save_issue_subscribers", this.inf.subs);
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+    this.dirty = false; App.toast("Saved."); this.issueNotifyTab();
+  },
+  async inTest() {
+    const r = await Backend.call("issue_notify_test");
+    App.toast(r && r.ok ? "Test sent to " + r.sent + " (" + r.via + ")." : ((r && r.error) || "Could not send."), !(r && r.ok));
+  },
+  async inImport() {
+    if (!confirm("Copy every division's old bug / feature reports onto the shared board? Reports already copied are skipped.")) return;
+    const r = await Backend.call("issues_import_legacy");
+    App.toast(r && r.ok ? r.imported + " report(s) imported." : ((r && r.error) || "Could not import."), !(r && r.ok));
+  },
+
   /* ---- platform: who BG Tools can search (other brands by email domain, other divisions by Entra company) ---- */
   async scopesTab() {
     const r = await Backend.call("get_search_scopes");
@@ -521,7 +566,8 @@ const Settings = {
     const blurb = { "Vendor APIs": "Credentials for warranty and spec lookups. Secrets are stored hidden and are never shown again; type a new value to replace one.",
                     "Regional": "Platform-wide defaults.", "Sync": "How the Intune sync behaves.",
                     "Releases": "Tell techs when a newer NBG Hub build is out. Set these after you hand out a new installer.",
-                    "Upgrades": "Which devices are queued for an upgrade automatically after each sync." };
+                    "Upgrades": "Which devices are queued for an upgrade automatically after each sync.",
+                    "Notifications": "How e-mails about Issues are sent. Choose who gets them under Issue notifications." };
     const row = (c, i) => {
       const st = c.status === "planned" ? SetUI.pill("plan", "Not used yet") : (c.kind === "secret" ? (c.is_set ? SetUI.pill("ok", "Set") : SetUI.pill("warn", "Not set")) : "");
       let ctl;

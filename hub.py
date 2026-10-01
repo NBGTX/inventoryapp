@@ -97,6 +97,7 @@ class Hub:
         self.setups_dir = os.path.join(self.hub, "setups")
         self.changes_dir = os.path.join(self.hub, "changes")
         self.feedback_dir = os.path.join(self.hub, "feedback")
+        self.issues_dir = os.path.join(self.hub, "issues")
         self.config_path = os.path.join(self.hub, "nbgw-endpoint-hub-config.json")
         self.model_dept_path = os.path.join(self.hub, "nbgw-model-departments.json")
         self.sites_path = os.path.join(self.hub, "nbgw-nbt-sites.json")
@@ -115,7 +116,7 @@ class Hub:
         self.history_dir = os.path.join(appdata, "NBGW-Endpoint-Hub",
                                         "config-history" if self.division.get("legacy_data") else "config-history-" + divisions.hub_folder_name(self.division)[len("_EndpointHub_"):])
         dirs = (self.history_dir,) if store else (self.logs, self.hub, self.setups_dir, self.changes_dir,
-                                                  self.feedback_dir, self.history_dir)
+                                                  self.feedback_dir, self.issues_dir, self.history_dir)
         for d in dirs:
             try:
                 os.makedirs(d, exist_ok=True)
@@ -801,6 +802,24 @@ class Hub:
         self._change("Setup cancelled",
                      f"{label} '{subject or '(unnamed)'}' cancelled by {who}: {reason}")
         return {"ok": True, "subject": subject, "reverted": reverted}
+
+    # ---- issues board documents (platform hub; see issues.py) -------------------
+    def _issue_path(self, issue_id: str) -> str:
+        return os.path.join(self.issues_dir, self._safe(issue_id) + ".json")
+
+    def list_issues(self) -> list:
+        return [d for d in self._read_dir(self.issues_dir) if isinstance(d, dict) and d.get("id")]
+
+    def get_issue(self, issue_id: str):
+        return self._get_doc(self._issue_path(issue_id))
+
+    def put_issue(self, doc: dict) -> None:
+        self._write(self._issue_path(doc["id"]), json.dumps(doc, ensure_ascii=False))
+
+    def delete_issue(self, issue_id: str) -> None:
+        p = self._issue_path(issue_id)
+        if self._exists(p):
+            self._remove(p)
 
     # ---- changes / feedback ----------------------------------------------
     def get_changes(self) -> list:
