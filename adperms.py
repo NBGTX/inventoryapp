@@ -89,6 +89,53 @@ try {
 '''
 
 
+# Lists the sign-in certificates Windows can see (a YubiKey/smart card shows its PIV certificates here once inserted).
+# Public data only: no PIN is needed and nothing is signed. ASCII only (Windows PowerShell 5.1).
+_CERTS_PS = r'''
+$out = @()
+Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue | ForEach-Object {
+  $eku = @($_.EnhancedKeyUsageList | ForEach-Object { $_.ObjectId })
+  if ($eku -contains "1.3.6.1.4.1.311.20.2.2" -or $eku -contains "1.3.6.1.5.5.7.3.2") {
+    $san = $_.Extensions | Where-Object { $_.Oid.Value -eq "2.5.29.17" }
+    if ($san) {
+      $t = $san.Format($false)
+      if ($t -match "Principal Name=([^,\s]+)") {
+        $out += @{ upn = $Matches[1]; cn = ($_.Subject -replace ",.*$", "" -replace "^CN=", ""); expires = $_.NotAfter.ToString("yyyy-MM-dd"); valid = ($_.NotAfter -gt (Get-Date)) }
+      }
+    }
+  }
+}
+Write-Output (@{ certs = $out } | ConvertTo-Json -Depth 4 -Compress)
+'''
+
+
+def smartcard_accounts(timeout: int = 30) -> dict:
+    """Distinct, unexpired sign-in certificate accounts (UPNs) Windows can see, e.g. from an inserted YubiKey."""
+    ps_p = None
+    try:
+        ps_p = _tmp(".ps1", _CERTS_PS)
+        proc = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ps_p],
+                              capture_output=True, text=True, timeout=timeout, creationflags=_NO_WINDOW)
+        txt = (proc.stdout or "").strip()
+        if not txt:
+            return {"__error__": (proc.stderr or "no output").strip()[:200]}
+        seen, out = set(), []
+        for c in _listify(json.loads(txt).get("certs")):
+            u = (c.get("upn") or "").strip()
+            if u and c.get("valid") and u.lower() not in seen:
+                seen.add(u.lower())
+                out.append({"upn": u, "cn": c.get("cn", ""), "expires": c.get("expires", "")})
+        return {"accounts": sorted(out, key=lambda x: x["upn"].lower())}
+    except Exception as e:
+        return {"__error__": str(e)[:200]}
+    finally:
+        try:
+            if ps_p:
+                os.remove(ps_p)
+        except OSError:
+            pass
+
+
 def _tmp(suffix: str, text: str | None = None) -> str:
     fd, p = tempfile.mkstemp(suffix=suffix)
     with os.fdopen(fd, "w", encoding="utf-8") as f:

@@ -1774,6 +1774,18 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    def ad_smartcard_accounts(self) -> dict:
+        """Admin accounts found on the inserted YubiKey / smart card (certificate UPNs), to pick from instead of typing."""
+        try:
+            self._ad_perm_gate()
+            import adperms
+            r = adperms.smartcard_accounts()
+            if "__error__" in r:
+                return {"ok": False, "error": r["__error__"]}
+            return {"ok": True, "accounts": r["accounts"]}
+        except Exception as e:
+            return self._fail(e)
+
     def ad_perm_compare(self, src_dn: str, dst_dn: str) -> dict:
         try:
             domain = self._ad_perm_gate()

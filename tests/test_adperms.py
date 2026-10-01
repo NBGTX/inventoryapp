@@ -33,7 +33,7 @@ class Pure(unittest.TestCase):
         self.assertEqual(len([u for u in us if adperms.in_scope(u, ["NBG - Terrell", "Other"])]), 3)
 
     def test_powershell_scripts_are_ascii(self):
-        for ps in (adperms._READ_PS, adperms._WRITE_PS):
+        for ps in (adperms._READ_PS, adperms._WRITE_PS, adperms._CERTS_PS):
             ps.encode("ascii")
 
     def test_single_item_json_becomes_list(self):

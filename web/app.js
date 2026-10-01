@@ -2584,6 +2584,7 @@ const HotSpares = {
    (sets NBSTimesheet.dbo.WeekLocked.Locked = 0). SQL runs as the signed-in user
    (integrated auth); every unlock is confirmed and audited. */
 /* ---- BG Tools: Copy Permissions (on-prem AD groups) ---- */
+const localStorageGet = k => { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } };
 const CopyPerms = {
   s: { src: null, dst: null, cmp: null, picked: {}, res: null }, _t: {},
   render(p) {
@@ -2601,11 +2602,28 @@ const CopyPerms = {
         <span class="sub-note" id="cpMsg" style="margin:0"></span></div>
       <div id="cpOut"></div>
       <div class="field cp-acct" style="max-width:380px;margin-top:14px"><label>Your admin account for writing (YubiKey)</label>
-        <input id="cpAcct" placeholder="adm.name.pa" value="${attr(acct)}" autocomplete="off"></div></div>`;
+        <input id="cpAcct" list="cpAcctList" placeholder="adm.name.pa" value="${attr(acct)}" autocomplete="off">
+        <datalist id="cpAcctList"></datalist><div class="sub-note" id="cpAcctNote" style="margin:4px 0 0"></div></div></div>`;
+    this.loadCards(acct);
     if (!acct) Backend.call("get_status").then(st => {        // sign-in may still be resolving: ask again, fill only if the box is still empty
       const el = document.getElementById("cpAcct"), g = this.guessAdmin((st && (st.upn || st.account)) || "");
       if (el && !el.value && g) el.value = g;
     });
+  },
+  /* Offer the accounts on the inserted YubiKey as choices; typing stays possible. */
+  async loadCards(current) {
+    const r = await Backend.call("ad_smartcard_accounts");
+    const el = document.getElementById("cpAcct"), dl = document.getElementById("cpAcctList"), note = document.getElementById("cpAcctNote");
+    if (!el || !dl) return;
+    const list = (r && r.ok && r.accounts) || [];
+    dl.innerHTML = list.map(a => `<option value="${attr(a.upn)}">${esc(a.cn)} · expires ${esc(a.expires)}</option>`).join("");
+    if (!list.length) { note.textContent = "No YubiKey / smart card certificate found. Insert the key, or type the account."; return; }
+    note.textContent = list.length + " account" + (list.length === 1 ? "" : "s") + " found on your key: click the box to choose.";
+    if (!current || !el.value || el.value === current) {                       // better than a guess: the key's own account for this person
+      const base = (el.value || "").split("@")[0].toLowerCase();
+      const m = list.find(a => a.upn.split("@")[0].toLowerCase() === base) || (list.length === 1 ? list[0] : null);
+      if (m && (!current || el.value === current) && !localStorageGet("nbg_ad_admin_acct")) el.value = m.upn;
+    }
   },
   /* adm.sanderson.azure@nucor.onmicrosoft.com -> adm.sanderson.pa ; sims.anderson@nucor.com -> adm.sanderson.pa */
   guessAdmin(upn) {
@@ -5094,6 +5112,7 @@ Object.assign(Mock, {
          { dn: "CN=Smith\\, Pat,OU=Admins,DC=bg", name: "Smith, Pat (Admin)", sam: "adm.psmith.pa", title: "Systems", dept: "IT", enabled: true }],
   _adg: { "CN=Anderson\\, Sims,OU=Admins,DC=bg": [["IT-Intune-Admins", false], ["IT-ServerOps", false], ["Domain Admins", true], ["VPN-Users", false]], "CN=Smith\\, Pat,OU=Admins,DC=bg": [["VPN-Users", false], ["IT-HelpDesk", false]] },
   _adgl(dn) { return (this._adg[dn] || []).map(([n, p]) => ({ dn: "CN=" + n + ",OU=Groups,DC=bg", name: n, desc: p ? "Protected admin group" : "", security: true, privileged: p })); },
+  async ad_smartcard_accounts() { return { ok: true, accounts: [{ upn: "adm.sanderson.pa@nucorsteel.local", cn: "adm.sanderson.pa", expires: "2027-03-03" }, { upn: "adm.sanderson.dvc@nucorsteel.local", cn: "adm.sanderson.dvc", expires: "2027-03-03" }] }; },
   async ad_user_search(q, all) { q = (q || "").toLowerCase(); return { ok: true, users: this._adu.filter(u => (u.name + u.sam).toLowerCase().includes(q)) }; },
   async ad_perm_compare(a, b) { const s = this._adgl(a), d = this._adgl(b), dn = new Set(d.map(x => x.dn)), sn = new Set(s.map(x => x.dn));
     return { ok: true, src_count: s.length, dst_count: d.length, only_src: s.filter(x => !dn.has(x.dn)), only_dst: d.filter(x => !sn.has(x.dn)), both: s.filter(x => dn.has(x.dn)) }; },
