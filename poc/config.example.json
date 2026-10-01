@@ -1,0 +1,6 @@
+{
+  "tenant_id": "PASTE-YOUR-ENTRA-TENANT-ID-GUID-HERE",
+  "client_id": "PASTE-THE-APP-REGISTRATION-CLIENT-ID-HERE",
+  "sharepoint_hostname": "nucor.sharepoint.com",
+  "site_path": "/sites/NBGW/systems"
+}

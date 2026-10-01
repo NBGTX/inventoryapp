@@ -1,0 +1,24 @@
+# Per-user / secret-adjacent — never commit
+config.json
+poc/config.json
+**/.token_cache.bin
+*.token_cache.bin
+
+# Local inventory data (the JSON store)
+data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+build/
+dist/
+*.spec
+
+# Stale test data / live team data - never commit
+SystemsData/
+**/SystemsData/
+
+# Local tooling
+.claude/
+*.docx

@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NBGW Hub</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="shell">
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="sidebar">
+    <div class="side-brand">
+      <div class="mark">N</div>
+      <div><h1>NBGW Hub</h1><span>Lathrop &amp; Brigham · Systems</span></div>
+    </div>
+    <nav class="nav">
+      <button class="navitem active" data-view="dashboard" onclick="Nav.go('dashboard')">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+        Dashboard</button>
+      <button class="navitem" data-view="hub" onclick="Nav.go('hub')">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        Endpoint Provisioning</button>
+      <button class="navitem" data-view="inventory" onclick="Nav.go('inventory')">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7L12 3 4 7l8 4 8-4z"/><path d="M4 7v10l8 4 8-4V7"/><path d="M12 11v10"/></svg>
+        Devices</button>
+      <button class="navitem" data-view="upgrades" onclick="Nav.go('upgrades')">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+        Upgrades</button>
+      <button class="navitem" data-view="software" onclick="Nav.go('software')">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        Software</button>
+      <button class="navitem" data-view="bgtools" onclick="Nav.go('bgtools')" title="BG Tools — database & admin utilities">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4l-6 6a1.4 1.4 0 0 0 2 2l6-6a4 4 0 0 0 5.4-5.4l-2.3 2.3-2-2 2.3-2.3z"/></svg>
+        BG Tools</button>
+      <button class="navitem" data-view="sites" onclick="Nav.go('sites')">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>
+        NBT Sites</button>
+      <button class="navitem" data-view="projecthub" onclick="ProjectHub.open()">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        Project Hub</button>
+    </nav>
+    <div class="side-foot">
+      <button class="side-config" onclick="Feedback.open()" title="Report a bug or request a feature">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Report bug / feature</button>
+      <button class="side-config" onclick="Depts.open()" title="App configuration">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Configuration</button>
+      <div class="acct-line"><span id="acct">Not signed in</span></div>
+      <a id="signout" class="hidden" onclick="App.signOut()">Sign out</a>
+      <div class="ver-line" id="verLine" onclick="App.showClients()" title="Click to see which version everyone is running">v…</div>
+    </div>
+  </aside>
+
+  <!-- ============ CONTENT ============ -->
+  <div class="content">
+
+    <!-- ---------- DASHBOARD ---------- -->
+    <section class="appview active" id="appview-dashboard">
+      <div class="pagehead">
+        <div><h2>Dashboard</h2><p>Setups and inventory at a glance.</p></div>
+        <button class="ghost" onclick="Dashboard.load()">↻ Refresh</button>
+      </div>
+      <div id="dashHost"><div class="empty">Loading…</div></div>
+    </section>
+
+    <!-- ---------- ENDPOINT HUB ---------- -->
+    <section class="appview" id="appview-hub">
+      <div class="pagehead">
+        <div><h2 id="hubHeadTitle">Endpoint Provisioning</h2><p>Guided computer &amp; user setups, shared from the Systems library.</p></div>
+        <div class="actions">
+          <button class="ghost" onclick="Hub.go('home')">Home</button>
+          <button class="ghost" onclick="Hub.go('admin')">Edit checklists</button>
+        </div>
+      </div>
+
+      <!-- hub: home / activity -->
+      <section class="hubview active" id="hubview-home">
+        <div class="choice-grid">
+          <button class="choice" onclick="Hub.startComputer()">
+            <div class="cic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
+            <h3>New Computer Setup</h3><p>Base build plus department software.</p>
+          </button>
+          <button class="choice" onclick="Hub.startUser()">
+            <div class="cic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg></div>
+            <h3>New User Setup</h3><p>Mailbox, AD, licenses, access for a teammate.</p>
+          </button>
+        </div>
+        <h4 class="blkhead">In progress &amp; recent setups <span class="num" id="setupCount">0</span></h4>
+        <div id="activityList"></div>
+        <h4 class="blkhead">Recent program changes <span class="num" id="changeCount">0</span></h4>
+        <div id="changesList"></div>
+      </section>
+
+      <!-- hub: department picker -->
+      <section class="hubview" id="hubview-dept">
+        <h3 class="sub">Which department is this machine for?</h3>
+        <p class="submuted">Everything gets the base build; your pick adds that department's steps.</p>
+        <div class="dept-grid" id="deptGrid"></div>
+        <div style="margin-top:18px"><button class="ghost" onclick="Hub.go('home')">← Back</button></div>
+      </section>
+
+      <!-- hub: run / checklist -->
+      <section class="hubview" id="hubview-run">
+        <div class="save-banner" id="saveBanner"></div>
+        <div class="runhead">
+          <div class="row1">
+            <span class="hbadge" id="runBadge">Setup</span>
+            <span class="hbadge dept" id="runDeptBadge" style="display:none"></span>
+            <span class="hbadge resumed" id="runResumed" style="display:none">Resumed</span>
+            <h3 id="runTitle">Setup</h3>
+          </div>
+          <div class="fields">
+            <div class="field"><label id="nameLabel">Name</label>
+              <input id="subjectInput" placeholder="Enter name" autocomplete="off" oninput="Hub.onSubject()"></div>
+            <div class="field"><label id="primaryUserLabel">Primary user</label>
+              <input id="primaryUserInput" placeholder="Full name of the person" autocomplete="off" oninput="Hub.onPrimaryUser()"></div>
+          </div>
+          <div class="fields" style="margin-top:12px">
+            <div class="field"><label>Technician</label>
+              <input id="techInput" placeholder="Your name" autocomplete="off" oninput="Hub.autosave()"></div>
+            <div class="field"><label>Date</label><input id="dateInput" class="readonly" readonly></div>
+          </div>
+          <div class="fields" style="margin-top:12px">
+            <div class="field" id="serviceTagField" style="display:none"><label>Service tag / Asset #</label>
+              <input id="serviceTagInput" placeholder="Optional" autocomplete="off" oninput="Hub.autosave()"></div>
+          </div>
+          <div id="reserveBlock" style="display:none;margin-top:12px">
+            <div class="fields">
+              <div class="field"><label>Reserve a computer — department</label>
+                <select id="reserveDept" onchange="Hub.onReserveDept()"><option value="">Loading stock…</option></select></div>
+              <div class="field"><label>Reserve a computer — device</label>
+                <select id="reserveDevice" onchange="Hub.onReserveDevice()"><option value="">— none —</option></select></div>
+            </div>
+            <div class="hint" id="reserveStatus"></div>
+          </div>
+          <div class="field" style="margin-top:12px"><label>Notes</label>
+            <textarea id="setupNotesInput" class="setup-notes" rows="3" placeholder="Overall notes for this setup (optional)" oninput="Hub.autosave()"></textarea></div>
+          <div class="progwrap"><div class="progbar"><span id="progFill"></span></div><span class="progtext" id="progText">0 / 0</span></div>
+          <div class="runactions">
+            <button class="primary" id="saveBtn" onclick="Hub.save()">Save to shared log</button>
+            <button class="ghost" onclick="Hub.checkAll()">✓ Check all</button>
+            <button class="ghost" onclick="Hub.openFolder()">Open shared folder</button>
+            <button class="ghost" onclick="Hub.resetChecks()">Clear checks</button>
+            <button class="ghost" style="border-color:var(--red);color:var(--red)" onclick="Hub.cancelSetup()">✕ Cancel setup</button>
+            <button class="ghost" onclick="Hub.confirmExit()">← Home</button>
+          </div>
+          <div class="hint" id="folderStatus"></div>
+        </div>
+        <div id="sectionsHost"></div>
+        <button class="primary float-save" onclick="Hub.save()" title="Save to shared log">💾 Save</button>
+      </section>
+
+      <!-- hub: admin -->
+      <section class="hubview" id="hubview-admin">
+        <div class="admin-bar">
+          <select id="adminSelect" onchange="Hub.loadAdmin()"></select>
+          <button class="primary" onclick="Hub.saveAdmin()">Save changes</button>
+          <button class="ghost" onclick="Hub.addSection()">+ Add section</button>
+          <button class="ghost" onclick="Hub.resetOne()">Reset this list</button>
+        </div>
+        <div id="adminHost"></div>
+        <p class="hint">"Detail" is the small grey note under an item (paths, credentials). Leave blank if not needed.</p>
+      </section>
+
+      <!-- hub: feedback -->
+      <section class="hubview" id="hubview-feedback">
+        <h3 class="sub">Report a bug / Request a feature</h3>
+        <p class="submuted">Saved to a shared file in the Systems library so the team can track them.</p>
+        <div class="card">
+          <div class="fields">
+            <div class="field"><label>Type</label>
+              <select id="fbType"><option value="bug">Bug</option><option value="feature">Feature request</option></select></div>
+            <div class="field"><label>Title</label><input id="fbTitle" placeholder="Short summary" autocomplete="off"></div>
+          </div>
+          <div class="field" style="margin-top:12px"><label>Details</label>
+            <textarea id="fbDetail" rows="4" placeholder="What happened, or what would you like?"></textarea></div>
+          <div style="margin-top:12px"><button class="primary" onclick="Hub.submitFeedback()">Submit</button></div>
+        </div>
+        <h4 class="blkhead">Open items <span class="num" id="fbCount">0</span></h4>
+        <div id="feedbackList"></div>
+      </section>
+    </section>
+
+    <!-- ---------- INVENTORY (existing app) ---------- -->
+    <section class="appview" id="appview-inventory">
+      <div id="signinBanner" class="banner hidden">
+        <p><b>Sign in required.</b> Sign in with your Nucor account to load inventory.</p>
+        <button class="primary" onclick="App.signIn()">Sign in</button>
+      </div>
+      <div id="errBanner" class="banner err hidden"><p id="errText"></p><button class="ghost" onclick="App.reload()">Retry</button></div>
+
+      <div class="toprow">
+        <div><h2>Devices</h2><p>Live view of new stock and assigned machines.</p></div>
+        <div class="actions">
+          <button class="ghost" id="logBtn" onclick="LogView.open()">☰ Log</button>
+          <button class="ghost" id="syncBtn" onclick="App.runSync()">↻ Sync now</button>
+          <button class="ghost" id="mfaBtn" onclick="App.populateMfa()" title="Fill the MFA column from each user's registered authentication methods (needs UserAuthenticationMethod.Read.All + your auth-admin role)">🔒 Populate MFA</button>
+          <button class="ghost" id="masterSyncBtn" onclick="App.masterSync()" title="Force-refresh every device's primary user, specs, MFA, last check-in and OS from Intune/Entra (overwrites stored values; can take a few minutes)">⟳ Master sync</button>
+        </div>
+      </div>
+
+      <div class="stats">
+        <div class="stat clickable stat-add" id="addBtn" onclick="Wizard.open()" title="Add a new machine to inventory"><div class="n">＋</div><div class="l">Add new machine</div></div>
+        <div class="stat clickable instock" onclick="App.showTab('stock')" title="View in-stock machines"><div class="n" id="cStock">–</div><div class="l">In stock ›</div></div>
+        <div class="stat clickable inuse" onclick="App.showTab('use')" title="View in-use machines"><div class="n" id="cUse">–</div><div class="l">In use ›</div></div>
+        <div class="stat clickable" onclick="App.showTab('stock')" title="Total tracked — opens the In stock list"><div class="n" id="cTotal">–</div><div class="l">Total tracked ›</div></div>
+      </div>
+
+      <div class="panel">
+        <div class="tabs">
+          <div class="tab active" data-tab="stock" onclick="App.showTab('stock')">In stock (<span id="tStock">0</span>)</div>
+          <div class="tab" data-tab="use" onclick="App.showTab('use')">In use (<span id="tUse">0</span>)</div>
+          <div class="tab" data-tab="boneyard" onclick="App.showTab('boneyard')">Boneyard (<span id="tBone">0</span>)</div>
+        </div>
+        <div class="tools">
+          <input id="search" placeholder="Search anything — serial, hostname, user, model, OS (e.g. Windows 11), site…" oninput="App.render()">
+          <select id="fModel" class="filt hidden" onchange="App.render()"><option value="">All models</option></select>
+          <select id="fCpu" class="filt hidden" onchange="App.render()"><option value="">All CPUs</option></select>
+          <select id="fRam" class="filt hidden" onchange="App.render()"><option value="">All RAM</option></select>
+          <select id="fCheckin" class="filt hidden" onchange="App.render()">
+            <option value="">All check-ins</option>
+            <option value="7">No check-in 7+ days</option>
+            <option value="30">No check-in 30+ days</option>
+            <option value="never">Never checked in</option>
+          </select>
+          <select id="fMfa" class="filt hidden" onchange="App.render()">
+            <option value="">All MFA</option>
+            <option value="No">MFA: not registered</option>
+            <option value="Yes">MFA: registered</option>
+            <option value="unknown">MFA: unknown</option>
+          </select>
+          <button id="fClear" class="rowbtn hidden" onclick="App.clearFilters()">Clear</button>
+        </div>
+        <div id="tableWrap"><div class="empty">Loading…</div></div>
+      </div>
+    </section>
+
+    <!-- ---------- NBT SITES (embedded web tools) ---------- -->
+    <section class="appview" id="appview-sites">
+      <div class="pagehead">
+        <div><h2 id="sitesHead">NBT Sites</h2><p id="sitesSub">Nucor web tools, opened inside the app.</p></div>
+        <div class="actions" id="siteActions" style="display:none">
+          <button class="ghost" id="siteReloadBtn" onclick="Sites.reload()">↻ Reload</button>
+          <button class="ghost" onclick="Sites.openWindow()">⧉ Open in window</button>
+          <button class="ghost" onclick="Sites.home()">← All sites</button>
+        </div>
+      </div>
+      <div id="sitesHost"><div class="empty">Loading…</div></div>
+    </section>
+
+    <!-- ---------- PROJECT HUB (embedded) ---------- -->
+    <section class="appview" id="appview-projecthub">
+      <div class="pagehead">
+        <div><h2>Project Hub</h2><p>projecthub-dev.nucorservices.com — opens in your default browser.</p></div>
+        <div class="actions">
+          <button class="ghost" onclick="ProjectHub.open()">↗ Open Project Hub</button>
+        </div>
+      </div>
+      <div id="projectHubHost"><div class="empty">Loading…</div></div>
+    </section>
+
+    <!-- ---------- BG TOOLS ---------- -->
+    <section class="appview" id="appview-bgtools">
+      <div class="pagehead">
+        <div><h2>BG Tools</h2><p>Database and admin utilities. Pick a tool to begin.</p></div>
+      </div>
+      <div id="bgtHost"><div class="empty">Loading…</div></div>
+    </section>
+
+    <!-- ---------- SOFTWARE INVENTORY ---------- -->
+    <section class="appview" id="appview-software">
+      <div class="pagehead">
+        <div><h2>Software Inventory</h2><p>Apps installed across NBGW machines, from Intune. Filter by department, drill into who has each app, and flag mandatory apps to find who's missing them.</p></div>
+        <div class="actions">
+          <span id="swMeta" class="sub-note" style="margin:0 12px 0 0"></span>
+          <button class="ghost" id="swRefreshBtn" onclick="Software.refresh()">↻ Refresh from Intune</button>
+        </div>
+      </div>
+      <div class="sw-tools">
+        <input id="swUser" placeholder="Filter by user or device…" oninput="Software.render()">
+        <input id="swSoftware" placeholder="Filter by software…" oninput="Software.render()">
+        <select id="swDept" onchange="Software.render()"><option value="all">All departments</option></select>
+        <label class="sw-chk"><input type="checkbox" id="swMandOnly" onchange="Software.render()"> Mandatory only</label>
+      </div>
+      <div id="swHost"><div class="empty">Loading…</div></div>
+    </section>
+
+    <!-- ---------- UPGRADE LIST ---------- -->
+    <section class="appview" id="appview-upgrades">
+      <div class="pagehead">
+        <div><h2>Upgrade List</h2><p>Prioritized queue of devices awaiting a hardware upgrade. Drag to reorder; check off when done.</p></div>
+        <button class="ghost" onclick="Upgrade.load()">↻ Refresh</button>
+      </div>
+      <div class="up-tabs" id="upTabs"></div>
+      <div id="upHost"><div class="empty">Loading…</div></div>
+    </section>
+
+  </div>
+</div>
+
+<div id="modalRoot"></div>
+<div class="modal-bg" id="modalBg">
+  <div class="hmodal">
+    <h3 id="modalTitle">Leave setup?</h3>
+    <p id="modalMsg">You have unsaved progress.</p>
+    <div class="mact">
+      <button class="ghost" onclick="Hub.closeModal()">Stay</button>
+      <button class="primary" id="modalConfirm">Leave</button>
+    </div>
+  </div>
+</div>
+<div id="toasts"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

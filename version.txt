@@ -1,0 +1,31 @@
+# PyInstaller version resource for NBGW Hub.
+# Stamps the exe with real Company/Product/Version metadata so it looks like the
+# legitimate internal app it is (unsigned + metadata-less binaries look more
+# suspicious to Defender's ML heuristics). Bump the numbers each release.
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(2026, 9, 29, 0),
+    prodvers=(2026, 9, 29, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable('040904B0', [
+        StringStruct('CompanyName', 'Nucor'),
+        StringStruct('FileDescription', 'NBGW Hub - NBGW Systems inventory & endpoint console'),
+        StringStruct('FileVersion', '2026.09.29'),
+        StringStruct('InternalName', 'NBGW Hub'),
+        StringStruct('LegalCopyright', 'Copyright (c) Nucor. Internal use only.'),
+        StringStruct('OriginalFilename', 'NBGW Hub.exe'),
+        StringStruct('ProductName', 'NBGW Hub'),
+        StringStruct('ProductVersion', '2026.09.29')
+      ])
+    ]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)

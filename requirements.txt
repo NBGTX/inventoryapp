@@ -1,0 +1,5 @@
+msal>=1.31
+requests>=2.32
+pywebview>=5.3
+truststore>=0.10
+# pyinstaller is only needed to build the .exe (see build.ps1), not to run from source.

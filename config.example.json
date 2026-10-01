@@ -1,0 +1,13 @@
+{
+  "tenant_id": "PASTE-YOUR-ENTRA-TENANT-ID-GUID-HERE",
+  "client_id": "PASTE-THE-APP-REGISTRATION-CLIENT-ID-HERE",
+  "sharepoint_hostname": "nucor.sharepoint.com",
+  "site_path": "/sites/NBGW/systems",
+  "lists": {
+    "new_stock": "NBGW Computers New Stock",
+    "in_use": "NBGW Computers In Use",
+    "model_specs": "Model Spec References"
+  },
+  "site_tags": ["LTR", "BRI"],
+  "lenovo_client_id": ""
+}
