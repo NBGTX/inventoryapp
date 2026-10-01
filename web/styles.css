@@ -915,3 +915,6 @@ body.signed-out #signinBanner{display:none!important;}
 .cp-res.good{border-color:#3fb950;}.cp-res.bad{border-color:var(--red);}
 @media(max-width:900px){.cp-pick,.cp-cols{grid-template-columns:1fr;}}
 .cp-all{display:flex;gap:6px;align-items:center;font-size:12.5px;margin:0 0 8px;}
+
+.cp-hits{margin-top:6px;}
+.cp-hits .sub-note{display:block;margin:4px 2px;position:static;}
