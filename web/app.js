@@ -336,6 +336,8 @@ const Divisions = {
     this.renderSwitcher();
   },
   codes() { return this.sites.map(s => String(s.code).toUpperCase()); },
+  invKey() { return this.current === "nbgw" ? "nbgw_inv" : "nbg_inv_" + this.current; },
+  draftKey() { return this.current === "nbgw" ? "nbgw_hub_draft_v2" : "nbg_hub_draft_v2_" + this.current; },
   cur() { return this.list.find(x => x.id === this.current) || { id: this.current, name: "", company_name: "" }; },
   label() { const n = this.cur().name || ""; return (n.split(" - ")[0] || n || "this division").trim(); },
   /* a site code that belongs to the active division, else "Other" */
@@ -522,7 +524,7 @@ const App = {
 
   renderCached() {
     try {
-      const c = JSON.parse(localStorage.getItem("nbgw_inv") || "null");
+      const c = JSON.parse(localStorage.getItem(Divisions.invKey()) || "null");
       if (!c) return;
       this.state.stock = c.new_stock || [];
       this.state.use = c.in_use || [];
@@ -645,7 +647,7 @@ const App = {
     this.state.use = inv.in_use || [];
     this.state.boneyard = inv.boneyard || [];
     this.setCounts(inv.counts);
-    try { localStorage.setItem("nbgw_inv", JSON.stringify(inv)); } catch (e) { /* quota */ }
+    try { localStorage.setItem(Divisions.invKey(), JSON.stringify(inv)); } catch (e) { /* quota */ }
     this.setBusy(false);
     this.populateFilters();
     this.render();
@@ -1951,7 +1953,7 @@ const Dashboard = {
   async drillStale() {
     const rows = (this._inv().stale_checkin || []);
     rows.forEach(r => { if (r._living === undefined) r._living = null; });   // reset per open
-    this._livingState = { entra: "…", ad_error: null, domain: "bg.nucorsteel.local" };
+    this._livingState = { entra: "…", ad_error: null, domain: Divisions.cur().ad_domain || "" };
     Drill.open("No Intune check-in in 30+ days (stalest first)", rows, [
       { label: "Serial", get: r => r.serial, mono: 1, w: "12%" }, { label: "Device name", get: r => r.device_name, w: "13%" },
       { label: "Model", get: r => r.model, w: "13%" }, { label: "User", get: r => r.user, w: "16%" },
@@ -1965,7 +1967,7 @@ const Dashboard = {
       const res = await Backend.call("locate_devices",
         rows.map(r => ({ serial: r.serial, hostname: r.device_name })));
       if (res && res.ok) {
-        this._livingState = { entra: res.entra_state, ad_error: res.ad_error, domain: res.ad_domain || "bg.nucorsteel.local" };
+        this._livingState = { entra: res.entra_state, ad_error: res.ad_error, domain: res.ad_domain || Divisions.cur().ad_domain || "" };
         const by = {};
         (res.devices || []).forEach(d => { by[(d.serial || "").toUpperCase() + "|" + (d.hostname || "").toLowerCase()] = d; });
         Drill._rows.forEach(r => { r._living = by[(r.serial || "").toUpperCase() + "|" + (r.device_name || "").toLowerCase()] || {}; });
@@ -2355,7 +2357,7 @@ const BGTools = {
     { id: "perms", name: "Permissions Finder", icon: "🔑", desc: "Find every group a teammate is in — direct + nested" },
     { id: "missing", name: "Missing Groups", icon: "🧩", desc: "Find groups a teammate or department is missing vs. peers" },
   ],
-  _miss: { mode: "user", user: null, found: [], depts: [], company: "Nucor Buildings Group West" },
+  _miss: { mode: "user", user: null, found: [], depts: [], company: "" },
   load() {
     const host = document.getElementById("bgtHost"); if (!host) return;
     this._tool = null;   // start on a clean launcher; a tool's panel shows only once clicked
@@ -2463,7 +2465,7 @@ const BGTools = {
           <div class="field" style="flex:2;min-width:200px;margin:0"><label>Teammate name</label>
             <input id="bgpSearch" placeholder="e.g. Alberto Padilla" autocomplete="off" onkeydown="if(event.key==='Enter')BGTools.permSearch()"></div>
           <div class="field" style="flex:1;min-width:200px;margin:0"><label>Division</label>
-            <select id="bgpLoc"><option value="co:Nucor Buildings Group West">NBGW — Nucor Buildings Group West</option></select></div>
+            <select id="bgpLoc"><option value="co:${attr(Divisions.cur().company_name)}">${esc(Divisions.label())} — ${esc(Divisions.cur().company_name)}</option></select></div>
           <button class="primary" onclick="BGTools.permSearch()">Search</button>
         </div>
         <div id="bgpBody" style="margin-top:16px"><p class="hint">Results appear here.</p></div>
@@ -2486,7 +2488,7 @@ const BGTools = {
         `</optgroup><optgroup label="Other BG brands">` +
           this._perm.locations.map(l => `<option value="dom:${attr(l.domain)}">${esc(l.label)}</option>`).join("") +
         `</optgroup><option value="">All divisions (whole tenant)</option>`;
-      sel.value = `co:${r.nbgw_company || "Nucor Buildings Group West"}`;
+      sel.value = `co:${r.nbgw_company || Divisions.cur().company_name}`;
     } catch (e) { /* keep the NBGW default */ }
   },
   _scopeArgs(v) {
@@ -2545,7 +2547,7 @@ const BGTools = {
   // Compare a teammate (or a whole department) against its BomsNet baseline
   // (Configuration → BomsNet baselines) to flag groups they lack that peers have.
   _renderMissing(p) {
-    this._miss = { mode: "user", user: null, found: [], depts: [], company: "Nucor Buildings Group West" };
+    this._miss = { mode: "user", user: null, found: [], depts: [], company: Divisions.cur().company_name };
     p.innerHTML =
       `<div class="chart-card" style="max-width:860px">
         <h4 style="margin:0 0 4px">Missing Groups</h4>
@@ -2574,10 +2576,10 @@ const BGTools = {
     if (this._miss.mode === "user") {
       ctl.innerHTML =
         `<div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
-          <div class="field" style="flex:1;min-width:220px;margin:0"><label>NBGW teammate name</label>
+          <div class="field" style="flex:1;min-width:220px;margin:0"><label>${esc(Divisions.label())} teammate name</label>
             <input id="missSearch" placeholder="e.g. Stephen Thornton" autocomplete="off" onkeydown="if(event.key==='Enter')BGTools.missSearchUser()"></div>
           <button class="primary" onclick="BGTools.missSearchUser()">Search</button></div>
-         <p class="sub-note" style="margin:8px 0 0">Searches <b>${esc(this._miss.company)}</b> (NBGW) teammates only — the same people the baselines are built from.</p>`;
+         <p class="sub-note" style="margin:8px 0 0">Searches <b>${esc(this._miss.company || Divisions.cur().company_name)}</b> (${esc(Divisions.label())}) teammates only — the same people the baselines are built from.</p>`;
       const el = document.getElementById("missSearch"); if (el) el.focus();
     } else {
       ctl.innerHTML =
@@ -2608,10 +2610,10 @@ const BGTools = {
     const body = document.getElementById("missBody");
     if (q.length < 2) { body.innerHTML = `<p class="hint">Type at least 2 letters.</p>`; return; }
     body.innerHTML = `<p class="hint">Searching…</p>`;
-    const r = await Backend.call("bg_user_search", q, "", this._miss.company);
+    const r = await Backend.call("bg_user_search", q, "", this._miss.company || Divisions.cur().company_name);
     if (!r || !r.ok) { body.innerHTML = `<div class="cfg-warn">${esc((r && r.error) || "Search failed.")}</div>`; return; }
     const users = r.users || []; this._miss.found = users;
-    if (!users.length) { body.innerHTML = `<p class="hint">No NBGW teammate matches “${esc(q)}”.</p>`; return; }
+    if (!users.length) { body.innerHTML = `<p class="hint">No ${esc(Divisions.label())} teammate matches “${esc(q)}”.</p>`; return; }
     if (users.length === 1) { this.missShowUser(users[0]); return; }
     body.innerHTML = `<div class="hint" style="margin-bottom:8px">${users.length} matches — pick one:</div>` +
       `<div class="bgt-list">` + users.map((u, i) => `<div class="bgt-emp" onclick="BGTools.missPickUser(${i})">
@@ -2632,7 +2634,7 @@ const BGTools = {
     const head = `<div class="bgt-emp-head"><b>${esc(u.display || "")}</b> <span class="muted">${esc(u.dept || "(no department)")} · ${esc(u.upn || "")}</span></div>`;
     if (r.in_scope === false) {
       body.innerHTML = head +
-        `<div class="cfg-warn" style="margin-top:6px"><b>${esc(u.display || "This person")}</b> is in <b>${esc(u.company || "another division")}</b>, not ${esc(r.company || "NBGW")}. Group baselines only cover NBGW teammates, so there's nothing valid to compare against.</div>`;
+        `<div class="cfg-warn" style="margin-top:6px"><b>${esc(u.display || "This person")}</b> is in <b>${esc(u.company || "another division")}</b>, not ${esc(r.company || Divisions.label())}. Group baselines only cover ${esc(Divisions.label())} teammates, so there's nothing valid to compare against.</div>`;
       return;
     }
     if (!r.has_baseline) {
@@ -2655,7 +2657,7 @@ const BGTools = {
         present.map(g => `<div class="miss-row"><span class="miss-name" title="${attr(g.name)}">${esc(g.name)}</span></div>`).join("") + `</details>`
       : "";
     body.innerHTML = head +
-      `<p class="sub-note" style="margin:0 0 10px">Compared against the <b>${esc(u.dept)}</b> common-groups baseline (${total} NBGW peer${total === 1 ? "" : "s"}${r.updated ? `, analyzed ${esc(String(r.updated).slice(0, 10))}` : ""}).</p>` +
+      `<p class="sub-note" style="margin:0 0 10px">Compared against the <b>${esc(u.dept)}</b> common-groups baseline (${total} ${esc(Divisions.label())} peer${total === 1 ? "" : "s"}${r.updated ? `, analyzed ${esc(String(r.updated).slice(0, 10))}` : ""}).</p>` +
       missCard + presCard;
   },
   async missAnalyzeThenUser(dept, uid) {
@@ -2696,7 +2698,7 @@ const BGTools = {
           <thead><tr><th>Teammate</th><th>Missing groups</th></tr></thead><tbody>${rows}</tbody></table>`
       : `<p class="sub-note" style="margin:8px 0 0">No one in this department is missing an expected group. 🎉</p>`;
     body.innerHTML =
-      `<div class="bgt-emp-head"><b>${esc(r.department)}</b> <span class="muted">${total} NBGW member${total === 1 ? "" : "s"} · ${(r.expected || []).length} expected group${(r.expected || []).length === 1 ? "" : "s"}</span></div>
+      `<div class="bgt-emp-head"><b>${esc(r.department)}</b> <span class="muted">${total} ${esc(Divisions.label())} member${total === 1 ? "" : "s"} · ${(r.expected || []).length} expected group${(r.expected || []).length === 1 ? "" : "s"}</span></div>
        <div class="miss-stats"><span class="miss-stat ok"><b>${compliant}</b> fully compliant</span><span class="miss-stat ${gap ? "bad" : ""}"><b>${gap}</b> missing one or more</span></div>` +
       gapsHtml + badTbl;
   },
@@ -3054,7 +3056,7 @@ const Upgrade = {
     if (this.activeTab === "log") { host.innerHTML = this._logHtml(); return; }
     const list = this.items.filter(it => this.siteKey(it.site) === this.activeTab);
     if (!list.length) {
-      host.innerHTML = `<div class="empty">No devices queued for ${this.activeTab === "Other" ? "non-NBGW sites" : this.activeTab}. Add one from the Devices list or the “Needs upgrade” dashboard tile.</div>`;
+      host.innerHTML = `<div class="empty">No devices queued for ${this.activeTab === "Other" ? "sites outside " + Divisions.label() : this.activeTab}. Add one from the Devices list or the “Needs upgrade” dashboard tile.</div>`;
       return;
     }
     host.innerHTML = "";
@@ -3179,7 +3181,7 @@ const Upgrade = {
           <div class="up-dev">
             <div class="mono" style="font-size:15px">${esc(dev.serial)}</div>
             <div>${esc(dev.model || "—")}${dev.device_name ? ` · ${esc(dev.device_name)}` : ""}</div>
-            <div class="muted">${esc(dev.user || "no user")} · ${site === "Other" ? "No NBGW site" : site}</div>
+            <div class="muted">${esc(dev.user || "no user")} · ${site === "Other" ? "No " + Divisions.label() + " site" : site}</div>
           </div>
           <label class="up-lbl">Priority <span class="muted">(5 = highest)</span></label>
           <div class="up-pri" id="upPri">${[1, 2, 3, 4, 5].map(pbtn).join("")}</div>
@@ -3390,7 +3392,7 @@ const Depts = {
     const cards = names.length ? names.map(n => this._pbCard(n, doc.departments[n])).join("")
       : `<div class="empty" style="padding:22px">No departments analyzed yet. Add one below to build its group baseline.</div>`;
     return `<p class="sub-note" style="margin:0 0 12px">The groups the <b>majority</b> of each department holds (all Entra groups). Used by <b>BG Tools → Missing Groups</b> to flag teammates missing groups their peers have. Analyze a department, then check/uncheck which groups count as “expected”.</p>
-      <div class="cfg-ok" style="margin:0 0 12px">Scope: <b>NBGW teammates only</b> — Entra company “${esc(doc.company || "Nucor Buildings Group West")}”. Department names like “Detailing Dept NBS” are shared with NBGTX (Terrell) and NBSIN (Waterloo), so members are filtered by company, not just department.</div>
+      <div class="cfg-ok" style="margin:0 0 12px">Scope: <b>${esc(Divisions.label())} teammates only</b> — Entra company “${esc(doc.company || Divisions.cur().company_name)}”. Department names are shared across divisions, so members are filtered by company, not just department.</div>
       <div class="pb-controls">
         <label class="pb-thr">Majority threshold
           <input type="range" min="30" max="100" step="5" value="${thr}"
@@ -3398,7 +3400,7 @@ const Depts = {
           <b id="pbThrVal">${thr}%</b></label>
         <span style="display:flex;gap:8px">
           <button class="ghost" onclick="Depts._pbAnalyzeAll()"${names.length ? "" : " disabled"}>↻ Re-analyze all</button>
-          <button class="ghost" onclick="Depts._pbRebuild()" title="Find every NBGW department in Entra and rebuild all baselines from scratch">⟳ Rebuild from NBGW directory</button>
+          <button class="ghost" onclick="Depts._pbRebuild()" title="Find every ${esc(Divisions.label())} department in Entra and rebuild all baselines from scratch">⟳ Rebuild from ${esc(Divisions.label())} directory</button>
         </span>
       </div>
       <div class="pb-add">
@@ -3511,16 +3513,16 @@ const Depts = {
   // Discover every NBGW department (Entra companyName scope), wipe the old baselines,
   // and analyze each department big enough to have a meaningful majority.
   async _pbRebuild() {
-    if (!window.confirm("Rebuild ALL group baselines from the NBGW directory?\n\nThis finds every NBGW department in Entra, replaces the current baselines, and re-analyzes each one (about a minute). Any groups you unchecked by hand will be reset.")) return;
+    if (!window.confirm("Rebuild ALL group baselines from the " + Divisions.label() + " directory?\n\nThis finds every " + Divisions.label() + " department in Entra, replaces the current baselines, and re-analyzes each one (about a minute). Any groups you unchecked by hand will be reset.")) return;
     const st = document.getElementById("pbStatus");
-    if (st) st.innerHTML = `<div class="pb-run">Finding NBGW departments in Entra…</div>`;
+    if (st) st.innerHTML = `<div class="pb-run">Finding ${esc(Divisions.label())} departments in Entra…</div>`;
     const d = await Backend.call("perm_discover_departments");
-    if (!d || !d.ok) { if (st) st.innerHTML = `<div class="cfg-warn">${esc((d && d.error) || "Could not list NBGW departments.")}</div>`; return; }
+    if (!d || !d.ok) { if (st) st.innerHTML = `<div class="cfg-warn">${esc((d && d.error) || "Could not list " + Divisions.label() + " departments.")}</div>`; return; }
     const todo = (d.departments || []).filter(x => x.eligible).map(x => x.dept);
     const skipped = (d.departments || []).filter(x => !x.eligible);
     const reset = { keyword: (this._pb || {}).keyword || "", threshold: (this._pb || {}).threshold || 0.7,
                     company: d.company, departments: {} };
-    const s = await Backend.call("perm_save_baselines", reset, { action: "rebuild", target: "Group baselines", detail: `Rebuilding ${todo.length} NBGW department(s)` });
+    const s = await Backend.call("perm_save_baselines", reset, { action: "rebuild", target: "Group baselines", detail: `Rebuilding ${todo.length} ${Divisions.label()} department(s)` });
     if (s && s.ok && s.data) this._pb = s.data;
     const failed = [];
     for (let i = 0; i < todo.length; i++) {
@@ -3531,7 +3533,7 @@ const Depts = {
     }
     this._render();
     const st3 = document.getElementById("pbStatus");
-    if (st3) st3.innerHTML = `<div class="cfg-ok">Rebuilt <b>${todo.length - failed.length}</b> NBGW department baseline(s) from ${d.total_users} NBGW teammates.` +
+    if (st3) st3.innerHTML = `<div class="cfg-ok">Rebuilt <b>${todo.length - failed.length}</b> ${esc(Divisions.label())} department baseline(s) from ${d.total_users} ${esc(Divisions.label())} teammates.` +
       (skipped.length ? ` Skipped ${skipped.length} with fewer than ${d.min_members} people.` : "") +
       (failed.length ? ` <b>Failed:</b> ${esc(failed.join(", "))}.` : "") + `</div>`;
   },
@@ -3833,7 +3835,7 @@ const Hub = {
   _setups: [],
   state: { id: null, type: null, dept: null, checks: {}, notes: {}, subject: "", tech: "", serviceTag: "", createdAt: null, resumed: false },
   who: {},
-  K_DRAFT: "nbgw_hub_draft_v2",
+  get K_DRAFT() { return Divisions.draftKey(); },
 
   async boot() {
     const cm = document.getElementById("modalConfirm");
@@ -3948,7 +3950,7 @@ const Hub = {
     document.getElementById("runTitle").textContent = isUser ? "New user setup" : ("New computer setup" + (s.dept ? " · " + s.dept : ""));
     document.getElementById("nameLabel").textContent = isUser ? (this.config.user.subjectLabel || "Teammate name") : "Computer hostname";
     const subj = document.getElementById("subjectInput");
-    subj.placeholder = isUser ? (this.config.user.subjectPlaceholder || "e.g. Smith, Jane") : "e.g. NBGW-XXXXXX";
+    subj.placeholder = isUser ? (this.config.user.subjectPlaceholder || "e.g. Smith, Jane") : "e.g. " + Divisions.label() + "-XXXXXX";
     subj.value = s.subject || ""; subj.classList.remove("req-missing");
     // Primary user (required for a computer setup, optional for a user setup)
     const pu = document.getElementById("primaryUserInput");
@@ -4185,8 +4187,8 @@ const Hub = {
       .mark{width:26px;text-align:center;font-weight:700}.mark.y{color:#006325}.mark.n{color:#b3261e}
       .rd{color:#5c6b64;font-size:12px;margin-top:2px}.rn{color:#8a6d1e;font-size:12px;margin-top:3px;font-style:italic}
       .ft{margin-top:20px;color:#5c6b64;font-size:12px}</style></head><body>
-      <h1>NUCOR NBGW · ${isUser ? "New User Setup" : "New Computer Setup"}</h1>
-      <div class="sub">NBGW Systems setup record</div>
+      <h1>NUCOR ${esc(Divisions.label())} · ${isUser ? "New User Setup" : "New Computer Setup"}</h1>
+      <div class="sub">${esc(Divisions.label())} Systems setup record</div>
       <div class="hd"><div><b>${isUser ? "Teammate:" : "Hostname:"}</b> ${esc(subj)}</div>
       <div><b>Primary user:</b> ${esc(s.primaryUser || "—")}</div>
       ${s.dept ? `<div><b>Department:</b> ${esc(s.dept)}</div>` : ""}

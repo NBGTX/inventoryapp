@@ -755,7 +755,9 @@ class Api:
         # --- on-prem AD (PowerShell / DirectorySearcher) ---
         try:
             from adlookup import ad_lookup
-            domain = (self._client().cfg.get("ad_domain") or "bg.nucorsteel.local")
+            domain = (self._client().cfg.get("ad_domain") or "")
+            if not domain:
+                raise RuntimeError("No AD domain is configured for this division.")
             ad = ad_lookup(hostnames, domain)
         except Exception as e:
             ad = {"__error__": str(e)}
@@ -777,7 +779,7 @@ class Api:
                 "ad_last_logon": (arec or {}).get("last_logon", ""), "ad_ou": (arec or {}).get("dn", ""),
             })
         return {"ok": True, "devices": out, "entra_state": entra_state, "intune_ok": intune_ok,
-                "ad_error": ad_error, "ad_domain": (self._client().cfg.get("ad_domain") or "bg.nucorsteel.local")}
+                "ad_error": ad_error, "ad_domain": (self._client().cfg.get("ad_domain") or "")}
 
     # ---- Boneyard: retire devices gone from AD + Entra + Intune -----------
     def _boneyard_move(self, gc, serial: str, snap: dict) -> bool:
@@ -914,7 +916,10 @@ class Api:
 
     # ---- BG Tools: Timesheet Fix (SQL, integrated auth) ------------------
     def _ts_server(self) -> str:
-        return (self._client().cfg.get("timesheet_sql_server") or "BGBRISQL07")
+        srv = (self._client().cfg.get("timesheet_sql_server") or "").strip()
+        if not srv:        # never fall back to another division's server
+            raise RuntimeError("Timesheet is not configured for this division (no SQL server in its settings).")
+        return srv
 
     def ts_search(self, query: str) -> dict:
         """Find employees by first or last name in NBSEmployeeInfo.dbo.SAP_Interface."""

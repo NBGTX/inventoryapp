@@ -113,7 +113,7 @@ def run_sync(gc: GraphClient, commit: bool = False) -> dict:
     # one summary audit entry per sync run (not one per device)
     if commit and (added or updated):
         gc.add_log("Sync", "", "", actor=getattr(gc, "account_name", "") or "",
-                   details=f"Intune (NBGW device category): {len(added)} added, {len(updated)} updated")
+                   details=f"Intune ({gc.division['intune_category']} device category): {len(added)} added, {len(updated)} updated")
 
     return {"moved": added, "added": len(added), "updated": len(updated),
             "refreshed": len(updated), "count": len(devices), "skipped": 0,
@@ -498,7 +498,7 @@ def main() -> None:
     gc.sign_in(interactive=True)
     result = run_sync(gc, commit=commit)
 
-    print(f"\n{'COMMITTED' if commit else 'DRY RUN'} - saw {result['count']} NBGW device(s) in Intune; "
+    print(f"\n{'COMMITTED' if commit else 'DRY RUN'} - saw {result['count']} {gc.division['intune_category']} device(s) in Intune; "
           f"{len(result['moved'])} {'added' if commit else 'would be added'} to In Use, "
           f"{result['updated']} {'updated' if commit else 'would update'}.")
     for m in result["moved"]:

@@ -77,6 +77,7 @@ def find(registry: list[dict], div_id: str | None) -> dict:
 def public(d: dict) -> dict:
     """Division fields safe/useful to send to the UI."""
     return {"id": d["id"], "name": d["name"], "company_name": d["company_name"],
+            "ad_domain": d.get("ad_domain", ""), "has_timesheet": bool(d.get("sql_server")),
             "sites": [{"code": s["code"], "name": s.get("name", s["code"])} for s in d.get("sites", [])]}
 
 

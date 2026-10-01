@@ -109,7 +109,8 @@ class Hub:
         self.clients_path = os.path.join(self.hub, "nbgw-app-clients.json")
         self.perm_baselines_path = os.path.join(self.hub, "nbgw-perm-baselines.json")
         appdata = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-        self.history_dir = os.path.join(appdata, "NBGW-Endpoint-Hub", "config-history")
+        self.history_dir = os.path.join(appdata, "NBGW-Endpoint-Hub",
+                                        "config-history" if self.division.get("legacy_data") else "config-history-" + divisions.hub_folder_name(self.division)[len("_EndpointHub_"):])
         dirs = (self.history_dir,) if store else (self.logs, self.hub, self.setups_dir, self.changes_dir,
                                                   self.feedback_dir, self.history_dir)
         for d in dirs:
