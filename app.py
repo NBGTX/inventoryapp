@@ -540,11 +540,9 @@ class Api:
             if gc.find_by_serial("in_use", serial):
                 return {"ok": True, "status": "duplicate", "where": "In Use", "serial": serial}
 
-            # Specs always come from the vendor API (Lenovo/Dell), per machine.
+            # Specs always come from the vendor API (Lenovo/Dell/HP), per machine.
             # Model Spec References is intentionally NOT consulted.
-            m = (manufacturer or "").lower()
-            vendor = gc.lookup_lenovo(serial) if m == "lenovo" else (
-                gc.lookup_dell(serial) if m == "dell" else None)
+            vendor = gc.lookup_vendor(serial, manufacturer)
             v = vendor or {}
             if vendor:
                 return {"ok": True, "status": "found", "serial": serial,

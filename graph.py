@@ -1800,9 +1800,25 @@ class GraphClient:
         return res if got and (res["model"] or res["mtm"]) else None
 
     def lookup_dell(self, serial: str) -> dict | None:
-        """Placeholder until the Dell TechDirect API key arrives. Wire the real
-        endpoint here (service tag -> model/CPU/RAM/storage/warranty) and return the
-        same shape as lookup_lenovo: {model, cpu, ram, storage, warranty_end}."""
+        """Dell TechDirect warranty API -> {model, cpu, ram, storage, warranty_end} (no specs from Dell) or None."""
+        import vendors
+        return vendors.lookup_dell(self.get_setting("dell_client_id"), self.get_setting("dell_client_secret"), serial)
+
+    def lookup_hp(self, serial: str) -> dict | None:
+        """HP Product Warranty API -> {model, cpu, ram, storage, warranty_end} or None."""
+        import vendors
+        return vendors.lookup_hp(self.get_setting("hp_client_id"), self.get_setting("hp_client_secret"), serial)
+
+    def lookup_vendor(self, serial: str, manufacturer: str) -> dict | None:
+        """Route a serial to its maker's API (Lenovo, Dell, HP). None for anything else or on any failure."""
+        import vendors
+        v = vendors.vendor_of(manufacturer)
+        if v == "lenovo":
+            return self.lookup_lenovo(serial)
+        if v == "dell":
+            return self.lookup_dell(serial)
+        if v == "hp":
+            return self.lookup_hp(serial)
         return None
 
     # ---- Model Spec References -------------------------------------------

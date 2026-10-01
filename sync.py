@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import sys
 
+import vendors
 from graph import GraphClient, GraphError
 
 # Intune is authoritative for these; always refresh from the device record.
@@ -279,14 +280,17 @@ def enrich_in_use(gc: GraphClient, commit: bool = True, cap: int | None = None) 
                     if office:
                         updates["site_tag"] = office
 
-        # (c) Lenovo specs/warranty, only when missing (bounded by cap)
+        # (c) vendor (Lenovo / Dell / HP) specs + warranty, only when missing (bounded by cap).
+        #     Dell and HP only supply model + warranty, so for them look up only while the warranty is blank;
+        #     otherwise every run would re-query them for cpu/ram they can never give.
         did_specs = False
-        if not (cur.get("cpu") and cur.get("ram") and cur.get("warranty")) \
-                and "lenovo" in (cur.get("manufacturer") or "").lower():
+        _vend = vendors.vendor_of(cur.get("manufacturer") or "")
+        _need = (not (cur.get("cpu") and cur.get("ram") and cur.get("warranty"))) if _vend == "lenovo" else (not cur.get("warranty"))
+        if _vend and _need:
             candidates += 1
             if enriched < cap:
                 try:
-                    info = gc.lookup_lenovo(serial)
+                    info = gc.lookup_vendor(serial, cur.get("manufacturer") or "")
                 except Exception as e:
                     info, _ = None, errors.append(f"{serial}: {e}")
                 if info:
@@ -400,11 +404,11 @@ def master_sync(gc: GraphClient, commit: bool = True) -> dict:
                 if owner and owner.get("upn") and owner["upn"] != (cur.get("user") or "").strip():
                     updates["user"] = owner["upn"]
 
-        # specs / warranty / model from Lenovo (overwrite)
+        # specs / warranty / model from the maker's API (overwrite)
         manu = (cur.get("manufacturer") or (dev.get("manufacturer") if dev else "") or "")
-        if "lenovo" in manu.lower():
+        if vendors.vendor_of(manu):
             try:
-                info = gc.lookup_lenovo(serial)
+                info = gc.lookup_vendor(serial, manu)
             except Exception as e:
                 info, _ = None, errors.append(f"{serial}: {e}")
             if info:

@@ -192,3 +192,91 @@ class SingleSiteDivision(unittest.TestCase):
         self.assertEqual(divisions.site_from_name(d, "XYZ"), "")
         self.assertEqual(divisions.city_to_site(d, "Nowhere"), "")
         self.assertEqual(divisions.site_from_name({"sites": []}, "X"), "")
+
+
+class VendorLookups(unittest.TestCase):
+    """Dell/HP lookups with a fake `requests` (no network, no keys)."""
+
+    def setUp(self):
+        import vendors
+        self.v = vendors
+        self.v.clear_tokens()
+        self.calls = []
+        outer = self
+
+        class R:
+            def __init__(s, payload, status=200):
+                s._p, s.status_code, s.ok = payload, status, status < 400
+
+            def json(s):
+                return s._p
+
+        def post(url, **kw):
+            outer.calls.append(("POST", url, kw))
+            if "token" in url:
+                return R({"access_token": "TOK", "expires_in": 3600})
+            return R(outer.hp_payload)
+
+        def get(url, **kw):
+            outer.calls.append(("GET", url, kw))
+            return R(outer.dell_payload, outer.dell_status)
+        self._orig = (self.v.requests.post, self.v.requests.get)
+        self.v.requests.post, self.v.requests.get = post, get
+        self.dell_status = 200
+        self.dell_payload = [{"serviceTag": "ABC1234", "systemDescription": "Dell Latitude 5420", "invalid": False,
+                              "entitlements": [{"endDate": "2024-05-01T05:59:59.999Z"}, {"endDate": "2026-05-01T05:59:59.999Z"}]}]
+        self.hp_payload = [{"sn": "5CG1", "product": {"productName": "HP EliteBook 840 G8"},
+                            "offers": [{"offerEndDate": "2025-01-31", "description": "Next business day"}, {"offerEndDate": "2027-01-31"}]}]
+
+    def tearDown(self):
+        self.v.requests.post, self.v.requests.get = self._orig
+        self.v.clear_tokens()
+
+    def test_vendor_of(self):
+        for m, want in (("Lenovo", "lenovo"), ("LENOVO", "lenovo"), ("Dell Inc.", "dell"), ("HP", "hp"), ("Hewlett-Packard", "hp"),
+                        ("HP Inc.", "hp"), ("Microsoft Corporation", ""), ("", ""), (None, "")):
+            self.assertEqual(self.v.vendor_of(m), want, m)
+
+    def test_dell_returns_model_and_latest_warranty_end(self):
+        r = self.v.lookup_dell("id", "secret", "ABC1234")
+        self.assertEqual((r["model"], r["warranty_end"], r["cpu"]), ("Latitude 5420", "2026-05-01", ""))
+        get = [c for c in self.calls if c[0] == "GET"][0]
+        self.assertEqual(get[2]["params"], {"servicetags": "ABC1234"})
+        self.assertEqual(get[2]["headers"]["Authorization"], "Bearer TOK")
+        tok = [c for c in self.calls if c[1] == self.v.DELL_TOKEN_URL][0]
+        self.assertEqual(tok[2]["data"]["grant_type"], "client_credentials")
+
+    def test_token_is_reused_between_lookups(self):
+        self.v.lookup_dell("id", "secret", "A")
+        self.v.lookup_dell("id", "secret", "B")
+        self.assertEqual(len([c for c in self.calls if c[1] == self.v.DELL_TOKEN_URL]), 1)
+
+    def test_dell_missing_keys_invalid_tag_and_errors_return_none(self):
+        self.assertIsNone(self.v.lookup_dell("", "s", "A"))
+        self.assertIsNone(self.v.lookup_dell("i", "", "A"))
+        self.assertIsNone(self.v.lookup_dell("i", "s", ""))
+        self.assertEqual(self.calls, [])
+        self.dell_payload = [{"invalid": True}]
+        self.assertIsNone(self.v.lookup_dell("i", "s", "BAD"))
+        self.dell_status = 500
+        self.assertIsNone(self.v.lookup_dell("i", "s", "A"))
+        self.v.requests.get = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("net down"))
+        self.assertIsNone(self.v.lookup_dell("i", "s", "A"))                # never raises
+
+    def test_hp_tolerant_parser(self):
+        r = self.v.lookup_hp("key", "secret", "5CG1")
+        self.assertEqual((r["model"], r["warranty_end"]), ("HP EliteBook 840 G8", "2027-01-31"))
+        post = [c for c in self.calls if c[1] == self.v.HP_QUERIES_URL][0]
+        self.assertEqual(post[2]["json"], [{"sn": "5CG1"}])
+        self.assertIsNone(self.v.parse_hp({"nothing": "useful"}))
+        self.assertIsNone(self.v.parse_hp(None))
+
+    def test_graph_routes_by_manufacturer(self):
+        gc = make_client(extra={"dell_client_id": "i", "dell_client_secret": "s", "hp_client_id": "k", "hp_client_secret": "z"})
+        FakeSite(gc)
+        self.assertEqual(gc.lookup_vendor("ABC1234", "Dell Inc.")["warranty_end"], "2026-05-01")
+        self.assertEqual(gc.lookup_vendor("5CG1", "HP")["model"], "HP EliteBook 840 G8")
+        self.assertIsNone(gc.lookup_vendor("X", "Microsoft Corporation"))
+        gc2 = make_client()
+        FakeSite(gc2)
+        self.assertIsNone(gc2.lookup_vendor("ABC1234", "Dell"))             # no keys saved: quietly nothing
