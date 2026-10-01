@@ -4888,15 +4888,27 @@ Object.assign(Mock, {
   _issues: [
     { id: "iss-demo-1", type: "bug", title: "Hot spares window shows the wrong site", detail: "Opened from the dashboard tile, the LTR column is empty.", status: "open", reporter: { upn: "demo@nucor.com", name: "Demo User" }, division: { id: "nbgw", name: "NBGW" }, version: "2026.10.01", created_at: "2026-10-01T12:00:00Z", updated_at: "2026-10-01T15:00:00Z", assignee: null, votes: ["a@x.com"], watchers: ["demo@nucor.com"], comments: [{ id: "c1", by: "Sims", upn: "s@x.com", at: "2026-10-01T15:00:00Z", text: "Reproduced. Looking." }], history: [{ at: "2026-10-01T12:00:00Z", by: "Demo User", action: "created", detail: "bug reported" }] },
     { id: "iss-demo-2", type: "feature", title: "Export the Upgrade list to Excel", detail: "", status: "planned", reporter: { upn: "a@x.com", name: "Blake" }, division: { id: "nbgtx", name: "NBG - Terrell" }, version: "2026.10.01", created_at: "2026-09-30T09:00:00Z", updated_at: "2026-09-30T09:00:00Z", assignee: { upn: "dev@x.com", name: "Dev" }, votes: [], watchers: [], comments: [], history: [{ at: "2026-09-30T09:00:00Z", by: "Blake", action: "created", detail: "feature reported" }] }],
-  _sum(d) { return { id: d.id, short: "#" + d.id.slice(-6).toUpperCase(), type: d.type, title: d.title, status: d.status, reporter: d.reporter, division: d.division, created_at: d.created_at, updated_at: d.updated_at, assignee: d.assignee, votes: d.votes.length, comments: d.comments.length, voted: d.votes.includes("demo@nucor.com"), watching: d.watchers.includes("demo@nucor.com"), mine: d.reporter.upn === "demo@nucor.com" }; },
+  _sum(d) { return { id: d.id, short: "#" + d.id.slice(-6).toUpperCase(), type: d.type, title: d.title, status: d.status, reporter: d.reporter, division: d.division, created_at: d.created_at, updated_at: d.updated_at, assignee: d.assignee, votes: d.votes.length, comments: d.comments.length, files: (d.attachments || []).length + d.comments.reduce((n, c) => n + (c.attachments || []).length, 0), voted: d.votes.includes("demo@nucor.com"), watching: d.watchers.includes("demo@nucor.com"), mine: d.reporter.upn === "demo@nucor.com" }; },
   async issues_list() { return { ok: true, issues: this._issues.map(d => this._sum(d)), triage: true, me: "demo@nucor.com", statuses: [["open", "Open"], ["planned", "Planned"], ["in_progress", "In progress"], ["done", "Done"], ["wont_do", "Won't do"]].map(([id, label]) => ({ id, label })) }; },
   async issue_get(id) { const d = this._issues.find(x => x.id === id); return d ? { ok: true, issue: JSON.parse(JSON.stringify(d)), summary: this._sum(d), triage: true, can_edit: true } : { ok: false, error: "That issue no longer exists." }; },
-  async issue_create(kind, title, detail) {
+  _files: {},
+  async issue_attachment(id, att) { const f = this._files[id + "/" + att]; return f ? { ok: true, ...f } : { ok: false, error: "That file no longer exists." }; },
+  _keep(id, files) {
+    return (files || []).map((f, i) => { const att = "a-" + Date.now() + i; this._files[id + "/" + att] = { name: f.name, type: /\.(png|jpe?g|gif|webp|bmp)$/i.test(f.name) ? "image/" + f.name.split(".").pop().replace("jpg", "jpeg").toLowerCase() : "application/octet-stream", size: Math.round(f.data.length * 0.75), data: f.data };
+      return { id: att, name: f.name, type: this._files[id + "/" + att].type, size: this._files[id + "/" + att].size, by: "Demo User", at: new Date().toISOString() }; });
+  },
+  async issue_create(kind, title, detail, files) {
     if (!(title || "").trim()) return { ok: false, error: "Add a short title." };
     const d = { id: "iss-" + Date.now(), type: kind, title: title.trim(), detail: detail || "", status: "open", reporter: { upn: "demo@nucor.com", name: "Demo User" }, division: { id: "nbgw", name: "NBGW" }, version: "2026.10.01", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), assignee: null, votes: [], watchers: ["demo@nucor.com"], comments: [], history: [{ at: new Date().toISOString(), by: "Demo User", action: "created", detail: kind + " reported" }] };
+    if (files && files.length) d.attachments = this._keep(d.id, files);
     this._issues.unshift(d); return { ok: true, issue: this._sum(d) };
   },
-  async issue_comment(id, text) { const d = this._issues.find(x => x.id === id); if (!(text || "").trim()) return { ok: false, error: "Write a comment first." }; d.comments.push({ id: "c" + Date.now(), by: "Demo User", upn: "demo@nucor.com", at: new Date().toISOString(), text }); d.updated_at = new Date().toISOString(); return { ok: true, issue: d }; },
+  async issue_comment(id, text, files) {
+    const d = this._issues.find(x => x.id === id); if (!(text || "").trim() && !(files || []).length) return { ok: false, error: "Write a comment first." };
+    const c = { id: "c" + Date.now(), by: "Demo User", upn: "demo@nucor.com", at: new Date().toISOString(), text: text || "" };
+    if (files && files.length) c.attachments = this._keep(id, files);
+    d.comments.push(c); d.updated_at = new Date().toISOString(); return { ok: true, issue: d };
+  },
   async issue_vote(id) { const d = this._issues.find(x => x.id === id), u = "demo@nucor.com", i = d.votes.indexOf(u); if (i >= 0) d.votes.splice(i, 1); else d.votes.push(u); return { ok: true, voted: i < 0, votes: d.votes.length }; },
   async issue_watch(id) { const d = this._issues.find(x => x.id === id), u = "demo@nucor.com", i = d.watchers.indexOf(u); if (i >= 0) d.watchers.splice(i, 1); else d.watchers.push(u); return { ok: true, watching: i < 0 }; },
   async issue_update(id, f) {

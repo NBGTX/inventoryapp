@@ -101,11 +101,12 @@ const Help = {
       html: `
         <p>Issues is the shared list of <b>bugs</b> and <b>feature requests</b> for NBG Hub. It is the same list for every division, so the team that maintains the app sees everything in one place.</p>
         <h5>Reporting</h5>
-        <p>Click <b>+ New issue</b> (or <b>Report bug / feature</b> at the bottom of the sidebar). Choose bug or feature request, give it a short title and describe it: what you did, what you expected and what happened. Check it before you submit, because you cannot edit it afterwards (you can still add comments). Everyone using the app can read it, so do not paste passwords or personal data.</p>
+        <p>Click <b>+ New issue</b> (or <b>Report bug / feature</b> at the bottom of the sidebar). Choose bug or feature request, give it a short title and describe it: what you did, what you expected and what happened. Add <b>pictures or files</b> if they help: click <b>Choose files</b>, drag them into the window, or press <b>Ctrl+V</b> while typing to paste a screenshot straight from the clipboard (Windows key + Shift + S takes one). Pictures (png, jpg, gif, webp, bmp), pdf, txt, log and csv are accepted, up to 5 files and 5 MB each; other kinds are refused. Check it before you submit, because you cannot edit it afterwards (you can still add comments, with files). Everyone using the app can read it, so do not paste passwords or personal data.</p>
         <h5>Finding and following</h5>
         <ul>
           <li>The chips filter by <b>status</b>; the search box matches the title, the id (like #A3F9C1), the reporter and the division. <b>Mine</b> shows issues you reported or that are assigned to you.</li>
-          <li>Click an issue to read it. <b>Comment</b> to add detail or ask a question; <b>Vote</b> (👍) if you hit it too, which helps decide what to fix first; <b>Watch</b> to get e-mails about it (commenting also watches it).</li>
+          <li>Click an issue to read it. Pictures show under the description and in the comments; click one to enlarge it, and click any other file to download it. A 📎 on the list means the issue has files.</li>
+          <li><b>Comment</b> to add detail or ask a question; <b>Vote</b> (👍) if you hit it too, which helps decide what to fix first; <b>Watch</b> to get e-mails about it (commenting also watches it).</li>
         </ul>
         <h5>Statuses</h5>
         <ul>

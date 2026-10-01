@@ -365,7 +365,25 @@ class Api:
         else:
             threading.Thread(target=run, daemon=True).start()
 
-    def issue_create(self, kind: str, title: str, detail: str = "") -> dict:
+    def _store_files(self, issue_id: str, files: list, existing: int, who: str) -> list:
+        """Validate and upload attachments; returns their metadata. Nothing is uploaded if any file is refused."""
+        import issues
+        import uuid
+        files = list(files or [])
+        if len(files) > issues.MAX_FILES_PER_POST:
+            raise issues.IssueError(f"At most {issues.MAX_FILES_PER_POST} files at a time.")
+        if existing + len(files) > issues.MAX_FILES_PER_ISSUE:
+            raise issues.IssueError(f"This issue already has too many files ({issues.MAX_FILES_PER_ISSUE} at most).")
+        checked = [issues.check_attachment((f or {}).get("name"), (f or {}).get("data")) for f in files]
+        hub = self._issue_hub()
+        metas = []
+        for name, mime, data in checked:
+            att_id = "a-" + uuid.uuid4().hex[:8]
+            hub.put_attachment(issues.blob_name(issue_id, att_id, name), data)
+            metas.append(issues.attachment_meta(att_id, name, mime, len(data), who))
+        return metas
+
+    def issue_create(self, kind: str, title: str, detail: str = "", files: list = None) -> dict:
         try:
             import issues
             me = self._issue_user()
@@ -373,6 +391,8 @@ class Api:
             import version
             doc = issues.new_issue(kind, title, detail, me, {"id": gc.division["id"], "name": gc.division.get("name", "")}, version.APP_VERSION)
             doc["watchers"] = [me["upn"]]
+            if files:
+                doc["attachments"] = self._store_files(doc["id"], files, 0, me["name"])
             self._issue_hub().put_issue(doc)
             self._notify(doc, "new", me)
             return {"ok": True, "issue": issues.summary(doc, me["upn"])}
@@ -403,13 +423,38 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
-    def issue_comment(self, issue_id: str, text: str) -> dict:
+    def issue_comment(self, issue_id: str, text: str, files: list = None) -> dict:
         try:
             import issues
             me = self._issue_user()
-            doc, _ = self._mutate_issue(issue_id, lambda d: issues.apply_comment(d, me, text))
-            self._notify(doc, "comment", me, issues.clean_text(text, "comment")[:500])
+            metas = []
+            if files:
+                cur = self._issue_hub().get_issue(issue_id)
+                if not cur:
+                    raise issues.IssueError("That issue no longer exists.")
+                metas = self._store_files(issue_id, files, len(issues.all_attachments(cur)), me["name"])
+            doc, _ = self._mutate_issue(issue_id, lambda d: issues.apply_comment(d, me, text, metas))
+            note = issues.clean_text(text, "comment")[:500] or f"(attached {len(metas)} file(s))"
+            self._notify(doc, "comment", me, note)
             return {"ok": True, "issue": doc}
+        except Exception as e:
+            return self._fail(e)
+
+    def issue_attachment(self, issue_id: str, att_id: str) -> dict:
+        """The bytes of one attachment as base64 (for the page to show or save). Any signed-in user."""
+        try:
+            import base64
+            import issues
+            self._issue_user()
+            hub = self._issue_hub()
+            doc = hub.get_issue(issue_id)
+            meta = next((m for m in issues.all_attachments(doc or {}) if m.get("id") == att_id), None)
+            if not meta:
+                return {"ok": False, "error": "That file no longer exists."}
+            data = hub.get_attachment(issues.blob_name(issue_id, att_id, meta["name"]))
+            if data is None:
+                return {"ok": False, "error": "The file could not be found in storage."}
+            return {"ok": True, "name": meta["name"], "type": meta["type"], "size": len(data), "data": base64.b64encode(data).decode("ascii")}
         except Exception as e:
             return self._fail(e)
 
@@ -457,7 +502,12 @@ class Api:
         try:
             if not self._client().is_super_admin():
                 return {"ok": False, "error": "Only a super admin can delete an issue."}
-            self._issue_hub().delete_issue(issue_id)
+            import issues
+            hub = self._issue_hub()
+            doc = hub.get_issue(issue_id)
+            hub.delete_issue(issue_id)
+            for m in issues.all_attachments(doc or {}):
+                hub.delete_attachment(issues.blob_name(issue_id, m.get("id", ""), m.get("name", "")))
             return {"ok": True}
         except Exception as e:
             return self._fail(e)

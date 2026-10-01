@@ -19,6 +19,16 @@ EVENTS = ["new", "status", "comment"]
 LIMITS = {"title": 120, "detail": 8000, "comment": 4000}
 
 
+MAX_FILES_PER_POST = 5
+MAX_FILES_PER_ISSUE = 20
+MAX_BYTES = 5 * 1024 * 1024
+# Only these types are accepted (no scripts, archives or programs). Checked by name AND by the file's first bytes.
+ALLOWED = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp",
+           "bmp": "image/bmp", "pdf": "application/pdf", "txt": "text/plain", "log": "text/plain", "csv": "text/csv"}
+_MAGIC = {"png": (b"\x89PNG\r\n\x1a\n",), "jpg": (b"\xff\xd8\xff",), "jpeg": (b"\xff\xd8\xff",), "gif": (b"GIF87a", b"GIF89a"),
+          "bmp": (b"BM",), "pdf": (b"%PDF-",)}
+
+
 class IssueError(Exception):
     """A problem the person can fix (shown as-is in the app)."""
 
@@ -34,6 +44,47 @@ def clean_text(v, kind: str, required: bool = False) -> str:
     if len(t) > LIMITS[kind]:
         raise IssueError(f"That is too long ({LIMITS[kind]} characters at most).")
     return t
+
+
+def check_attachment(name: str, b64: str) -> tuple:
+    """Validate one uploaded file. Returns (clean_name, mime, bytes). Raises IssueError with a message the person can act on."""
+    import base64
+    import binascii
+    clean = re.sub(r"[^A-Za-z0-9._ -]", "_", str(name or "").replace("\\", "/").split("/")[-1]).strip(" .")[:80] or "file"
+    ext = clean.rsplit(".", 1)[-1].lower() if "." in clean else ""
+    if ext not in ALLOWED:
+        raise IssueError(f"'{clean}': this kind of file is not accepted. Use a picture (png, jpg, gif, webp, bmp), pdf, txt, log or csv.")
+    try:
+        data = base64.b64decode(str(b64 or ""), validate=True)
+    except (binascii.Error, ValueError):
+        raise IssueError(f"'{clean}' could not be read.")
+    if not data:
+        raise IssueError(f"'{clean}' is empty.")
+    if len(data) > MAX_BYTES:
+        raise IssueError(f"'{clean}' is too big ({MAX_BYTES // (1024 * 1024)} MB at most).")
+    if ext in _MAGIC and not any(data.startswith(m) for m in _MAGIC[ext]):
+        raise IssueError(f"'{clean}' is not really a .{ext} file.")
+    if ext == "webp" and not (data[:4] == b"RIFF" and data[8:12] == b"WEBP"):
+        raise IssueError(f"'{clean}' is not really a .webp file.")
+    if ext in ("txt", "log", "csv") and b"\x00" in data:
+        raise IssueError(f"'{clean}' is not a text file.")
+    return clean, ALLOWED[ext], data
+
+
+def attachment_meta(att_id: str, name: str, mime: str, size: int, by: str) -> dict:
+    return {"id": att_id, "name": name, "type": mime, "size": size, "by": by, "at": now_iso()}
+
+
+def blob_name(issue_id: str, att_id: str, name: str) -> str:
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else "bin"
+    return f"{re.sub(r'[^A-Za-z0-9-]', '', issue_id)}-{re.sub(r'[^A-Za-z0-9-]', '', att_id)}.{ext}"
+
+
+def all_attachments(issue: dict) -> list:
+    out = list(issue.get("attachments") or [])
+    for c in issue.get("comments") or []:
+        out += list(c.get("attachments") or [])
+    return out
 
 
 def person(upn: str, name: str = "") -> dict:
@@ -64,15 +115,18 @@ def summary(issue: dict, me: str = "") -> dict:
             "status": issue.get("status", "open"), "reporter": issue.get("reporter") or {}, "division": issue.get("division") or {},
             "created_at": issue.get("created_at", ""), "updated_at": issue.get("updated_at", ""),
             "assignee": issue.get("assignee"), "votes": len(issue.get("votes") or []),
-            "comments": len(issue.get("comments") or []),
+            "comments": len(issue.get("comments") or []), "files": len(all_attachments(issue)),
             "voted": me in (issue.get("votes") or []), "watching": me in (issue.get("watchers") or []),
             "mine": me in ((issue.get("reporter") or {}).get("upn", ""), ((issue.get("assignee") or {}).get("upn", "")))}
 
 
-def apply_comment(issue: dict, by: dict, text: str) -> None:
+def apply_comment(issue: dict, by: dict, text: str, attachments: list | None = None) -> None:
     now = now_iso()
-    issue.setdefault("comments", []).append({"id": "c-" + uuid.uuid4().hex[:8], "by": by.get("name", ""), "upn": by.get("upn", ""),
-                                             "at": now, "text": clean_text(text, "comment", True)})
+    body = clean_text(text, "comment", required=not attachments)
+    c = {"id": "c-" + uuid.uuid4().hex[:8], "by": by.get("name", ""), "upn": by.get("upn", ""), "at": now, "text": body}
+    if attachments:
+        c["attachments"] = attachments
+    issue.setdefault("comments", []).append(c)
     issue["updated_at"] = now
     if by.get("upn") and by["upn"] not in issue.setdefault("watchers", []):
         issue["watchers"].append(by["upn"])                    # commenting subscribes you to the thread

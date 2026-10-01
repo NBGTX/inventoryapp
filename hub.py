@@ -821,6 +821,39 @@ class Hub:
         if self._exists(p):
             self._remove(p)
 
+    # ---- issue attachments (binary files; Hub Files library in central mode, a folder otherwise) ----
+    def _att_path(self, name: str) -> str:
+        return os.path.join(self.hub, "attachments", self._safe(name))
+
+    def put_attachment(self, name: str, data: bytes) -> None:
+        if self._store:
+            self._store.put_bytes(self._safe(name), data)
+            return
+        p = self._att_path(name)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        tmp = f"{p}.{os.getpid()}.tmp"
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, p)
+
+    def get_attachment(self, name: str):
+        if self._store:
+            return self._store.get_bytes(self._safe(name))
+        try:
+            with open(self._att_path(name), "rb") as f:
+                return f.read()
+        except OSError:
+            return None
+
+    def delete_attachment(self, name: str) -> None:
+        try:
+            if self._store:
+                self._store._blob_del(self._safe(name))
+            else:
+                os.remove(self._att_path(name))
+        except Exception:
+            pass
+
     # ---- changes / feedback ----------------------------------------------
     def get_changes(self) -> list:
         return self._read_dir(self.changes_dir)

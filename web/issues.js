@@ -2,6 +2,79 @@
    One shared list (all divisions). Anyone signed in reports, comments, votes and watches; super admins triage
    (status, assignee, delete). The page only displays: every rule is enforced by the Api (issues.py).
    Uses esc()/attr()/Backend/App/Tz/DirPicker/Ui/Help from app.js. */
+/* Attach: pick files, drag them in, or paste a screenshot from the clipboard. Files are read here and sent to the Api as base64;
+   the Api re-checks type, size and content, so this only gives early, friendly messages. */
+const Attach = {
+  MAX_FILES: 5, MAX_BYTES: 5 * 1024 * 1024, ALLOWED: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "pdf", "txt", "log", "csv"],
+  forms: {},
+  mount(key, hostId, pasteIds) {
+    const st = this.forms[key] = this.forms[key] || { files: [] };
+    st.files = [];
+    const host = document.getElementById(hostId);
+    if (!host) return;
+    host.innerHTML = `<div class="att-zone" id="${hostId}-z"><span>📎 Drop files here, paste a screenshot (Ctrl+V), or</span>
+        <button type="button" class="ghost" style="padding:5px 12px" onclick="document.getElementById('${hostId}-in').click()">Choose files</button>
+        <input type="file" id="${hostId}-in" multiple hidden accept="${this.ALLOWED.map(e => "." + e).join(",")}">
+        <span style="margin-left:auto">png, jpg, gif, webp, pdf, txt, log, csv · 5 MB each</span></div>
+      <div class="att-list" id="${hostId}-l"></div>`;
+    const zone = document.getElementById(hostId + "-z");
+    document.getElementById(hostId + "-in").onchange = e => { this.add(key, hostId, e.target.files); e.target.value = ""; };
+    zone.ondragover = e => { e.preventDefault(); zone.classList.add("drag"); };
+    zone.ondragleave = () => zone.classList.remove("drag");
+    zone.ondrop = e => { e.preventDefault(); zone.classList.remove("drag"); this.add(key, hostId, e.dataTransfer.files); };
+    (pasteIds || []).forEach(id => { const el = document.getElementById(id); if (el) el.addEventListener("paste", e => {
+      const imgs = [...(e.clipboardData && e.clipboardData.items || [])].filter(i => i.kind === "file" && i.type.startsWith("image/")).map(i => i.getAsFile()).filter(Boolean);
+      if (imgs.length) { e.preventDefault(); this.add(key, hostId, imgs.map((f, n) => new File([f], "screenshot-" + new Date().toISOString().slice(11, 19).replace(/:/g, "") + (n ? "-" + n : "") + "." + (f.type.split("/")[1] || "png").replace("jpeg", "jpg"), { type: f.type }))); }
+    }); });
+  },
+  async add(key, hostId, fileList) {
+    const st = this.forms[key];
+    for (const f of [...fileList]) {
+      const ext = (f.name.split(".").pop() || "").toLowerCase();
+      if (st.files.length >= this.MAX_FILES) { App.toast("At most " + this.MAX_FILES + " files at a time.", true); break; }
+      if (!this.ALLOWED.includes(ext)) { App.toast("'" + f.name + "': this kind of file is not accepted.", true); continue; }
+      if (f.size > this.MAX_BYTES) { App.toast("'" + f.name + "' is too big (5 MB at most).", true); continue; }
+      if (f.size === 0) { App.toast("'" + f.name + "' is empty.", true); continue; }
+      const url = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
+      st.files.push({ name: f.name, data: String(url).split(",")[1] || "", preview: f.type.startsWith("image/") ? url : "", size: f.size });
+    }
+    this.draw(key, hostId);
+  },
+  draw(key, hostId) {
+    const st = this.forms[key], el = document.getElementById(hostId + "-l");
+    if (!el) return;
+    el.innerHTML = st.files.map((f, i) => `<div class="att-item">${f.preview ? `<img src="${attr(f.preview)}" alt="">` : `<div class="att-ic">📄</div>`}
+      <div class="att-name" title="${attr(f.name)}">${esc(f.name)}</div><div>${Math.max(1, Math.round(f.size / 1024))} KB</div>
+      <button type="button" class="att-x" title="Remove" onclick="Attach.remove('${key}','${hostId}',${i})">&times;</button></div>`).join("");
+  },
+  remove(key, hostId, i) { this.forms[key].files.splice(i, 1); this.draw(key, hostId); },
+  payload(key) { return (this.forms[key] ? this.forms[key].files : []).map(f => ({ name: f.name, data: f.data })); },
+
+  /* ---- showing saved attachments ---- */
+  html(issueId, list) {
+    if (!list || !list.length) return "";
+    return `<div class="att-list">` + list.map(a => /^image\//.test(a.type)
+      ? `<div class="att-item"><img data-issue="${attr(issueId)}" data-att="${attr(a.id)}" alt="${attr(a.name)}" onclick="Attach.zoom(this)"><div class="att-name" title="${attr(a.name)}">${esc(a.name)}</div><div>${Math.max(1, Math.round(a.size / 1024))} KB</div></div>`
+      : `<div class="att-item file" onclick="Attach.download('${attr(issueId)}','${attr(a.id)}')" title="Download ${attr(a.name)}"><div class="att-ic">📄</div><div class="att-name">${esc(a.name)}</div><div>${Math.max(1, Math.round(a.size / 1024))} KB ⬇</div></div>`).join("") + `</div>`;
+  },
+  async hydrate(root) {
+    for (const img of (root || document).querySelectorAll("img[data-att]:not([src])")) {
+      const r = await Backend.call("issue_attachment", img.dataset.issue, img.dataset.att);
+      if (r && r.ok) img.src = "data:" + r.type + ";base64," + r.data; else img.alt = "(missing)";
+    }
+  },
+  zoom(img) {
+    if (!img.src) return;
+    const d = document.createElement("div"); d.className = "att-light"; d.onclick = () => d.remove();
+    d.innerHTML = `<img src="${attr(img.src)}" alt="">`; document.body.appendChild(d);
+  },
+  async download(issueId, attId) {
+    const r = await Backend.call("issue_attachment", issueId, attId);
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not get the file.", true);
+    const a = document.createElement("a"); a.href = "data:" + r.type + ";base64," + r.data; a.download = r.name; document.body.appendChild(a); a.click(); a.remove();
+  },
+};
+
 const Issues = {
   list: [], meta: { triage: false, me: "", statuses: [] }, cur: null, detail: null,
   f: { status: "open", type: "", mine: false, q: "", sort: "updated" },
@@ -61,7 +134,7 @@ const Issues = {
           <div class="iss-ic">${this.icon(i.type)}</div>
           <div class="iss-main"><div class="iss-title">${esc(i.title)}</div>
             <div class="iss-meta">${esc(i.short)} · opened ${esc(this.ago(i.created_at))} by ${esc((i.reporter || {}).name || "unknown")}${(i.division || {}).name ? " · " + esc(i.division.name) : ""}${i.assignee ? " · assigned to " + esc(i.assignee.name) : ""}</div></div>
-          <div class="iss-side">${this.pill(i.status)}<span title="Votes">👍 ${i.votes}</span><span title="Comments">💬 ${i.comments}</span></div>
+          <div class="iss-side">${this.pill(i.status)}<span title="Votes">👍 ${i.votes}</span>${i.files ? `<span title="Attachments">📎 ${i.files}</span>` : ""}<span title="Comments">💬 ${i.comments}</span></div>
         </div>`).join("") : `<div class="empty">${this.list.length ? "Nothing matches these filters." : "No issues yet. Use New issue to report the first one."}</div>`}</div>`;
   },
   set(k, v) { this.f[k] = v; this.renderList(); },
@@ -80,7 +153,7 @@ const Issues = {
   },
   timeline(d) {
     const ev = [];
-    (d.comments || []).forEach(c => ev.push({ at: c.at, html: `<div class="iss-cm"><div class="iss-cm-h"><b>${esc(c.by || "someone")}</b> <span>commented ${esc(this.ago(c.at))}</span></div><div class="iss-cm-b">${esc(c.text).replace(/\n/g, "<br>")}</div></div>` }));
+    (d.comments || []).forEach(c => ev.push({ at: c.at, html: `<div class="iss-cm"><div class="iss-cm-h"><b>${esc(c.by || "someone")}</b> <span>commented ${esc(this.ago(c.at))}</span></div><div class="iss-cm-b">${c.text ? esc(c.text).replace(/\n/g, "<br>") : ""}${Attach.html(d.id, c.attachments)}</div></div>` }));
     (d.history || []).filter(h => h.action !== "created").forEach(h => {
       const what = { status: "changed the status", assigned: "assigned this to", edited: "edited this", notify: "notification" }[h.action] || h.action;
       ev.push({ at: h.at, html: `<div class="iss-ev">${h.action === "notify" ? "✉ " : "● "}${h.by ? `<b>${esc(h.by)}</b> ` : ""}${esc(what)}${h.detail ? ": " + esc(h.detail) : ""} <span>${esc(this.ago(h.at))}</span></div>` });
@@ -98,10 +171,11 @@ const Issues = {
           <h3 class="iss-d-title">${this.icon(d.type)} ${esc(d.title)} <span class="muted">${esc(s.short)}</span></h3>
           <div class="iss-d-sub">${this.pill(d.status)} <span class="muted">${esc((d.reporter || {}).name || "unknown")} opened this ${esc(this.ago(d.created_at))}</span></div>
           ${r.can_edit ? `<div style="margin:6px 0"><button class="ghost" onclick="Issues.editBox()">✎ Edit title / description</button></div><div id="issEdit"></div>` : ""}
-          <div class="iss-desc">${d.detail ? esc(d.detail).replace(/\n/g, "<br>") : `<span class="muted">No description.</span>`}</div>
+          <div class="iss-desc">${d.detail ? esc(d.detail).replace(/\n/g, "<br>") : `<span class="muted">No description.</span>`}${Attach.html(d.id, d.attachments)}</div>
           <h4 class="blkhead" style="margin-top:18px">Activity</h4>
           <div class="iss-tl">${this.timeline(d) || `<span class="muted">Nothing yet.</span>`}</div>
-          <div class="iss-newcm"><textarea id="issCm" rows="3" placeholder="Write a comment…"></textarea>
+          <div class="iss-newcm"><textarea id="issCm" rows="3" placeholder="Write a comment… (paste a screenshot here with Ctrl+V)"></textarea>
+            <div class="att-box" id="issCmAtt"></div>
             <div style="text-align:right;margin-top:8px"><button class="primary" onclick="Issues.comment()">Comment</button></div></div>
         </div>
         <aside class="iss-d-side">
@@ -117,6 +191,8 @@ const Issues = {
           ${tri ? `<div class="iss-box"><button class="ghost" style="color:var(--red);border-color:var(--red)" onclick="Issues.del()">Delete issue</button></div>` : ""}
         </aside>
       </div>`;
+    Attach.mount("comment", "issCmAtt", ["issCm"]);
+    Attach.hydrate(host);
     if (tri) DirPicker.mount("issAsg", "user", it => this.update({ assignee: { upn: it.upn, name: it.name || it.upn } }), "Assign to a person…");
   },
   back() { this.cur = null; this.detail = null; this.load(); },
@@ -133,9 +209,9 @@ const Issues = {
     App.toast("Saved."); this.open(this.cur, true);
   },
   async comment() {
-    const el = document.getElementById("issCm"), text = (el.value || "").trim();
-    if (!text) return App.toast("Write a comment first.", true);
-    const r = await Backend.call("issue_comment", this.cur, text);
+    const el = document.getElementById("issCm"), text = (el.value || "").trim(), files = Attach.payload("comment");
+    if (!text && !files.length) return App.toast("Write a comment or attach a file first.", true);
+    const r = await Backend.call("issue_comment", this.cur, text, files);
     if (!r || !r.ok) return App.toast((r && r.error) || "Could not comment.", true);
     this.open(this.cur, true);
   },
@@ -165,22 +241,40 @@ const Feedback = {
               <label class="on"><input type="radio" name="mfbKind" value="bug" checked onchange="Feedback.kind('bug')">🐞 Bug: something is wrong</label>
               <label><input type="radio" name="mfbKind" value="feature" onchange="Feedback.kind('feature')">💡 Feature request: I would like…</label>
             </div></div>
-          <div class="field"><label>Title</label><input id="mfbTitle" placeholder="Short summary" maxlength="120" autocomplete="off"></div>
+          <div class="field"><label>Title</label><input id="mfbTitle" placeholder="" maxlength="120" autocomplete="off"></div>
           <div class="field"><label>Details</label>
-            <textarea id="mfbDetail" rows="7" placeholder="What happened, what did you expect, and which page were you on? (Steps help.)"></textarea></div>
+            <textarea id="mfbDetail" rows="7" placeholder=""></textarea></div>
+          <div class="field"><label>Pictures and files <span class="muted">(optional)</span></label><div id="mfbAtt"></div></div>
           <p class="muted" style="font-size:12px;margin:0">Everyone using NBG Hub can see and comment on this. You cannot edit it after you submit (you can add comments), so check it first. Do not paste passwords or personal data.</p>
         </div>
         <div class="modal-foot"><button class="ghost" onclick="Feedback.close()">Cancel</button><button class="primary" onclick="Feedback.submit()">Submit</button></div>
       </div></div>`;
+    Attach.mount("new", "mfbAtt", ["mfbDetail", "mfbTitle"]);
+    this.kind("bug");
     if (type) { const r = document.querySelector(`input[name=mfbKind][value=${type === "feature" ? "feature" : "bug"}]`); if (r) { r.checked = true; this.kind(r.value); } }
     setTimeout(() => { const t = document.getElementById("mfbTitle"); if (t) t.focus(); }, 30);
   },
   close() { document.getElementById("modalRoot").innerHTML = ""; },
-  kind(v) { document.querySelectorAll("#mfbType label").forEach(l => l.classList.toggle("on", l.querySelector("input").value === v)); },
+  HINTS: {
+    bug: { title: "Short summary, e.g. Hot spares window shows the wrong site",
+           detail: `What did you do? What did you expect? What happened instead?
+Which page and division were you on? Steps to repeat it help most.
+Paste a screenshot of the problem with Ctrl+V.` },
+    feature: { title: "Short summary, e.g. Export the Upgrade list to Excel",
+               detail: `What would you like to be able to do?
+Why does it matter: who needs it and how often?
+How do you imagine it working? Paste a sketch or an example with Ctrl+V.` },
+  },
+  kind(v) {
+    document.querySelectorAll("#mfbType label").forEach(l => l.classList.toggle("on", l.querySelector("input").value === v));
+    const h = this.HINTS[v] || this.HINTS.bug, t = document.getElementById("mfbTitle"), d = document.getElementById("mfbDetail");
+    if (t) t.placeholder = h.title;
+    if (d) d.placeholder = h.detail;
+  },
   async submit() {
     const title = (document.getElementById("mfbTitle").value || "").trim();
     if (!title) return App.toast("Add a short title.", true);
-    const r = await Backend.call("issue_create", (document.querySelector("input[name=mfbKind]:checked") || {}).value || "bug", title, (document.getElementById("mfbDetail").value || "").trim());
+    const r = await Backend.call("issue_create", (document.querySelector("input[name=mfbKind]:checked") || {}).value || "bug", title, (document.getElementById("mfbDetail").value || "").trim(), Attach.payload("new"));
     if (!r || !r.ok) return App.toast((r && r.error) || "Could not submit.", true);
     this.close();
     App.toast("Thanks: filed as " + r.issue.short + ". Find it under Issues.");

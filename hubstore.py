@@ -107,6 +107,27 @@ class SharePointHubStore:
                 json={self._col("Division", "hub_files"): self._div(), self._col("Kind", "hub_files"): "setup-html",
                       self._col("Item Id", "hub_files"): name})
 
+    def put_bytes(self, name: str, data: bytes, kind: str = "attachment") -> None:
+        """Upload a binary file to this division's folder in the Hub Files library."""
+        from graph import GRAPH
+        gc = self.gc
+        item = gc._req("PUT", self._blob_url(name, ":/content"), data=data, headers={"Content-Type": "application/octet-stream"}).json()
+        site = gc._ensure_site()
+        lid = gc._list_id("hub_files")
+        li = gc._req("GET", f"{GRAPH}/sites/{site}/lists/{lid}/drive/items/{item['id']}/listItem?$select=id").json()["id"]
+        gc._req("PATCH", f"{GRAPH}/sites/{site}/lists/{lid}/items/{li}/fields",
+                json={self._col("Division", "hub_files"): self._div(), self._col("Kind", "hub_files"): kind,
+                      self._col("Item Id", "hub_files"): name})
+
+    def get_bytes(self, name: str):
+        from graph import GraphError
+        try:
+            return self.gc._req("GET", self._blob_url(name, ":/content")).content
+        except GraphError as e:
+            if "404" in str(e):
+                return None
+            raise
+
     def _blob_del(self, name: str) -> None:
         from graph import GraphError
         try:
