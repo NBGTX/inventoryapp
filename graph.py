@@ -704,16 +704,20 @@ class GraphClient:
         self.add_log("Division changed", did, "", actor=self.account_name or "", details="division settings saved")
 
     def visible_registry(self) -> list:
-        """Divisions this user may switch to. A division's `access` list holds emails ('*' = all);
-        empty = everyone. Super admins see all. NOTE: app-side filter only - SharePoint cannot hide
-        another division's rows from someone with site access (see docs/MIGRATION.md)."""
+        """Divisions this user may switch to. A division's `access` list holds sign-in emails,
+        `group:<id>|<name>` entries and '*' (= everyone). An EMPTY list means super admins only.
+        Super admins see all. Installs without a central site (single-division mode) have no access
+        control. NOTE: app-side filter only - SharePoint cannot hide another division's rows from
+        someone with site access (see docs/MIGRATION.md)."""
+        if not self._central:
+            return list(self.registry)
         me = (self.account_upn or "").strip().lower()
         out = []
         sa = self.is_super_admin()
         groups = None                                  # fetched lazily, only if some ACL names a group
         for d in self.registry:
             acl = d.get("access") or []
-            ok = sa or not acl or "*" in acl or bool(me and me in acl)
+            ok = sa or "*" in acl or bool(me and me in acl)
             if not ok:
                 gids = [str(e)[6:].split("|")[0].strip().lower() for e in acl if str(e).lower().startswith("group:")]
                 if gids:

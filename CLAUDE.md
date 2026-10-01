@@ -74,7 +74,7 @@ Build: needs Python 3.12 (`py -3.12`, `-Python <exe>` or `NBG_PYTHON`), `config.
 - **CSS:** `:root` vars `styles.css:1-6`, dark only, feature prefix (`pb-`, `miss-`, `bgt-`, `hs-`, `up-`, `liv-`, `cfg-`, `dm-`, `ms-`).
 - **SharePoint:** columns by display name via `FIELD_ALIASES` (`graph.py`); serial = `Title`. In Use rows: `gc._row(fields, "in_use", in_use=True)` or user is blank.
 - **Managing admins/access (in-app, super admin):** Master settings > Super admins (type-ahead over Entra; stored in the `super_admins` Master Settings row; `config.json super_admins` is the un-removable bootstrap; you cannot remove yourself). Division visibility: Divisions > Edit > "Who can see this division" = people (emails) and/or Entra groups (`group:<id>|<name>` in Access JSON; membership read via `/me/transitiveMemberOf`, fails closed). Type-ahead = `Api.user_lookup` -> `GraphClient.directory_lookup`.
-- **Authority:** super admins = `super_admins` master row or `config.json super_admins`; division visibility = Divisions `Access JSON`. Both are app-side checks; SharePoint site access still exposes all rows.
+- **Authority:** super admins = `super_admins` master row or `config.json super_admins`; division visibility = Divisions `Access JSON` (emails, `group:` entries, `*` = everyone; EMPTY = super admins only). Both are app-side checks; SharePoint site access still exposes all rows.
 
 ## Gotchas
 

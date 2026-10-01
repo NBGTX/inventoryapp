@@ -106,6 +106,7 @@ class GroupAccess(unittest.TestCase):
         self.gc = make_client()
         self.site = FakeSite(self.gc)
         self.gc.account_upn = "user@nucor.com"
+        self.gc.registry[0]["access"] = ["*"]                          # NBGW open to everyone for these tests
         self.gc.registry.append({"id": "nbgtx", "name": "TX", "company_name": "c", "sites": [], "lists": {}, "legacy_data": False,
                                  "access": ["group:ABC-123|NBGTX IT", "someone@else.com"]})
 

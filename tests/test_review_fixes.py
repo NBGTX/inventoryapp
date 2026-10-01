@@ -65,6 +65,7 @@ class RegistryFailsClosed(unittest.TestCase):
         self.gc = make_client()
         self.site = FakeSite(self.gc)
         self.gc.account_upn = "user@nucor.com"
+        self.site.add("divisions", Title="nbgw", DisplayName="NBGW", Enabled="Yes", AccessJson='["*"]')   # NBGW open to everyone
 
     def test_bad_ids_and_site_codes_are_dropped(self):
         bad = '[{"code":"X\\" onmouseover=\\"1","name":"x"},{"code":"OK1","name":"ok","city_prefixes":["c"],"device_prefixes":["BGOK"]},{"code":"OTHER"}]'
@@ -244,3 +245,46 @@ class CleanUpn(unittest.TestCase):
         self.assertEqual(c(""), "")
         self.assertEqual(c("abb60fd585a34220a66f7169bdee9126@nucor.com"), "abb60fd585a34220a66f7169bdee9126@nucor.com")  # nothing after the hex: leave it
         self.assertEqual(c("1234567890abcdef@nucor.com"), "1234567890abcdef@nucor.com")     # short hex name: leave it
+
+
+class EmptyAccessMeansSuperAdminsOnly(unittest.TestCase):
+    def setUp(self):
+        self.gc = make_client()
+        self.site = FakeSite(self.gc)
+        self.gc.account_upn = "user@nucor.com"
+
+    def vis(self):
+        return sorted(d["id"] for d in self.gc.visible_registry())
+
+    def test_empty_list_hides_the_division_from_normal_users(self):
+        self.site.add("divisions", Title="nbgw", DisplayName="NBGW", Enabled="Yes", AccessJson="[]")
+        self.gc.refresh_registry(force=True)
+        self.assertEqual(self.vis(), [])
+
+    def test_star_means_everyone(self):
+        self.site.add("divisions", Title="nbgw", DisplayName="NBGW", Enabled="Yes", AccessJson='["*"]')
+        self.gc.refresh_registry(force=True)
+        self.assertEqual(self.vis(), ["nbgw"])
+
+    def test_super_admins_always_see_everything_even_with_empty_lists(self):
+        self.site.add("divisions", Title="nbgw", DisplayName="NBGW", Enabled="Yes", AccessJson="[]")
+        self.gc.refresh_registry(force=True)
+        self.gc._base_cfg["super_admins"] = ["user@nucor.com"]
+        self.assertEqual(self.vis(), ["nbgw"])
+
+    def test_a_listed_person_sees_it_others_do_not(self):
+        self.site.add("divisions", Title="nbgw", DisplayName="NBGW", Enabled="Yes", AccessJson='["user@nucor.com"]')
+        self.gc.refresh_registry(force=True)
+        self.assertEqual(self.vis(), ["nbgw"])
+        self.gc.account_upn = "other@nucor.com"
+        self.assertEqual(self.vis(), [])
+
+    def test_central_read_failure_fails_closed_for_normal_users(self):
+        self.gc._items_raw = lambda k: (_ for _ in ()).throw(RuntimeError("down"))
+        self.gc.refresh_registry(force=True)                  # falls back to config.json's built-in NBGW (no access list)
+        self.assertEqual(self.vis(), [])
+
+    def test_single_division_installs_without_a_central_site_have_no_access_control(self):
+        gc = make_client(central=False)
+        gc.account_upn = "anyone@nucor.com"
+        self.assertEqual([d["id"] for d in gc.visible_registry()], ["nbgw"])

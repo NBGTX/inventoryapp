@@ -526,9 +526,9 @@ const DivisionAdmin = {
           ${f("dvEmpTable", "Employee table (e.g. dbo.SAP_Interface)", d.employee_table)}
           ${f("dvHost", "Old SharePoint host (migration source, optional)", d.sharepoint_hostname)}
           ${f("dvPath", "Old SharePoint site path (migration source, optional)", d.site_path)}
-          <div class="field"><label>Who can see this division <span class="muted">(empty = everyone; super admins always see all)</span></label>
+          <div class="field"><label>Who can see this division <span class="muted">(empty = super admins only)</span></label>
             <div id="dvAccChips" class="dp-chips"></div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><div id="dvAccUser" style="flex:1;min-width:230px"></div><div id="dvAccGroup" style="flex:1;min-width:230px"></div></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><div id="dvAccUser" style="flex:1;min-width:230px"></div><div id="dvAccGroup" style="flex:1;min-width:230px"></div><button class="ghost" type="button" onclick="DivisionAdmin.addAccess('*')" title="Everyone who can run the app sees this division">+ Everyone</button></div>
             <p class="muted" style="margin:6px 0 0;font-size:12px">App-side gate: it controls what the app shows. People with access to the SharePoint site can still open the lists directly.</p></div>
           <div class="field"><label><input type="checkbox" id="dvEnabled" ${d.enabled ? "checked" : ""}> Visible (untick to hide this division)</label></div>
           <h4 style="margin:14px 0 6px">Sites</h4>
@@ -550,7 +550,7 @@ const DivisionAdmin = {
     const acc = this.cur.access || [];
     host.innerHTML = acc.map((a, i) => { const l = this.accLabel(a);
       return `<span class="dp-chip ${l.t}">${l.t === "group" ? "👥 " : ""}${esc(l.name)} <button onclick="DivisionAdmin.delAccess(${i})" title="Remove">&times;</button></span>`; }).join("")
-      || "<span class='muted'>Everyone can see it</span>";
+      || "<span class='muted'>Nobody yet: only super admins can see this division</span>";
     DirPicker.mount("dvAccUser", "user", it => this.addAccess(it.upn), "Add a person (name or sign-in)…");
     DirPicker.mount("dvAccGroup", "group", it => this.addAccess("group:" + it.id + "|" + it.name), "Add an Entra group…");
   },

@@ -83,7 +83,7 @@ class Registry(unittest.TestCase):
         self.gc = make_client()
         self.site = FakeSite(self.gc)
         tx = '[{"code":"TER","name":"Terrell","city_prefixes":["terrell"],"device_prefixes":["BGTER"]}]'
-        self.site.add("divisions", Title="nbgw", DisplayName="NBGW Renamed", Enabled="Yes", AccessJson="[]")
+        self.site.add("divisions", Title="nbgw", DisplayName="NBGW Renamed", Enabled="Yes", AccessJson='["*"]')
         self.site.add("divisions", Title="nbgtx", DisplayName="TX", CompanyName="NBG - Terrell", IntuneCategory="NBGTX",
                       SitesJson=tx, Enabled="Yes", AccessJson='["tx@nucor.com"]')
         self.site.add("divisions", Title="old", DisplayName="Old", Enabled="No")
