@@ -53,6 +53,7 @@
         Settings</button>
       <button class="side-config dm-btn" id="dmBtn" onclick="DataMode.open()" title="Live production data or a local copy (writes stay on this PC)">Data: …</button>
       <div class="acct-line"><span id="acct">Not signed in</span></div>
+      <button class="primary hidden" id="signinBtn" style="width:100%;justify-content:center;margin:6px 0" onclick="App.signIn(this)">Sign in</button>
       <a id="signout" class="hidden" onclick="App.signOut()">Sign out</a>
       <div class="ver-line" id="verLine" onclick="App.showClients()" title="Click to see which version everyone is running">v…</div>
     </div>
@@ -60,6 +61,18 @@
 
   <!-- ============ CONTENT ============ -->
   <div class="content">
+
+    <!-- ---------- SIGN-IN GATE (shown instead of the pages while nobody is signed in) ---------- -->
+    <div class="signin-gate" id="signinGate">
+      <div class="signin-card">
+        <img src="hub-mark.svg" width="72" height="72" alt="">
+        <h2>Sign in to NBG Hub</h2>
+        <p>Use your Nucor account. If you have a separate admin account that holds the Intune role, choose that one.</p>
+        <button class="primary" id="gateBtn" onclick="App.signIn(this)">Sign in with Microsoft</button>
+        <p class="muted" id="gateErr" style="min-height:18px;color:var(--red)"></p>
+        <p class="muted" style="font-size:12px">A Microsoft window opens. If you do not see it, check behind this window.</p>
+      </div>
+    </div>
 
     <!-- ---------- SETTINGS ---------- -->
     <section class="appview" id="appview-settings">

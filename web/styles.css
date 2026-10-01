@@ -876,3 +876,13 @@ body.is-busy button.primary,body.is-busy .modal-foot button,body.is-busy .set-ro
 .field .iss-seg label.on{color:#fff;}
 button[data-busy]{opacity:1!important;cursor:progress;}
 button.primary[data-busy] .busy-spin{border-color:rgba(255,255,255,.35);border-top-color:#fff;}
+
+/* ---- sign-in gate ---- */
+.signin-gate{display:none;align-items:center;justify-content:center;min-height:80vh;}
+.signin-card{max-width:440px;text-align:center;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:34px 38px;box-shadow:0 10px 36px rgba(0,0,0,.35);}
+.signin-card h2{margin:14px 0 8px;font-size:22px;}
+.signin-card p{color:var(--muted);font-size:13.5px;line-height:1.5;margin:0 0 14px;}
+.signin-card .primary{margin:6px auto 10px;padding:12px 26px;font-size:15px;}
+body.signed-out .appview{display:none!important;}
+body.signed-out .signin-gate{display:flex;}
+body.signed-out #signinBanner{display:none!important;}

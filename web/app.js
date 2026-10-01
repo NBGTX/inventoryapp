@@ -120,10 +120,17 @@ const Backend = {
     if (watch) Busy.start();
     const job = Busy.JOBS[method] ? Busy.jobStart(method) : 0;
     try {
+      let res;
       if (this.real && window.pywebview && window.pywebview.api && window.pywebview.api[method]) {
-        return await window.pywebview.api[method](...args);
+        res = await window.pywebview.api[method](...args);
+      } else {
+        res = await Mock[method](...args);
       }
-      return await Mock[method](...args);
+      if (res && res.ok === false && /sign.?in (is )?required|no cached account|sign-in failed|AADSTS|interaction_required/i.test(String(res.error || ""))
+          && method !== "sign_in" && typeof App !== "undefined" && !document.body.classList.contains("signed-out")) {
+        App.showSignedOut("Your sign-in expired. Sign in again to continue.");
+      }
+      return res;
     } finally {
       if (watch) Busy.end();
       if (job) Busy.jobEnd(job);
@@ -594,9 +601,18 @@ const App = {
       document.getElementById("signout").classList.remove("hidden");
       await this.startup();
     } else {
-      document.getElementById("signinBanner").classList.remove("hidden");
-      this.setBusy(true);
+      this.showSignedOut();
     }
+  },
+
+  /* Nobody signed in: hide the pages, show a clear Sign in screen and a Sign in button in the sidebar. */
+  showSignedOut(why) {
+    document.body.classList.add("signed-out");
+    document.getElementById("signinBtn").classList.remove("hidden");
+    document.getElementById("signout").classList.add("hidden");
+    document.getElementById("acct").textContent = "Not signed in";
+    const e = document.getElementById("gateErr"); if (e) e.textContent = why || "";
+    this.setBusy(true);
   },
 
   async startup() {
@@ -710,17 +726,21 @@ const App = {
     if (mb) mb.disabled = b;
   },
 
-  async signIn() {
-    const r = await Backend.call("sign_in");
-    if (!r.ok) return this.error(r.error || "Sign-in failed.");
-    document.getElementById("signinBanner").classList.add("hidden");
-    this.state.account = r.account;
-    document.getElementById("acct").textContent = r.account || "Signed in";
-    document.getElementById("signout").classList.remove("hidden");
-    this.setBusy(false);
-    await this.startup();
-    try { Dashboard.load(); } catch (e) {}
+  async signIn(btn) {
+    btn = btn || document.getElementById("gateBtn");
+    const ok = await Ui.working(btn, "Waiting for the Microsoft sign-in window…", async () => {
+      const r = await Backend.call("sign_in");
+      if (!r || !r.ok) {
+        const msg = (r && r.error) || "Sign-in did not finish.";
+        const e = document.getElementById("gateErr"); if (e) e.textContent = msg;
+        this.toast(msg, true);
+        return false;
+      }
+      return true;
+    });
+    if (ok) Resume.reload();                 // everything starts again as the signed-in user, on the same page
   },
+
 
   async signOut() {
     await Backend.call("sign_out");
