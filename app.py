@@ -1753,6 +1753,81 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    # ---- BG Tools: Copy permissions (on-prem AD groups) -------------------
+    def _ad_perm_gate(self):
+        gc = self._client()
+        if gc.division_role() not in ("super", "admin"):
+            raise PermissionError("Copy permissions is for admins.")
+        return (gc.cfg.get("ad_domain") or "bg.nucorsteel.local")
+
+    def ad_user_search(self, q: str) -> dict:
+        try:
+            domain = self._ad_perm_gate()
+            import adperms
+            r = adperms.search_users(q, domain)
+            if "__error__" in r:
+                return {"ok": False, "error": r["__error__"]}
+            return {"ok": True, "users": r["users"]}
+        except Exception as e:
+            return self._fail(e)
+
+    def ad_perm_compare(self, src_dn: str, dst_dn: str) -> dict:
+        try:
+            domain = self._ad_perm_gate()
+            import adperms
+            if not src_dn or not dst_dn or src_dn.lower() == dst_dn.lower():
+                return {"ok": False, "error": "Pick two different people."}
+            s, d = adperms.user_groups(src_dn, domain), adperms.user_groups(dst_dn, domain)
+            for r in (s, d):
+                if "__error__" in r:
+                    return {"ok": False, "error": r["__error__"]}
+            c = adperms.compare(s["groups"], d["groups"])
+            return {"ok": True, "src_count": len(s["groups"]), "dst_count": len(d["groups"]), **c}
+        except Exception as e:
+            return self._fail(e)
+
+    def ad_perm_copy(self, src_dn: str, dst_dn: str, group_dns, account: str = "", commit: bool = False) -> dict:
+        """Add the destination user to the chosen groups the source user is in. Dry run unless commit: the write runs under
+        the admin's own smart card account (runas /netonly /smartcard). Re-reads AD afterwards and logs one audit entry."""
+        try:
+            domain = self._ad_perm_gate()
+            import adperms
+            group_dns = list(group_dns or [])
+            if not src_dn or not dst_dn or src_dn.lower() == dst_dn.lower():
+                return {"ok": False, "error": "Pick two different people."}
+            if not group_dns:
+                return {"ok": False, "error": "Select at least one group."}
+            if len(group_dns) > adperms.MAX_COPY:
+                return {"ok": False, "error": f"At most {adperms.MAX_COPY} groups per copy."}
+            s, d = adperms.user_groups(src_dn, domain), adperms.user_groups(dst_dn, domain)
+            for r in (s, d):
+                if "__error__" in r:
+                    return {"ok": False, "error": r["__error__"]}
+            plan = adperms.plan_copy(s["groups"], d["groups"], group_dns)
+            out = {"ok": True, "committed": False, "would_add": [g["name"] for g in plan["add"]], "skipped": plan["skipped"]}
+            if not commit or not plan["add"]:
+                return out
+            if self._client().data_mode == "local":
+                return {"ok": False, "error": "Local data mode: this writes to production AD, so it is disabled. Switch to Live."}
+            w = adperms.write_groups(dst_dn, [g["dn"] for g in plan["add"]], domain, (account or "").strip())
+            if "__error__" in w:
+                return {"ok": False, "error": w["__error__"]}
+            names = {g["dn"]: g["name"] for g in plan["add"]}
+            after = adperms.user_groups(dst_dn, domain)
+            have = {g["dn"].lower() for g in after.get("groups", [])} if "__error__" not in after else None
+            added = [names[x] for x in w["done"] if x in names and (have is None or x.lower() in have)]
+            failed = [{"name": names.get(f.get("dn"), f.get("dn")), "error": f.get("error", "")} for f in w["failed"]]
+            unverified = [names[x] for x in w["done"] if x in names and have is not None and x.lower() not in have]
+            try:
+                self._hubc()._change("AD copy permissions", f"{self._actor() or 'NBG Hub'} added {dst_dn.split(',')[0][3:]} to {len(added)} group(s) "
+                                     f"copied from {src_dn.split(',')[0][3:]} as {w.get('who') or 'admin account'}: {', '.join(added)[:300]}")
+            except Exception:
+                pass
+            out.update({"committed": True, "added": added, "failed": failed, "unverified": unverified, "who": w.get("who", "")})
+            return out
+        except Exception as e:
+            return self._fail(e)
+
     # ---- BG Tools: Permissions Finder (Entra groups) ---------------------
     # BG locations to scope the user search by email domain. All live in the one Nucor
     # tenant, so this is a filter, not a tenant switch. Override in config.json via

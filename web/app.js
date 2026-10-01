@@ -2583,12 +2583,101 @@ const HotSpares = {
    search an employee, see the last 8 weeks' timesheet lock status, and unlock a week
    (sets NBSTimesheet.dbo.WeekLocked.Locked = 0). SQL runs as the signed-in user
    (integrated auth); every unlock is confirmed and audited. */
+/* ---- BG Tools: Copy Permissions (on-prem AD groups) ---- */
+const CopyPerms = {
+  s: { src: null, dst: null, cmp: null, picked: {}, res: null }, _t: {},
+  render(p) {
+    this.s = { src: null, dst: null, cmp: null, picked: {}, res: null };
+    let acct = ""; try { acct = localStorage.getItem("nbg_ad_admin_acct") || ""; } catch (e) {}
+    p.innerHTML = `<div class="chart-card">
+      <h4 style="margin:0 0 4px">Copy Permissions</h4>${Help.box("bgt-copyperms")}
+      <div class="cp-pick">${["src", "dst"].map(w => `<div class="field"><label>${w === "src" ? "Copy FROM (source)" : "Copy TO (destination)"}</label>
+        <input id="cp-${w}" placeholder="Type a name or account…" autocomplete="off" oninput="CopyPerms.typed('${w}')">
+        <div class="cp-hits" id="cp-hits-${w}"></div><div class="cp-chosen" id="cp-chosen-${w}"></div></div>`).join("")}</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="primary" id="cpCmp" onclick="CopyPerms.compare()" disabled>Compare</button>
+        <span class="sub-note" id="cpMsg" style="margin:0"></span></div>
+      <div id="cpOut"></div>
+      <div class="field cp-acct" style="max-width:380px;margin-top:14px"><label>Your admin account for writing (YubiKey)</label>
+        <input id="cpAcct" placeholder="adm.name.pa" value="${attr(acct)}" autocomplete="off"></div></div>`;
+  },
+  typed(w) {
+    clearTimeout(this._t[w]);
+    const q = document.getElementById("cp-" + w).value.trim();
+    const box = document.getElementById("cp-hits-" + w);
+    if (q.length < 2) { box.innerHTML = ""; return; }
+    this._t[w] = setTimeout(async () => {
+      box.innerHTML = `<div class="sub-note">Searching AD…</div>`;
+      const r = await Backend.call("ad_user_search", q);
+      if (!r || !r.ok) { box.innerHTML = `<div class="sub-note" style="color:var(--red)">${esc((r && r.error) || "Search failed.")}</div>`; return; }
+      this._hits = this._hits || {}; this._hits[w] = r.users;
+      box.innerHTML = r.users.length ? r.users.map((u, i) => `<div class="cp-hit" onclick="CopyPerms.pick('${w}',${i})"><b>${esc(u.name || u.sam)}</b>
+        <span>${esc(u.sam)}${u.title ? " · " + esc(u.title) : ""}${u.dept ? " · " + esc(u.dept) : ""}${u.enabled ? "" : " · disabled"}</span></div>`).join("") : `<div class="sub-note">No one found.</div>`;
+    }, 350);
+  },
+  pick(w, i) {
+    this.s[w] = this._hits[w][i]; this.s.cmp = null; this.s.res = null;
+    document.getElementById("cp-hits-" + w).innerHTML = "";
+    document.getElementById("cp-" + w).value = "";
+    document.getElementById("cp-chosen-" + w).innerHTML = `<span class="cp-chip">${esc(this.s[w].name || this.s[w].sam)} <i>${esc(this.s[w].sam)}</i></span>`;
+    document.getElementById("cpCmp").disabled = !(this.s.src && this.s.dst);
+    document.getElementById("cpOut").innerHTML = "";
+  },
+  async compare() {
+    const { src, dst } = this.s;
+    if (!src || !dst) return;
+    const msg = document.getElementById("cpMsg");
+    const r = await Ui.working(document.getElementById("cpCmp"), "Reading AD groups…", () => Backend.call("ad_perm_compare", src.dn, dst.dn));
+    if (!r || !r.ok) { msg.textContent = (r && r.error) || "Compare failed."; msg.style.color = "var(--red)"; return; }
+    msg.textContent = ""; this.s.cmp = r; this.s.picked = {}; this.s.res = null;
+    // safe default: tick ordinary groups, never privileged ones
+    r.only_src.forEach(g => { if (g.security !== false && !g.privileged) this.s.picked[g.dn] = true; });
+    this.draw();
+  },
+  grp(g, sel) {
+    const tag = (g.privileged ? ` <span class="cp-tag red">privileged</span>` : "") + (g.security === false ? ` <span class="cp-tag">distribution</span>` : "");
+    return `<label class="cp-g"><input type="checkbox" ${sel ? `${this.s.picked[g.dn] ? "checked" : ""} ${g.security === false ? "disabled" : ""} onchange="CopyPerms.tick(this,'${attr(g.dn)}')"` : "disabled"}>
+      <span><b>${esc(g.name)}</b>${tag}<small>${esc(g.desc || "")}</small></span></label>`;
+  },
+  tick(el, dn) { if (el.checked) this.s.picked[dn] = true; else delete this.s.picked[dn]; this.draw(); },
+  tickAll(on) { this.s.cmp.only_src.forEach(g => { if (g.security !== false && (on === "safe" ? !g.privileged : on)) this.s.picked[g.dn] = true; else delete this.s.picked[g.dn]; }); this.draw(); },
+  draw() {
+    const c = this.s.cmp, n = Object.keys(this.s.picked).length, o = document.getElementById("cpOut");
+    const col = (title, list, sel, extra) => `<div class="cp-col"><h5>${title} <span>${list.length}</span></h5>${extra || ""}<div class="cp-list">${list.length ? list.map(g => this.grp(g, sel)).join("") : `<div class="sub-note">None</div>`}</div></div>`;
+    o.innerHTML = `<div class="cp-cols">
+      ${col("Only " + esc(this.s.src.sam) + " has", c.only_src, true, `<div class="cp-bulk"><a onclick="CopyPerms.tickAll('safe')">Select all (not privileged)</a> · <a onclick="CopyPerms.tickAll(false)">None</a></div>`)}
+      ${col("Both have", c.both, false)}
+      ${col("Only " + esc(this.s.dst.sam) + " has", c.only_dst, false)}</div>
+      <div class="cp-actions"><button class="ghost" id="cpPrev" ${n ? "" : "disabled"} onclick="CopyPerms.go(false)">Preview (${n})</button>
+        <button class="primary" id="cpGo" ${n ? "" : "disabled"} onclick="CopyPerms.go(true)">Copy ${n} group${n === 1 ? "" : "s"} to ${esc(this.s.dst.sam)}…</button></div>
+      <div id="cpRes">${this.s.res || ""}</div>`;
+  },
+  async go(commit) {
+    const { src, dst } = this.s, dns = Object.keys(this.s.picked);
+    const acct = (document.getElementById("cpAcct").value || "").trim();
+    if (commit) {
+      if (!acct) { App.toast("Enter your admin account (for example adm.name.pa) first.", true); return; }
+      try { localStorage.setItem("nbg_ad_admin_acct", acct); } catch (e) {}
+      if (!confirm(`Add ${dst.name || dst.sam} to ${dns.length} AD group(s) copied from ${src.name || src.sam}?\n\nWindows will ask for your YubiKey PIN.`)) return;
+    }
+    const btn = document.getElementById(commit ? "cpGo" : "cpPrev");
+    const r = await Ui.working(btn, commit ? "Waiting for the YubiKey PIN window…" : "Checking…", () => Backend.call("ad_perm_copy", src.dn, dst.dn, dns, acct, commit));
+    let h;
+    if (!r || !r.ok) h = `<div class="cp-res bad">${esc((r && r.error) || "Failed.")}</div>`;
+    else if (!r.committed) h = `<div class="cp-res">Would add ${r.would_add.length}: ${esc(r.would_add.join(", ") || "nothing")}.${r.skipped.length ? " Skipped: " + esc(r.skipped.map(x => x.dn.split(",")[0].slice(3) + " (" + x.why + ")").join("; ")) : ""}</div>`;
+    else h = `<div class="cp-res ${r.failed.length || r.unverified.length ? "bad" : "good"}">Added ${r.added.length}${r.who ? " as " + esc(r.who) : ""}: ${esc(r.added.join(", ") || "none")}.
+      ${r.failed.length ? "<br>Failed: " + esc(r.failed.map(f => f.name + " — " + f.error).join("; ")) : ""}${r.unverified.length ? "<br>Not confirmed in AD yet (replication?): " + esc(r.unverified.join(", ")) : ""}</div>`;
+    this.s.res = h;
+    if (commit && r && r.ok && r.committed) { await this.compare(); this.s.res = h; this.draw(); } else document.getElementById("cpRes").innerHTML = h;
+  },
+};
+
 const BGTools = {
   _emp: null, _weeks: [], _sel: null, _found: [], _tool: null,
   _perm: { user: null, groups: [], found: [] },
   TOOLS: [
     { id: "timesheet", name: "Timesheet Fix", icon: "🔓", desc: "Unlock a timesheet week for an employee" },
     { id: "perms", name: "Permissions Finder", icon: "🔑", desc: "Find every group a teammate is in — direct + nested" },
+    { id: "copyperms", name: "Copy Permissions", icon: "🧬", desc: "Compare two people's AD groups and copy groups from one to the other" },
     { id: "missing", name: "Missing Groups", icon: "🧩", desc: "Find groups a teammate or department is missing vs. peers" },
   ],
   _miss: { mode: "user", user: null, found: [], depts: [], company: "" },
@@ -2613,6 +2702,7 @@ const BGTools = {
     if (id === "timesheet") this._renderTimesheet(p);
     else if (id === "perms") this._renderPerms(p);
     else if (id === "missing") this._renderMissing(p);
+    else if (id === "copyperms") CopyPerms.render(p);
   },
   _renderTimesheet(p) {
     this._emp = null; this._weeks = []; this._sel = null;
@@ -4986,6 +5076,16 @@ Object.assign(Mock, {
   async get_issue_notifications() { return { ok: true, super_admin: true, subscribers: JSON.parse(JSON.stringify(this._subs)), events: ["new", "status", "comment"], webhook_set: false, can_mail: false }; },
   async save_issue_subscribers(list) { this._subs = list; return { ok: true, subscribers: list }; },
   async issue_notify_test() { return { ok: false, error: "No way to send e-mail is set up yet (add a notification webhook in Settings > Integrations)." }; },
+  _adu: [{ dn: "CN=Anderson\\, Sims,OU=Admins,DC=bg", name: "Anderson, Sims (Admin)", sam: "adm.sanderson.pa", title: "Systems", dept: "IT", enabled: true },
+         { dn: "CN=Smith\\, Pat,OU=Admins,DC=bg", name: "Smith, Pat (Admin)", sam: "adm.psmith.pa", title: "Systems", dept: "IT", enabled: true }],
+  _adg: { "CN=Anderson\\, Sims,OU=Admins,DC=bg": [["IT-Intune-Admins", false], ["IT-ServerOps", false], ["Domain Admins", true], ["VPN-Users", false]], "CN=Smith\\, Pat,OU=Admins,DC=bg": [["VPN-Users", false], ["IT-HelpDesk", false]] },
+  _adgl(dn) { return (this._adg[dn] || []).map(([n, p]) => ({ dn: "CN=" + n + ",OU=Groups,DC=bg", name: n, desc: p ? "Protected admin group" : "", security: true, privileged: p })); },
+  async ad_user_search(q) { q = (q || "").toLowerCase(); return { ok: true, users: this._adu.filter(u => (u.name + u.sam).toLowerCase().includes(q)) }; },
+  async ad_perm_compare(a, b) { const s = this._adgl(a), d = this._adgl(b), dn = new Set(d.map(x => x.dn)), sn = new Set(s.map(x => x.dn));
+    return { ok: true, src_count: s.length, dst_count: d.length, only_src: s.filter(x => !dn.has(x.dn)), only_dst: d.filter(x => !sn.has(x.dn)), both: s.filter(x => dn.has(x.dn)) }; },
+  async ad_perm_copy(a, b, dns, acct, commit) { const names = dns.map(x => x.split(",")[0].slice(3));
+    if (!commit) return { ok: true, committed: false, would_add: names, skipped: [] };
+    (this._adg[b] = this._adg[b] || []).push(...names.map(n => [n, false])); return { ok: true, committed: true, would_add: names, skipped: [], added: names, failed: [], unverified: [], who: "BG\\" + (acct || "adm") }; },
   async issue_counts() { return { ok: true, new: this._issues.filter(d => d.status === "new").length, updates: 1, triage: true }; },
   async get_update_info() { return { ok: true, current: "2026.10.01", latest: "", min: "", update_available: false, update_required: false }; },
   async get_my_role() { return { ok: true, role: "super", sections: ["models", "links", "access", "sites", "sql", "perms", "storage"] }; },

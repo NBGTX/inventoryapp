@@ -258,6 +258,17 @@ const Help = {
         </ol>
         <p>The list of other divisions and brands you can pick is maintained by super admins in Settings → Platform → People-search scopes.</p>`
     },
+    "bgt-copyperms": {
+      title: "How Copy Permissions works",
+      html: `
+        <ol>
+          <li>Search and pick the <b>source</b> person (whose access you want to copy) and the <b>destination</b> person. Use their admin account if the access is on that account.</li>
+          <li><b>Compare</b> shows on-premises AD groups: only the source has, only the destination has, and both. Only direct memberships are compared.</li>
+          <li>Tick the groups to copy (<b>Only source has</b> list). Groups marked <b>privileged</b> (protected admin groups) are never ticked for you. Distribution lists cannot be copied.</li>
+          <li><b>Preview</b> lists what would be added and changes nothing. <b>Copy now</b> asks you to confirm, then adds the destination to the groups.</li>
+        </ol>
+        <p>Writing uses <b>your own admin account on your YubiKey</b>: enter it (for example <i>adm.name.pa</i>), insert the key, and Windows asks for the PIN in its own window. The app never sees the PIN. Reading works on a PC that is not joined to AD, as long as you are on the corporate network or VPN. Each copy is written to the change log. Removing groups is not supported.</p>`
+    },
     "bgt-missing": {
       title: "How Missing Groups works",
       html: `
