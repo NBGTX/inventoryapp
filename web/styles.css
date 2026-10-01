@@ -785,3 +785,4 @@ body.is-busy button.primary,body.is-busy .modal-foot button,body.is-busy .set-ro
 @keyframes busyspin{to{transform:rotate(360deg);}}
 .tpl-banner{margin-bottom:12px;justify-content:space-between;align-items:center;gap:12px;}
 .tpl-banner:not(.hidden){display:flex;}
+.job-chip{display:none;align-items:center;gap:8px;font-size:12px;color:var(--text);background:var(--darker);border:1px solid var(--light);border-radius:8px;padding:7px 10px;margin-bottom:10px;}

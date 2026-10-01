@@ -2057,7 +2057,7 @@ def _long_op(fn):
     return wrapper
 
 
-for _n in ("run_sync", "enrich_inventory", "master_sync", "populate_mfa", "boneyard_sweep", "sync_all_divisions"):
+for _n in ("run_sync", "enrich_inventory", "master_sync", "populate_mfa", "boneyard_sweep", "sync_all_divisions", "software_refresh"):
     setattr(Api, _n, _long_op(getattr(Api, _n)))
 
 

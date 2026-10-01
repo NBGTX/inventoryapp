@@ -201,3 +201,25 @@ class ApiAndSyncAll(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LongJobsBlockDivisionSwitch(unittest.TestCase):
+    def test_software_refresh_counts_as_a_long_op_and_switch_is_refused_meanwhile(self):
+        gc = make_client()
+        FakeSite(gc)
+        api = app.Api()
+        api._gc = gc
+        api._hub = FakeHub()
+        seen = {}
+
+        def slow():
+            seen["busy"] = api._busy
+            seen["switch"] = api.switch_division("nbgw")          # a click on the switcher mid-refresh
+            return {"apps": [], "devices": 0}
+        gc.software_inventory = slow
+        api._hub.save_software = lambda inv: None
+        api.software_refresh()
+        self.assertEqual(seen["busy"], 1)
+        self.assertFalse(seen["switch"]["ok"])
+        self.assertIn("still running", seen["switch"]["error"])
+        self.assertEqual(api._busy, 0)

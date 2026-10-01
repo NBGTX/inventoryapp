@@ -14,6 +14,33 @@ const Busy = {
   WRITE: /^(save_|set_|add_|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|switch_|register_|reserve_|complete_|start_)/,
   LONG: /^(run_sync|enrich_inventory|sync_all_divisions|master_sync|populate_mfa|boneyard_sweep|software_refresh|pull_prod_snapshot|set_data_mode)$/,
   watches(method) { return this.WRITE.test(method) && !this.LONG.test(method); },
+  /* Long jobs keep running when you move to another page (the work is in the backend); this shows them in the sidebar
+     so you can see they are still going, and stops a division switch from pulling the rug out from under them. */
+  JOBS: { run_sync: "Syncing with Intune", enrich_inventory: "Filling in specs", sync_all_divisions: "Syncing all divisions",
+          master_sync: "Master sync", populate_mfa: "Populating MFA", boneyard_sweep: "Checking the boneyard",
+          software_refresh: "Pulling software inventory", pull_prod_snapshot: "Copying production data" },
+  jobs: new Map(), _jobSeq: 0,
+  jobStart(method) {
+    const id = ++this._jobSeq;
+    this.jobs.set(id, this.JOBS[method]);
+    this.drawJobs();
+    return id;
+  },
+  jobEnd(id) { this.jobs.delete(id); this.drawJobs(); },
+  running() { return [...this.jobs.values()]; },
+  drawJobs() {
+    let el = document.getElementById("jobChip");
+    if (!el) {
+      const foot = document.querySelector(".side-foot");
+      if (!foot) return;
+      el = document.createElement("div"); el.id = "jobChip"; el.className = "job-chip";
+      foot.insertBefore(el, foot.firstChild);
+    }
+    const names = [...new Set(this.running())];
+    el.style.display = names.length ? "flex" : "none";
+    el.innerHTML = names.length ? `<span class="busy-spin"></span><span>${names.map(esc).join(" · ")}…</span>` : "";
+    el.title = "Still running in the background. You can use other pages meanwhile; switching division waits until it finishes.";
+  },
   start() {
     if (++this.n > 1) return;
     this.timer = setTimeout(() => {
@@ -61,6 +88,7 @@ const Backend = {
   async call(method, ...args) {
     const watch = Busy.watches(method);
     if (watch) Busy.start();
+    const job = Busy.JOBS[method] ? Busy.jobStart(method) : 0;
     try {
       if (this.real && window.pywebview && window.pywebview.api && window.pywebview.api[method]) {
         return await window.pywebview.api[method](...args);
@@ -68,6 +96,7 @@ const Backend = {
       return await Mock[method](...args);
     } finally {
       if (watch) Busy.end();
+      if (job) Busy.jobEnd(job);
     }
   },
 };
@@ -425,6 +454,11 @@ const Divisions = {
   },
   async switchTo(id) {
     if (!id || id === this.current) return;
+    if (Busy.running().length) {                                   // a long job is still running in this division
+      App.toast("Wait for this to finish before switching division: " + [...new Set(Busy.running())].join(", ") + ".", true);
+      this.renderSwitcher();
+      return;
+    }
     const r = await Backend.call("switch_division", id);
     if (!r || !r.ok) { App.toast((r && r.error) || "Could not switch division.", true); this.renderSwitcher(); return; }
     Resume.reload();
