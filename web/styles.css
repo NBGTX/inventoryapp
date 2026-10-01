@@ -765,3 +765,7 @@ details.miss-card .miss-row{padding:5px 14px;}
 .ac-role.on{background:var(--med)!important;border-color:var(--med)!important;color:#fff!important;}
 .set-acl-table{margin-bottom:12px;}
 .set-acl-table select{background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:6px 8px;color:var(--text);font-size:13px;}
+.set-tpls{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;}
+.set-tpl{border:1px solid var(--border);border-radius:10px;padding:14px;background:var(--darker);display:flex;flex-direction:column;gap:8px;}
+.set-tpl p{margin:0;color:var(--muted);font-size:12.5px;flex:1;}
+.set-tpl select{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--text);}

@@ -436,11 +436,39 @@ const Settings = {
           <p>${esc(d.company_name)} &middot; Intune: ${esc(d.intune_category)} &middot; ${(d.sites || []).length} site(s) &middot; ${(d.access || []).length ? (d.access.includes("*") ? "everyone" : d.access.length + " allowed") : "super admins only"}</p></div>
         <button class="ghost" onclick="Settings.dvEdit(${i})">Edit</button></div>`).join("");
     this.pane("settings", SetUI.card("Divisions", "Each division is its own set of people, devices, sites and data. Changes reach other users within about 5 minutes (or on restart).",
-      cards || `<div class="empty">No divisions yet.</div>`, `<button class="primary" onclick="Settings.dvEdit(-1)">+ Add division</button>`));
+      cards || `<div class="empty">No divisions yet.</div>`, `<button class="primary" onclick="Settings.dvNew()">+ Add division</button>`));
   },
-  async dvEdit(i) {
-    this.dv = i >= 0 ? JSON.parse(JSON.stringify(this.rows[i])) :
-      { id: "", name: "", company_name: "", intune_category: "", sharepoint_hostname: "", site_path: "", ad_domain: "", sql_server: "",
+  /* ---- add a division: pick a template, then fill in the editor ---- */
+  TEMPLATES: [
+    { id: "one", title: "One site", text: "A single location. Every device and person in the division is placed at that site automatically." },
+    { id: "multi", title: "Several sites", text: "Two or more locations. Devices and people are matched to a site by name prefix and city." },
+    { id: "blank", title: "Blank", text: "Start empty and set everything yourself." },
+    { id: "copy", title: "Copy an existing division", text: "Reuse another division's SQL server, timesheet tables, AD domain and site layout. Identity and access are NOT copied." },
+  ],
+  dvNew() {
+    const copyOpts = this.rows.map((d, i) => `<option value="${i}">${esc(d.name)}</option>`).join("");
+    this.pane("settings", SetUI.card("Add a division", "Pick a starting point. You can change everything afterwards.",
+      `<div class="set-tpls">${this.TEMPLATES.map(t => `<div class="set-tpl">
+          <b>${esc(t.title)}</b><p>${esc(t.text)}</p>
+          ${t.id === "copy" ? `<select id="tplCopy">${copyOpts}</select>` : ""}
+          <button class="primary" onclick="Settings.dvFromTemplate('${t.id}')"${t.id === "copy" && !this.rows.length ? " disabled" : ""}>Use this</button></div>`).join("")}</div>`,
+      `<button class="ghost" onclick="Settings.divisions()">Back to divisions</button>`));
+  },
+  dvFromTemplate(id) {
+    const emptySite = () => ({ code: "", name: "", city_prefixes: [], device_prefixes: [] });
+    const base = { id: "", name: "", company_name: "", intune_category: "", sharepoint_hostname: "", site_path: "", ad_domain: "", sql_server: "",
+      timesheet_db: "", timesheet_table: "", employee_db: "", employee_table: "", sites: [], access: [], enabled: true, _new: true };
+    if (id === "one") base.sites = [emptySite()];
+    else if (id === "multi") base.sites = [emptySite(), emptySite()];
+    else if (id === "copy") {
+      const src = this.rows[+document.getElementById("tplCopy").value] || {};
+      ["ad_domain", "sql_server", "timesheet_db", "timesheet_table", "employee_db", "employee_table"].forEach(k => base[k] = src[k] || "");
+      base.sites = (src.sites || []).map(s => ({ code: "", name: "", city_prefixes: [], device_prefixes: [] }));    // same number of sites, none of the names
+    }
+    this.dvEdit(-2, base);
+  },
+  async dvEdit(i, tpl) {
+    this.dv = i >= 0 ? JSON.parse(JSON.stringify(this.rows[i])) : tpl || { id: "", name: "", company_name: "", intune_category: "", sharepoint_hostname: "", site_path: "", ad_domain: "", sql_server: "",
         timesheet_db: "", timesheet_table: "", employee_db: "", employee_table: "", sites: [], access: [], enabled: true, _new: true };
     this.dvTab = "identity"; this.dirty = false;
     if (this.cats === null) { const r = await Backend.call("intune_categories"); this.cats = (r && r.ok && r.categories) || []; }
