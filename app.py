@@ -100,6 +100,17 @@ class Api:
             with self._busy_lock:
                 self._busy -= 1
 
+    @staticmethod
+    def _trace(msg: str) -> None:
+        """Append one line to boot.log in the NBG Hub user folder (launch diagnostics: no tokens, no data)."""
+        try:
+            import paths
+            import time as _t
+            with open(os.path.join(paths.user_dir(), "boot.log"), "a", encoding="utf-8") as f:
+                f.write(_t.strftime("%H:%M:%S ") + msg + chr(10))
+        except Exception:
+            pass
+
     _init_lock = threading.RLock()       # JS fires many Api calls at once at launch: build the client / hub exactly once
 
     def _client(self):
@@ -395,6 +406,7 @@ class Api:
                 gc._div_changed = False
                 self._hub = None
             vis = gc.visible_registry()
+            self._trace(f"get_divisions: account={gc.account_upn!r} role={gc.division_role()} visible={[d['id'] for d in vis]} active={gc.division['id']}")
             if not vis:
                 return {"ok": False, "error": "No division is available to your account. Ask a super admin for access."}
             if gc.division["id"] not in [d["id"] for d in vis]:
@@ -431,6 +443,7 @@ class Api:
         try:
             gc = self._client()
             gc.sign_in(interactive=False)
+            self._trace(f"get_status: signed in as {gc.account_upn!r}")
             return {"ok": True, "signed_in": True, "account": gc.account_name}
         except Exception:
             return {"ok": True, "signed_in": False, "account": None}
