@@ -2635,7 +2635,7 @@ const CopyPerms = {
     const { src, dst } = this.s;
     if (!src || !dst) return;
     const msg = document.getElementById("cpMsg");
-    const r = await Ui.working(document.getElementById("cpCmp"), "Reading AD groups…", () => Backend.call("ad_perm_compare", src.dn, dst.dn));
+    let r; await Ui.working(document.getElementById("cpCmp"), "Reading AD groups…", async () => { r = await Backend.call("ad_perm_compare", src.dn, dst.dn); return false; });   // false = always restore the button
     if (!r || !r.ok) { msg.textContent = (r && r.error) || "Compare failed."; msg.style.color = "var(--red)"; return; }
     msg.textContent = ""; this.s.cmp = r; this.s.picked = {}; this.s.res = null;
     // safe default: tick ordinary groups, never privileged ones
@@ -2669,7 +2669,7 @@ const CopyPerms = {
       if (!confirm(`Add ${dst.name || dst.sam} to ${dns.length} AD group(s) copied from ${src.name || src.sam}?\n\nWindows will ask for your YubiKey PIN.`)) return;
     }
     const btn = document.getElementById(commit ? "cpGo" : "cpPrev");
-    const r = await Ui.working(btn, commit ? "Waiting for the YubiKey PIN window…" : "Checking…", () => Backend.call("ad_perm_copy", src.dn, dst.dn, dns, acct, commit));
+    let r; await Ui.working(btn, commit ? "Waiting for the YubiKey PIN window…" : "Checking…", async () => { r = await Backend.call("ad_perm_copy", src.dn, dst.dn, dns, acct, commit); return false; });
     let h;
     if (!r || !r.ok) h = `<div class="cp-res bad">${esc((r && r.error) || "Failed.")}</div>`;
     else if (!r.committed) h = `<div class="cp-res">Would add ${r.would_add.length}: ${esc(r.would_add.join(", ") || "nothing")}.${r.skipped.length ? " Skipped: " + esc(r.skipped.map(x => x.dn.split(",")[0].slice(3) + " (" + x.why + ")").join("; ")) : ""}</div>`;
