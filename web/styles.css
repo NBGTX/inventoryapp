@@ -770,3 +770,8 @@ details.miss-card .miss-row{padding:5px 14px;}
 .set-tpl p{margin:0;color:var(--muted);font-size:12.5px;flex:1;}
 .set-tpl select{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--text);}
 .sync-line{margin-left:6px;font-size:12px;}
+
+/* links must be readable on the dark theme (browser default blue is not) */
+a{color:var(--light);text-decoration:underline;text-underline-offset:2px;cursor:pointer;}
+a:hover{color:#fff;}
+a:visited{color:var(--light);}
