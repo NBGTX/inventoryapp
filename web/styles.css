@@ -1084,3 +1084,17 @@ td.sw-vname{padding-left:34px!important;color:var(--muted);}
 .div-pick .div-switch:hover,.div-pick .div-switch:focus{border-color:var(--amber);outline:none;}
 
 .cp-hint{font-size:12px;color:var(--muted);margin:-2px 0 6px;}
+
+/* Copy Permissions: three columns that line up (title, hint, controls, then the lists start at the same height) */
+.cp-cols{align-items:stretch;gap:16px;}
+.cp-col{display:flex;flex-direction:column;min-width:0;background:rgba(255,255,255,.025);border:1px solid var(--border);border-radius:10px;padding:12px 12px 10px;}
+.cp-col.act{border-color:rgba(224,165,65,.55);background:rgba(224,165,65,.05);}
+.cp-col h5{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 4px;font-size:14px;}
+.cp-col h5 b{font-weight:600;}
+.cp-n{min-width:24px;text-align:center;padding:1px 9px;border-radius:12px;background:var(--darker);border:1px solid var(--border);font-size:12px;color:var(--muted);font-weight:600;}
+.cp-col.act .cp-n{border-color:var(--amber);color:var(--amber);}
+.cp-col .cp-hint{min-height:34px;margin:0 0 4px;line-height:1.35;}
+.cp-col .cp-ctl{min-height:22px;margin-bottom:6px;font-size:12px;}
+.cp-col .cp-list{flex:1;min-height:260px;max-height:420px;background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:4px 10px;}
+.cp-col .cp-g{padding:6px 0;border-top:1px solid rgba(255,255,255,.05);}
+.cp-col .cp-g:first-child{border-top:none;}

@@ -3347,7 +3347,7 @@ const CopyPerms = {
   tickAll(on) { this.s.cmp.only_src.forEach(g => { if (on === "safe" ? !g.privileged : on) this.s.picked[g.dn] = true; else delete this.s.picked[g.dn]; }); this.draw(); },
   draw() {
     const c = this.s.cmp, n = Object.keys(this.s.picked).length, o = document.getElementById("cpOut");
-    const col = (title, list, sel, extra, hint) => `<div class="cp-col"><h5>${title} <span>${list.length}</span></h5>${hint ? `<div class="cp-hint">${hint}</div>` : ""}${extra || ""}<div class="cp-list">${list.length ? list.map(g => this.grp(g, sel)).join("") : `<div class="sub-note">None</div>`}</div></div>`;
+    const col = (title, list, sel, extra, hint) => `<div class="cp-col${sel ? " act" : ""}"><h5><b>${title}</b><span class="cp-n">${list.length}</span></h5><div class="cp-hint">${hint || ""}</div><div class="cp-ctl">${extra || ""}</div><div class="cp-list">${list.length ? list.map(g => this.grp(g, sel)).join("") : `<div class="sub-note">None</div>`}</div></div>`;
     o.innerHTML = `<div class="cp-cols">
       ${col("Destination is missing", c.only_src, true, `<div class="cp-bulk"><a onclick="CopyPerms.tickAll('safe')">Select all (not privileged)</a> · <a onclick="CopyPerms.tickAll(false)">None</a></div>`, `${esc(this.s.src.sam)} has these, ${esc(this.s.dst.sam)} does not. Tick the ones to copy.`)}
       ${col("Both have", c.both, false, "", "Already the same on both.")}
