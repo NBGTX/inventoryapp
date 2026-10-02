@@ -25,6 +25,7 @@ app.py   class Api  → every method returns {"ok": True, …} or self._fail(e)
    localstore.py/paths.py   local snapshot sandbox (SQLite) under %LOCALAPPDATA%\NBG Hub
    sync.py      run_sync, enrich, master_sync, populate_mfa
    adlookup.py / sqltools.py   PowerShell+.NET → AD / SQL (per-division server from registry)
+   coilcards.py                BG Tools > Coil Cards: delete/restore a coil card in the CoilCard DB (details: docs/PROJECT_STATE.md)
 tools/   Setup-CentralLists.ps1, pull_snapshot.py, load_central.py, bump_version.py
 tests/   offline unittest suite (python -m unittest discover -s tests)
 ```
