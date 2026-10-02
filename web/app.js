@@ -3454,6 +3454,7 @@ const Software = {
     const ql = q.toLowerCase();
     const cands = ql ? cn.rows.filter(r => !mand.includes(r.name) && r.name.toLowerCase().includes(ql)).slice(0, 12) : [];
     const others = this._mdDepts().filter(k => k !== scope);
+    const edits = this.rules.filter(r => r.scope === scope).length;
     return picker +
       `<p class="sub-note" style="margin:0 0 12px">Every person in <b>${esc(scope)}</b> (${cn.people}) is expected to have these apps. Changes save as you click.</p>
        <div class="sw-ed-h">Must have (${mand.length})</div>
@@ -3468,14 +3469,15 @@ const Software = {
          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
            <select id="swEdCopy" style="max-width:300px"><option value="">Copy the list from…</option>${others.map(k => `<option>${esc(k)}</option>`).join("")}</select>
            <button class="ghost" onclick="Software.edCopy()">Copy list</button>
-           <button class="ghost" style="margin-left:auto" onclick="Software.edReset()" title="Remove all your additions and removals for this department">Back to automatic</button>
-         </div></div>`;
+           <button class="ghost" style="margin-left:auto" onclick="Software.edReset()" ${edits ? "" : "disabled"}>Clear my changes${edits ? " (" + edits + ")" : ""}</button>
+         </div>
+         <p class="sub-note" style="margin:8px 0 0">${edits ? `<b>Clear my changes</b> removes the ${edits} app${edits === 1 ? "" : "s"} you added or took off, so ${esc(scope)} uses the automatic list again.` : "You have not changed the automatic list for this department."}</p></div>`;
   },
   mdScope(v) { this._md.scope = v; this._md.q = ""; this._mdRender(); },
   edSearch(v) { this._md.q = v; this._mdRender(); },
   async edSet(name, on) { this._applyRule(name, this._md.scope, on); await this._saveRules(); this._mdRender(); },
   async edReset() {
-    if (!confirm(`Go back to the automatic list for ${this._md.scope}? Your additions and removals for this department are cleared.`)) return;
+    if (!confirm(`Clear your changes for ${this._md.scope}? The apps you added or took off are undone and the automatic list is used again.`)) return;
     this.rules = this.rules.filter(r => r.scope !== this._md.scope);
     await this._saveRules(); this._mdRender();
   },
