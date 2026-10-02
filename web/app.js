@@ -11,7 +11,7 @@ const attr = s => (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/"
    must NOT lock the screen, so they are excluded. */
 const Busy = {
   n: 0, timer: null,
-  WRITE: /^(bulk_|device_dates_set|save_|set_|add_|hub_bulk|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|switch_|register_|reserve_|complete_|start_|issue_(create|comment|update|delete|vote|watch|notify)|issues_import)/,
+  WRITE: /^(bulk_|device_dates_set|save_|set_|add_|hub_bulk|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|coil_card_delete|switch_|register_|reserve_|complete_|start_|issue_(create|comment|update|delete|vote|watch|notify)|issues_import)/,
   LONG: /^(run_sync|enrich_inventory|sync_all_divisions|master_sync|populate_mfa|boneyard_sweep|software_refresh|mfa_people_refresh|pull_prod_snapshot|set_data_mode)$/,
   watches(method) { return this.WRITE.test(method) && !this.LONG.test(method); },
   /* Long jobs keep running when you move to another page (the work is in the backend); this shows them in the sidebar
@@ -199,6 +199,22 @@ const Mock = {
     const wk = (this._tsWeeks[employid] || []).find(w => w.fiscal_year === fy && w.fiscal_week === fw && w.locked);
     if (wk) { wk.locked = false; return { ok: true, affected: 1 }; }
     return { ok: true, affected: 0 };
+  },
+  _coil: { "141487": { PartNumber: "CP060BK1406", HeatNumber: "2166339", ActualWeight: "10503", CardDate: "2026-10-02 08:42:00", tracking: 144 } },
+  async coil_card_find(nbs) {
+    nbs = (nbs || "").trim();
+    const c = this._coil[nbs];
+    if (!c) return { ok: true, found: false, nbs };
+    const { tracking, ...card } = c;
+    return { ok: true, found: true, nbs, card: { NBSNumber: nbs, ...card }, tracking_rows: tracking };
+  },
+  async coil_card_delete(nbs, confirm, commit) {
+    if (!commit) return this.coil_card_find(nbs);
+    if ((confirm || "").trim() !== nbs) return { ok: false, error: "Type the card number exactly to confirm." };
+    const c = this._coil[nbs];
+    if (!c) return { ok: false, error: `Coil card ${nbs} not found.` };
+    delete this._coil[nbs];
+    return { ok: true, cards: 1, tracking: c.tracking, backup: "(mock) coilcard_backups\\" + nbs + ".json" };
   },
   async bg_locations() {
     return { ok: true, nbgw_company: "Nucor Buildings Group West",
@@ -3278,6 +3294,7 @@ const BGTools = {
   _perm: { user: null, groups: [], found: [] },
   TOOLS: [
     { id: "timesheet", name: "Timesheet Fix", icon: "🔓", desc: "Unlock a timesheet week for an employee" },
+    { id: "coilcard", name: "Delete Coil Card", icon: "🗑️", desc: "Remove a coil card and its tracking rows from the CoilCard database" },
     { id: "perms", name: "Permissions Finder", icon: "🔑", desc: "Find every group a teammate is in — direct + nested" },
     { id: "copyperms", name: "Copy Permissions", icon: "🧬", desc: "Compare two people's AD groups and copy groups from one to the other" },
     { id: "missing", name: "Missing Groups", icon: "🧩", desc: "Find groups a teammate or department is missing vs. peers" },
@@ -3303,6 +3320,7 @@ const BGTools = {
     document.querySelectorAll("#bgtHost .bgt-tool").forEach(el => el.classList.toggle("active", el.dataset.tool === id));
     if (id === "timesheet") this._renderTimesheet(p);
     else if (id === "perms") this._renderPerms(p);
+    else if (id === "coilcard") this._renderCoil(p);
     else if (id === "missing") this._renderMissing(p);
     else if (id === "copyperms") CopyPerms.render(p);
   },
@@ -3396,6 +3414,61 @@ const BGTools = {
     if (!r || !r.ok) { App.toast((r && r.error) || "Unlock failed.", true); this.renderWeeks(); return; }
     App.toast(r.affected ? `Unlocked FY${w.fiscal_year} · Week ${w.fiscal_week}.` : "Already unlocked — no change.");
     await this.selectEmp(e);   // refresh the list from SQL
+  },
+
+  // ---- Delete Coil Card -------------------------------------------------------
+  _coil: null,
+  _renderCoil(p) {
+    this._coil = null;
+    p.innerHTML =
+      `<div class="chart-card" style="max-width:640px">
+        <h4 style="margin:0 0 4px">Delete Coil Card</h4>
+        ${Help.box("bgt-coilcard")}
+        <div style="display:flex;gap:8px;align-items:flex-end">
+          <div class="field" style="flex:1;margin:0"><label>Coil card number (NBSNumber)</label>
+            <input id="bgcNbs" placeholder="e.g. 141487" autocomplete="off" onkeydown="if(event.key==='Enter')BGTools.coilFind()"></div>
+          <button class="primary" onclick="BGTools.coilFind()">Look up</button>
+        </div>
+        <div id="bgcBody" style="margin-top:16px"><p class="hint">Look up a card to see what would be deleted.</p></div>
+      </div>`;
+    const el = document.getElementById("bgcNbs"); if (el) el.focus();
+  },
+  async coilFind() {
+    const nbs = (document.getElementById("bgcNbs").value || "").trim();
+    const body = document.getElementById("bgcBody");
+    if (!nbs) { body.innerHTML = `<p class="hint">Enter a card number.</p>`; return; }
+    body.innerHTML = `<p class="hint">Looking up…</p>`;
+    const r = await Backend.call("coil_card_find", nbs);
+    if (!document.getElementById("bgcBody")) return;
+    if (!r || !r.ok) { body.innerHTML = `<div class="cfg-warn">${esc((r && r.error) || "Lookup failed.")}</div>`; return; }
+    if (!r.found) { this._coil = null; body.innerHTML = `<p class="hint">No coil card ${esc(nbs)}.</p>`; return; }
+    this._coil = r.nbs;
+    const c = r.card || {};
+    const f = (k, l) => c[k] ? `<tr><td class="muted">${l}</td><td>${esc(c[k])}</td></tr>` : "";
+    body.innerHTML =
+      `<table class="fit bgt-tbl"><tbody>${f("NBSNumber", "Card")}${f("PartNumber", "Part")}${f("HeatNumber", "Heat")}${f("Vendor", "Vendor")}${f("ActualWeight", "Weight")}${f("CardDate", "Card date")}
+        <tr><td class="muted">Tracking rows</td><td><b>${r.tracking_rows}</b> (deleted first)</td></tr></tbody></table>
+       <div id="bgcBar" style="display:flex;justify-content:flex-end;margin-top:12px">
+         <button class="primary" style="background:var(--red);border-color:var(--red)" onclick="BGTools.coilAsk()">🗑️ Delete this card…</button></div>`;
+  },
+  coilAsk() {
+    const bar = document.getElementById("bgcBar"); if (!bar || !this._coil) return;
+    bar.style.cssText = "display:block;margin-top:12px";
+    bar.innerHTML =
+      `<div class="cfg-warn" style="margin:0 0 8px">This permanently deletes card <b>${esc(this._coil)}</b> and its tracking rows. Type the card number to confirm.</div>
+       <div style="display:flex;gap:8px"><input id="bgcConfirm" style="flex:1" autocomplete="off" placeholder="${attr(this._coil)}">
+       <button class="ghost" onclick="BGTools.coilFind()">Cancel</button>
+       <button class="primary" style="background:var(--red);border-color:var(--red)" onclick="BGTools.coilDelete()">Delete</button></div>`;
+    const el = document.getElementById("bgcConfirm"); if (el) el.focus();
+  },
+  async coilDelete() {
+    const nbs = this._coil, typed = (document.getElementById("bgcConfirm").value || "").trim();
+    if (typed !== nbs) return App.toast("Type the card number exactly to confirm.", true);
+    const r = await Backend.call("coil_card_delete", nbs, typed, true);
+    if (!r || !r.ok) { App.toast((r && r.error) || "Delete failed.", true); return; }
+    App.toast(`Deleted card ${nbs} and ${r.tracking} tracking rows.`);
+    this._coil = null;
+    document.getElementById("bgcBody").innerHTML = `<p class="hint">Deleted ${esc(nbs)} (${r.tracking} tracking rows). Backup: ${esc(r.backup)}</p>`;
   },
 
   // ---- Boms Permissions Finder ----------------------------------------------

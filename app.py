@@ -1969,6 +1969,43 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    # ---- BG Tools: Delete coil card (CoilCard DB, integrated auth) ----------
+    def coil_card_find(self, nbs: str) -> dict:
+        """Read-only dry run: card details + how many CoilTracking rows would go with it."""
+        try:
+            import coilcards
+            c = coilcards.conf(self._client())
+            return {"ok": True, **coilcards.preview(self._ts_server(), c, nbs)}
+        except Exception as e:
+            return self._fail(e)
+
+    def coil_card_delete(self, nbs: str, confirm: str = "", commit: bool = False) -> dict:
+        """Delete a coil card and its CoilTracking rows in one transaction. `confirm` must equal the
+        card number. Rows are saved to a local backup file first; one audit entry per run."""
+        try:
+            import coilcards
+            gc = self._client()
+            nbs = coilcards.clean_nbs(nbs)
+            if not commit:
+                return self.coil_card_find(nbs)
+            if (confirm or "").strip() != nbs:
+                return {"ok": False, "error": "Type the card number exactly to confirm."}
+            if gc.data_mode == "local":
+                return {"ok": False, "error": "Local data mode: Delete Coil Card writes to the production SQL "
+                                              "server, so it is disabled. Switch to Live."}
+            actor = (self._actor() or "NBG Hub")[:60]
+            r = coilcards.delete(self._ts_server(), coilcards.conf(gc), nbs)
+            card = r["card"]
+            try:
+                self._hubc()._change("Coil card deleted",
+                                     f"{nbs} (part {card.get('PartNumber', '')}, heat {card.get('HeatNumber', '')}) deleted by "
+                                     f"{actor}: {r['cards']} card, {r['tracking']} tracking rows. Backup: {r['backup']}")
+            except Exception:
+                pass
+            return {"ok": True, "cards": r["cards"], "tracking": r["tracking"], "backup": r["backup"]}
+        except Exception as e:
+            return self._fail(e)
+
     # ---- BG Tools: Copy permissions (on-prem AD groups) -------------------
     def _ad_perm_gate(self):
         gc = self._client()

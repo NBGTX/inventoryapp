@@ -278,7 +278,7 @@ const Help = {
     /* ------------------------------------------------------------------ BG Tools */
     bgt: {
       title: "About BG Tools",
-      html: `<p>BG Tools are small admin utilities. Pick one of the three tiles: <b>Timesheet Fix</b> (unlock a timesheet week), <b>Permissions Finder</b> (every group a person is in) and <b>Missing Groups</b> (what a person or department lacks compared with its peers). The first two read live from SQL / Entra as <b>you</b>, so you need the matching access. Searches start as you type.</p>`
+      html: `<p>BG Tools are small admin utilities. Pick a tile: <b>Timesheet Fix</b> (unlock a timesheet week), <b>Delete Coil Card</b> (remove a card and its tracking rows),<b>Permissions Finder</b> (every group a person is in) and <b>Missing Groups</b> (what a person or department lacks compared with its peers). The first two read live from SQL / Entra as <b>you</b>, so you need the matching access. Searches start as you type.</p>`
     },
     "bgt-timesheet": {
       title: "How Timesheet Fix works",
@@ -290,6 +290,15 @@ const Help = {
         </ol>
         <p>Unlocking only flips the week from locked to unlocked: it does not touch who modified the row or when. Every unlock is recorded in the activity log. It uses the SQL server and tables set for your division (Settings → Directory &amp; SQL), and runs with <b>your</b> Windows sign-in. If this division has no timesheet set up you will see a message saying so.</p>
         <p>Note: the employee table can contain people from other Nucor entities as well as your division.</p>`
+    },
+    "bgt-coilcard": {
+      title: "How Delete Coil Card works",
+      html: `
+        <ol>
+          <li>Type the coil card number (the NBSNumber) and click <b>Look up</b>. You see the card and how many tracking rows go with it. Nothing is changed yet.</li>
+          <li>Click <b>Delete this card</b>, type the card number again to confirm, then <b>Delete</b>.</li>
+        </ol>
+        <p>The tracking rows are deleted first, then the card, in one step: if the card is not removed exactly once, everything is rolled back. Before the delete, both are saved to a file under <code>%LOCALAPPDATA%\\NBG Hub\\coilcard_backups</code> so they can be restored by hand. Every delete is written to the change log. It uses your division's SQL server and your Windows sign-in, and is disabled in Local data mode. Database and table names are in Settings &rarr; Platform &rarr; Master settings (Directory).</p>`
     },
     "bgt-perms": {
       title: "How the Permissions Finder works",

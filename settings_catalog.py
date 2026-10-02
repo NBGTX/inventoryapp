@@ -96,6 +96,15 @@ CATALOG = [
      "help": "The one on-premises AD server that BG Tools > Copy Permissions reads from and writes to, for example "
              "BGDALDCRW02.bg.nucorsteel.local. Using one server means a change is visible straight away. Blank = let Windows pick one "
              "(a read can then miss a change that has not replicated yet)."},
+    {"key": "coilcard_db", "group": "Directory", "label": "Coil card database",
+     "kind": "text", "secret": False, "status": "active",
+     "help": "Database that BG Tools > Delete Coil Card works in (on the division's SQL server). Blank = CoilCard."},
+    {"key": "coilcard_card_table", "group": "Directory", "label": "Coil card table",
+     "kind": "text", "secret": False, "status": "active",
+     "help": "Table holding the cards (NBSNumber column), as schema.table. Blank = dbo.Card."},
+    {"key": "coilcard_tracking_table", "group": "Directory", "label": "Coil tracking table",
+     "kind": "text", "secret": False, "status": "active",
+     "help": "Table with a CoilID column pointing at the card. Its rows are deleted before the card. Blank = dbo.CoilTracking."},
     {"key": "intune_enrich_per_sync", "group": "Sync", "label": "Vendor lookups per sync run",
      "kind": "number", "secret": False, "min": 0, "max": 500, "default": 75, "status": "active",
      "help": "How many devices get a Lenovo/Dell/HP spec lookup in one sync. Lower = gentler on vendor APIs, slower to fill in."},
@@ -128,6 +137,11 @@ def check_value(key: str, value: str) -> str:
         import re
         if v and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.\-]{1,200}", v):
             raise ValueError("Enter a server name such as BGDALDCRW02.bg.nucorsteel.local (letters, digits, dots and dashes only).")
+        return v
+    if key in ("coilcard_db", "coilcard_card_table", "coilcard_tracking_table"):
+        import re
+        if v and not re.fullmatch(r"[A-Za-z0-9_\-]+(\.[A-Za-z0-9_]+)?", v):
+            raise ValueError(f"{c['label']}: letters, digits, _ and - only (tables as schema.table).")
         return v
     if c["kind"] == "choice" and v and v not in {o["id"] for o in c["options"]}:
         raise ValueError(f"'{v}' is not an allowed value for {c['label']}.")
