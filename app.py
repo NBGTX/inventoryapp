@@ -1280,6 +1280,37 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    # ---- People & MFA (one row per person; replaces the per-device MFA button) ----
+    def mfa_people_get(self) -> dict:
+        """The cached People & MFA list of the active division (no Entra call)."""
+        try:
+            return {"ok": True, "data": self._hubc().get_named("mfa-people")}
+        except Exception as e:
+            return self._fail(e)
+
+    def mfa_people_refresh(self) -> dict:
+        """Rebuild the People & MFA list from Entra (registration report) and the In Use devices; cache it for the division.
+        Writes one small hub document, not device rows. Driven by 'Refresh from Entra'."""
+        try:
+            import datetime
+            from sync import build_people
+            gc = self._client()
+            try:
+                mmap = gc.mfa_registration_map(ttl=0)
+            except TypeError:
+                mmap = gc.mfa_registration_map()
+            doc = build_people(gc, mmap)
+            doc["generated_at"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            doc["by"] = self._actor() or ""
+            self._hubc().put_named("mfa-people", doc)
+            try:
+                self._hubc()._change("MFA list", f"{len(doc['people'])} people: {doc['yes']} registered, {doc['no']} not, {doc['unknown']} unknown ({doc['source']})")
+            except Exception:
+                pass
+            return {"ok": True, "data": doc}
+        except Exception as e:
+            return self._fail(e)
+
     # ---- software inventory ----------------------------------------------
     def software_refresh(self) -> dict:
         """Pull the fleet software inventory from Intune (heavy) and cache it to the
@@ -2718,7 +2749,7 @@ def _long_op(fn):
     return wrapper
 
 
-for _n in ("run_sync", "enrich_inventory", "master_sync", "populate_mfa", "boneyard_sweep", "sync_all_divisions", "software_refresh"):
+for _n in ("run_sync", "enrich_inventory", "master_sync", "populate_mfa", "boneyard_sweep", "sync_all_divisions", "software_refresh", "mfa_people_refresh"):
     setattr(Api, _n, _long_op(getattr(Api, _n)))
 
 

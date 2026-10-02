@@ -1357,7 +1357,11 @@ class GraphClient:
                 upn = clean_upn(d.get("userPrincipalName")).strip().lower()
                 if upn:
                     out[upn] = {"registered": bool(d.get("isMfaRegistered")),
-                                "capable": bool(d.get("isMfaCapable"))}
+                                "capable": bool(d.get("isMfaCapable")),
+                                "name": (d.get("userDisplayName") or "").strip(),
+                                "methods": [m for m in (d.get("methodsRegistered") or []) if isinstance(m, str)],
+                                "default": (d.get("defaultMfaMethod") or "").strip(),
+                                "updated": (d.get("lastUpdatedDateTime") or "")[:10]}
         except GraphError:
             self._has_auditlog_read = False   # scope/role not actually available; stop trying
             return {}

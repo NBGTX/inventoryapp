@@ -206,6 +206,19 @@ const Help = {
     },
 
     /* ------------------------------------------------------------------ Software */
+    people: {
+      title: "How People & MFA works",
+      html: `
+        <p>MFA (multi-factor sign-in) belongs to a <b>person</b>, not a machine. This page lists everyone who has an in-use machine in this division, once each, with the sign-in methods they have registered in Entra and the devices they hold.</p>
+        <ul>
+          <li>Click <b>Refresh from Entra</b> to read the registrations. It saves one small list for the division; nothing on your devices is rewritten. Do it whenever you want fresh numbers.</li>
+          <li>The four boxes count everyone, people with MFA, people <b>without</b> it, and people Entra did not report. Click a box (or use the toggle) to filter.</li>
+          <li>The <b>Sign-in methods</b> column shows what each person has set up; the amber one is their default. Someone with no methods and "No" needs to register.</li>
+          <li>Click a device name to jump to it on the Devices page. <b>Copy list</b> copies what you see for Excel or a message.</li>
+          <li>The Devices page's MFA column and filter read from this list, and the Dashboard's "Users without MFA" box opens it filtered to people without MFA.</li>
+        </ul>
+        <p>Reading registrations needs the <code>AuditLog.Read.All</code> permission and a reader role (Security Reader, Security Administrator or Global Reader). Without them everyone shows as Unknown.</p>`
+    },
     software: {
       title: "How to use Software Inventory",
       html: `

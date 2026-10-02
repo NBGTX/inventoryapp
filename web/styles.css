@@ -979,3 +979,8 @@ a.sw-user{color:var(--amber);cursor:pointer;}a.sw-user:hover{text-decoration:und
 #tableWrap .detailcell{cursor:default;}
 .w-exp{color:var(--red);font-weight:600;}.w-soon{color:var(--amber);font-weight:600;}
 td.cell-user a.sw-user{color:inherit;border-bottom:1px dotted var(--muted);}td.cell-user a.sw-user:hover{color:var(--amber);border-bottom-color:var(--amber);}
+
+/* ---- People & MFA ---- */
+.stat.ppl-bad .n{color:var(--red);}
+#appview-people .tools{border-bottom:1px solid var(--border);}
+#appview-people .iss-seg{margin:0;}

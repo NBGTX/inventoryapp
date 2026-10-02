@@ -489,6 +489,34 @@ def master_sync(gc: GraphClient, commit: bool = True) -> dict:
             "updated": base.get("updated", 0), "errors": errors}
 
 
+def build_people(gc: GraphClient, mmap: dict | None = None) -> dict:
+    """One row per assigned person in the active division: MFA state, registered methods and the devices they hold.
+    MFA is a property of the PERSON, so it is kept as its own list (hub doc `mfa-people`), not copied onto device rows.
+    Read-only: no list is written here. Returns {people, source, yes, no, unknown}."""
+    mmap = mmap or {}
+    by: dict = {}
+    for item in gc._items_raw("in_use"):
+        cur = gc._row(item.get("fields", {}), "in_use", in_use=True)
+        u = (cur.get("user") or "").strip()
+        if not u:
+            continue
+        p = by.setdefault(u.lower(), {"user": u, "devices": []})
+        p["devices"].append({"serial": cur.get("serial", ""), "name": cur.get("device_name", "")})
+    people, yes, no, unknown = [], 0, 0, 0
+    for k in sorted(by):
+        p = by[k]
+        info = mmap.get(k) or {}
+        st = gc.mfa_status(p["user"], mmap) or ""
+        yes += st == "Yes"
+        no += st == "No"
+        unknown += st == ""
+        people.append({"user": p["user"], "name": info.get("name", ""), "mfa": st, "capable": bool(info.get("capable")),
+                       "methods": info.get("methods", []), "default": info.get("default", ""), "updated": info.get("updated", ""),
+                       "devices": p["devices"]})
+    source = "report" if mmap else ("per-user" if getattr(gc, "_has_authmethod_read", False) else "none")
+    return {"people": people, "source": source, "yes": yes, "no": no, "unknown": unknown}
+
+
 def populate_mfa(gc: GraphClient, commit: bool = True, force: bool = False) -> dict:
     """Fill the In Use 'MFA' column from the user's registered auth methods.
     Uses the bulk registration report if the role allows it, else the per-user

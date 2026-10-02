@@ -12,13 +12,13 @@ const attr = s => (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/"
 const Busy = {
   n: 0, timer: null,
   WRITE: /^(save_|set_|add_|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|switch_|register_|reserve_|complete_|start_|issue_(create|comment|update|delete|vote|watch|notify)|issues_import)/,
-  LONG: /^(run_sync|enrich_inventory|sync_all_divisions|master_sync|populate_mfa|boneyard_sweep|software_refresh|pull_prod_snapshot|set_data_mode)$/,
+  LONG: /^(run_sync|enrich_inventory|sync_all_divisions|master_sync|populate_mfa|boneyard_sweep|software_refresh|mfa_people_refresh|pull_prod_snapshot|set_data_mode)$/,
   watches(method) { return this.WRITE.test(method) && !this.LONG.test(method); },
   /* Long jobs keep running when you move to another page (the work is in the backend); this shows them in the sidebar
      so you can see they are still going, and stops a division switch from pulling the rug out from under them. */
   JOBS: { run_sync: "Syncing with Intune", enrich_inventory: "Filling in specs", sync_all_divisions: "Syncing all divisions",
           master_sync: "Master sync", populate_mfa: "Populating MFA", boneyard_sweep: "Checking the boneyard",
-          software_refresh: "Pulling software inventory", pull_prod_snapshot: "Copying production data" },
+          software_refresh: "Pulling software inventory", mfa_people_refresh: "Refreshing MFA", pull_prod_snapshot: "Copying production data" },
   jobs: new Map(), _jobSeq: 0,
   jobStart(method) {
     const id = ++this._jobSeq;
@@ -784,6 +784,7 @@ const App = {
     this.state.stock = inv.new_stock || [];
     this.state.use = inv.in_use || [];
     this.state.boneyard = inv.boneyard || [];
+    await People.overlay(this.state.use);
     this.setCounts(inv.counts);
     try { localStorage.setItem(Divisions.invKey(), JSON.stringify(inv)); } catch (e) { /* quota */ }
     this.setBusy(false);
@@ -1448,6 +1449,90 @@ const LogView = {
    ========================================================================== */
 
 /* ---- left-nav ------------------------------------------------------------ */
+/* ---- People & MFA: one row per person (MFA is the person's, not the device's) ---- */
+const People = {
+  doc: null, f: { q: "", mfa: "all" }, sort: { key: "user", dir: 1 },
+  METHODS: { microsoftAuthenticatorPush: "Authenticator app", microsoftAuthenticatorPasswordless: "Authenticator (passwordless)", mobilePhone: "Phone", alternateMobilePhone: "Alt phone",
+             officePhone: "Office phone", softwareOneTimePasscode: "Authenticator code", hardwareOneTimePasscode: "Hardware code", fido2: "Security key", windowsHelloForBusiness: "Windows Hello",
+             email: "Email", temporaryAccessPass: "Temp access pass", passKeyDeviceBound: "Passkey", passKeyDeviceBoundAuthenticator: "Passkey", passKeySynced: "Passkey" },
+  async load() {
+    const r = await Backend.call("mfa_people_get");
+    this.doc = (r && r.ok && r.data) || null;
+    this.render();
+  },
+  /* Devices page: show each device's person MFA state from this list (read-only overlay, nothing is written to device rows) */
+  async overlay(rows) {
+    try {
+      const r = await Backend.call("mfa_people_get");
+      const d = r && r.ok && r.data; if (!d || !Array.isArray(d.people)) return;
+      const m = {}; d.people.forEach(p => { if (p.mfa) m[(p.user || "").toLowerCase()] = p.mfa; });
+      (rows || []).forEach(x => { const v = m[(x.user || "").toLowerCase()]; if (v) x.mfa = v; });
+    } catch (e) { /* the device rows keep their stored value */ }
+  },
+  focus(mfa) { this.f = { q: "", mfa: mfa || "all" }; Nav.go("people"); },
+  async refresh(btn) {
+    let r; await Ui.working(btn, "Reading Entra…", async () => { r = await Backend.call("mfa_people_refresh"); return false; });
+    if (!r || !r.ok) return App.error((r && r.error) || "Could not refresh MFA.");
+    this.doc = r.data; this.render();
+    const d = this.doc;
+    if (d.source === "none") App.toast("Could not read MFA from Entra. It needs the AuditLog.Read.All permission and a reader role.", true);
+    else App.toast(`MFA refreshed for ${d.people.length} people: ${d.yes} registered, ${d.no} not${d.unknown ? `, ${d.unknown} unknown` : ""}.`);
+    App.reload();
+  },
+  label(m) { return this.METHODS[m] || m.replace(/([A-Z])/g, " $1").trim(); },
+  setF(k, v) { this.f[k] = v; this.render(); },
+  sortBy(k) { if (this.sort.key === k) this.sort.dir = -this.sort.dir; else this.sort = { key: k, dir: 1 }; this.render(); },
+  rows() {
+    const d = this.doc; if (!d) return [];
+    const q = this.f.q.trim().toLowerCase(), f = this.f.mfa;
+    let out = d.people.filter(p => (f === "all" || (f === "unknown" ? !p.mfa : p.mfa === f))
+      && (!q || [p.user, p.name, ...(p.devices || []).flatMap(x => [x.serial, x.name])].some(v => (v || "").toLowerCase().includes(q))));
+    const k = this.sort.key, dir = this.sort.dir;
+    const val = p => k === "devices" ? (p.devices || []).length : k === "mfa" ? (p.mfa === "No" ? 0 : p.mfa === "Yes" ? 2 : 1) : String(p[k] || "").toLowerCase();
+    return out.slice().sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * dir; });
+  },
+  render() {
+    const host = document.getElementById("pplHost"); if (!host) return;
+    const meta = document.getElementById("pplMeta"), d = this.doc;
+    if (meta) meta.textContent = d ? `Refreshed ${String(d.generated_at || "").slice(0, 16).replace("T", " ")}${d.by ? " by " + d.by : ""}` : "Not refreshed yet";
+    if (!d) { host.innerHTML = `<div class="empty">No MFA list yet. Click <b>Refresh from Entra</b> to build it. This reads the sign-in method registrations of everyone who has a machine.</div>`; return; }
+    const t = d.people.length, pct = t ? Math.round(100 * d.yes / t) : 0;
+    const card = (n, label, f, cls) => `<div class="stat clickable ${cls || ""}" onclick="People.setF('mfa','${f}')"><div class="n">${n}</div><div class="l">${label} ›</div></div>`;
+    const rows = this.rows();
+    const th = (label, key) => `<th style="cursor:pointer;user-select:none" onclick="People.sortBy('${key}')">${label}${this.sort.key === key ? (this.sort.dir > 0 ? " ▲" : " ▼") : ""}</th>`;
+    const seg = (v, l) => `<label class="${this.f.mfa === v ? "on" : ""}"><input type="radio" name="pplMfa" ${this.f.mfa === v ? "checked" : ""} onchange="People.setF('mfa','${v}')">${l}</label>`;
+    const mfaCell = v => v === "Yes" ? '<span style="color:#3ecf8e;font-weight:600">Yes</span>' : v === "No" ? '<span style="color:#ff6b6b;font-weight:600">No</span>' : '<span class="muted" title="Entra did not report this person">Unknown</span>';
+    const warn = d.source === "none" ? `<div class="cfg-warn" style="margin-bottom:12px">Entra did not return sign-in registrations, so MFA shows as unknown. Reading them needs the <code>AuditLog.Read.All</code> permission and a reader role (Security or Global Reader).</div>` : "";
+    host.innerHTML = warn + `<div class="stats">
+        ${card(t, "People with a machine", "all")}${card(d.yes + ` <span style="font-size:14px;color:var(--muted)">(${pct}%)</span>`, "MFA registered", "Yes", "inuse")}
+        ${card(d.no, "No MFA", "No", d.no ? "ppl-bad" : "")}${card(d.unknown, "Unknown", "unknown")}</div>
+      <div class="panel"><div class="tools">
+        <input id="pplQ" type="search" placeholder="Search name, email, device or serial…" value="${attr(this.f.q)}" oninput="People.typed(this.value)" autocomplete="off">
+        <div class="iss-seg" role="radiogroup" aria-label="MFA">${seg("all", "Everyone")}${seg("No", "No MFA")}${seg("Yes", "Registered")}${seg("unknown", "Unknown")}</div>
+        <span class="dev-tools-r"><span class="muted">${rows.length === t ? t + " people" : "Showing " + rows.length + " of " + t}</span><button class="rowbtn" onclick="People.copy()">Copy list</button></span></div>
+        ${rows.length ? `<table class="fit"><colgroup><col style="width:30%"><col style="width:9%"><col style="width:30%"><col style="width:23%"><col style="width:8%"></colgroup>
+          <thead><tr>${th("Person", "user")}${th("MFA", "mfa")}<th>Sign-in methods</th>${th("Devices", "devices")}${th("Updated", "updated")}</tr></thead><tbody>` +
+        rows.map(p => `<tr>
+          <td><b>${esc(p.name || p.user)}</b>${p.name ? `<div class="muted" style="font-size:12px">${esc(p.user)}</div>` : ""}</td>
+          <td>${mfaCell(p.mfa)}</td>
+          <td>${(p.methods || []).length ? (p.methods || []).map(m => `<span class="md-tag${m === p.default ? " you" : ""}" title="${m === p.default ? "Default method" : ""}">${esc(this.label(m))}</span>`).join(" ") : '<span class="muted">—</span>'}</td>
+          <td>${(p.devices || []).map(x => `<a class="sw-user" data-user="${attr(p.user)}" onclick="People.toDevices(this.dataset.user)">${esc(x.name || x.serial)}</a>`).join(", ")}</td>
+          <td>${esc(p.updated || "—")}</td></tr>`).join("") + `</tbody></table>` : `<div class="empty">Nobody matches.</div>`}</div>`;
+    const q = document.getElementById("pplQ");
+    if (q && this._focusQ) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+  },
+  _t: null,
+  typed(v) { this.f.q = v; this._focusQ = true; clearTimeout(this._t); this._t = setTimeout(() => this.render(), 150); },
+  toDevices(user) { const s = document.getElementById("search"); if (s) s.value = user; Nav.go("inventory"); App.showTab("use"); },
+  copy() {
+    const rows = this.rows(), cell = v => String(v == null ? "" : v).replace(/[\t\r\n]+/g, " ");
+    const txt = ["Person\tEmail\tMFA\tMethods\tDevices\tUpdated"].concat(rows.map(p => [p.name, p.user, p.mfa || "Unknown", (p.methods || []).map(m => this.label(m)).join("; "), (p.devices || []).map(x => x.name || x.serial).join("; "), p.updated].map(cell).join("\t"))).join("\n");
+    const done = () => App.toast(`Copied ${rows.length} row${rows.length === 1 ? "" : "s"}.`);
+    const fb = () => { const t = document.createElement("textarea"); t.value = txt; document.body.appendChild(t); t.select(); try { document.execCommand("copy"); done(); } catch (e) { App.toast("Could not copy.", true); } t.remove(); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, fb); else fb();
+  },
+};
+
 /* ---- sidebar count badges ------------------------------------------------------------
    One place decides what each badge counts. Add an entry to Badges.SOURCES, a <span class="nav-badge" id="badge-NAME"> in the
    menu item, and the badge appears. A source returns a number (0 = hidden). Refreshed at start, every minute, on window focus,
@@ -1513,6 +1598,7 @@ const Nav = {
     if (view === "inventory") App.render();
     if (view === "upgrades") Upgrade.load();
     if (view === "software") Software.load();
+    if (view === "people") People.load();
     if (view === "projecthub") ProjectHub.load();
     if (view === "bgtools") BGTools.load();
     if (view === "settings") Settings.load();
@@ -2317,12 +2403,7 @@ const Dashboard = {
       : chip("Intune", "no", "Not in Intune (managed object removed)");
     return `<span class="liv-set">${ad}${entra}${intune}</span>`;
   },
-  drillNoMfa() {
-    Drill.open("Users without MFA registered", this._inv().no_mfa || [], [
-      { label: "Serial", get: r => r.serial, mono: 1, w: "18%" }, { label: "Device name", get: r => r.device_name, w: "22%" },
-      { label: "Model", get: r => r.model, w: "24%" }, { label: "Primary user", get: r => r.user, w: "24%" }],
-      { empty: "Every in-use device's user has MFA registered — or the MFA report isn't available yet (needs AuditLog.Read.All consent)." });
-  },
+  drillNoMfa() { People.focus("No"); },
   drillNotNbgw() {
     const inv = this._inv();
     Drill.open("Not part of " + Divisions.label(), inv.not_nbgw || [], [
@@ -5430,6 +5511,14 @@ Object.assign(Mock, {
   async ad_perm_copy(a, b, dns, acct, commit) { const names = dns.map(x => x.split(",")[0].slice(3));
     if (!commit) return { ok: true, committed: false, would_add: names, skipped: [] };
     (this._adg[b] = this._adg[b] || []).push(...names.map(n => [n, false])); return { ok: true, committed: true, would_add: names, skipped: [], added: names, failed: [], unverified: [], who: "BG\\" + (acct || "adm") }; },
+  _mfaPeople: null,
+  async mfa_people_get() { return { ok: true, data: this._mfaPeople }; },
+  async mfa_people_refresh() {
+    const by = {}; (this._use || []).forEach(r => { if (r.user) (by[r.user.toLowerCase()] = by[r.user.toLowerCase()] || { user: r.user, devices: [] }).devices.push({ serial: r.serial, name: r.device_name }); });
+    const people = Object.values(by).map((p, i) => ({ ...p, name: p.user.split("@")[0].replace(/\./g, " "), mfa: i % 3 === 2 ? "No" : "Yes", capable: true, methods: i % 3 === 2 ? [] : ["microsoftAuthenticatorPush", "mobilePhone"], default: "microsoftAuthenticatorPush", updated: "2026-09-20" }));
+    this._mfaPeople = { people, source: "report", yes: people.filter(p => p.mfa === "Yes").length, no: people.filter(p => p.mfa === "No").length, unknown: 0, generated_at: new Date().toISOString(), by: "Demo User" };
+    return { ok: true, data: this._mfaPeople };
+  },
   async issue_counts() { return { ok: true, new: this._issues.filter(d => d.status === "new").length, updates: 1, triage: true }; },
   async get_update_info() { return { ok: true, current: "2026.10.01", latest: "", min: "", update_available: false, update_required: false }; },
   async get_my_role() { return { ok: true, role: "super", sections: ["models", "links", "access", "sites", "sql", "perms", "storage"] }; },

@@ -25,6 +25,9 @@
       <button class="navitem" data-view="inventory" onclick="Nav.go('inventory')">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7L12 3 4 7l8 4 8-4z"/><path d="M4 7v10l8 4 8-4V7"/><path d="M12 11v10"/></svg>
         Devices</button>
+      <button class="navitem" data-view="people" onclick="Nav.go('people')">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        People &amp; MFA</button>
       <button class="navitem" data-view="upgrades" onclick="Nav.go('upgrades')">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
         Upgrades</button>
@@ -212,7 +215,7 @@
           <div class="menu-wrap">
             <button class="ghost" id="moreBtn" onclick="App.toggleMore(event)" title="Less-used tools">⋯ More</button>
             <div class="menu hidden" id="devMore">
-              <button id="mfaBtn" onclick="App.populateMfa()" title="Fill the MFA column from each user's registered authentication methods (needs UserAuthenticationMethod.Read.All + your auth-admin role)">🔒 Populate MFA</button>
+              <button id="mfaBtn" onclick="App.closeMore();Nav.go('people')" title="MFA is kept per person on the People &amp; MFA page">🔒 People &amp; MFA…</button>
               <button id="masterSyncBtn" onclick="App.masterSync()" title="Force-refresh every device's primary user, specs, MFA, last check-in and OS from Intune/Entra (overwrites stored values; can take a few minutes)">⟳ Master sync</button>
             </div>
           </div>
@@ -298,6 +301,19 @@
       </div>
       <div class="help-slot" data-help="bgt"></div>
       <div id="bgtHost"><div class="empty">Loading…</div></div>
+    </section>
+
+    <!-- ---------- PEOPLE & MFA ---------- -->
+    <section class="appview" id="appview-people">
+      <div class="pagehead">
+        <div><h2>People &amp; MFA</h2><p>Everyone assigned a machine in <span class="div-label"></span>, and whether they have multi-factor sign-in set up.</p></div>
+        <div class="actions">
+          <span id="pplMeta" class="sub-note" style="margin:0 12px 0 0"></span>
+          <button class="ghost" id="pplRefresh" onclick="People.refresh(this)">↻ Refresh from Entra</button>
+        </div>
+      </div>
+      <div class="help-slot" data-help="people"></div>
+      <div id="pplHost"><div class="empty">Loading…</div></div>
     </section>
 
     <!-- ---------- SOFTWARE INVENTORY ---------- -->
