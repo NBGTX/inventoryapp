@@ -913,6 +913,22 @@ class Hub:
         except OSError:
             return None
 
+    def list_attachments(self, prefix: str = "") -> list:
+        """[{"name", "size", "modified"}] for stored files starting with prefix, newest name first."""
+        if self._store:
+            return self._store.list_names(self._safe(prefix))
+        folder = os.path.dirname(self._att_path("x"))
+        out = []
+        try:
+            for n in os.listdir(folder):
+                if n.startswith(prefix):
+                    st = os.stat(os.path.join(folder, n))
+                    out.append({"name": n, "size": st.st_size,
+                                "modified": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat()})
+        except OSError:
+            pass
+        return sorted(out, key=lambda x: x["name"], reverse=True)
+
     def delete_attachment(self, name: str) -> None:
         try:
             if self._store:

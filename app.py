@@ -2008,6 +2008,46 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    def coil_card_backups(self) -> dict:
+        """Coil card backup files in the Hub Files library, newest first."""
+        try:
+            import coilcards
+            out = []
+            for b in self._hubc().list_attachments(coilcards.PREFIX):
+                m = re.match(r"^coilcard-backup-(.+)-(\d{8}-\d{6})\.json$", b["name"])
+                out.append({**b, "nbs": m.group(1) if m else "", "stamp": m.group(2) if m else ""})
+            return {"ok": True, "backups": out}
+        except Exception as e:
+            return self._fail(e)
+
+    def coil_card_restore(self, name: str, confirm: str = "", commit: bool = False) -> dict:
+        """Put a deleted card and its tracking rows back from a backup file. Dry run unless commit;
+        `confirm` must equal the card number. Refuses if the card or its tracking rows exist."""
+        try:
+            import coilcards
+            gc = self._client()
+            hub = self._hubc()
+            data = coilcards.read_backup(name, hub.get_attachment)
+            c = coilcards.conf(gc)
+            plan = coilcards.restore_plan(self._ts_server(), c, data)
+            if not commit:
+                return {"ok": True, **plan}
+            if (confirm or "").strip() != plan["nbs"]:
+                return {"ok": False, "error": "Type the card number exactly to confirm."}
+            if gc.data_mode == "local":
+                return {"ok": False, "error": "Local data mode: Restore Coil Card writes to the production SQL "
+                                              "server, so it is disabled. Switch to Live."}
+            actor = (self._actor() or "NBG Hub")[:60]
+            r = coilcards.restore(self._ts_server(), c, data)
+            try:
+                hub._change("Coil card restored",
+                            f"{r['nbs']} restored by {actor} from {name}: {r['cards']} card, {r['tracking']} tracking rows.")
+            except Exception:
+                pass
+            return {"ok": True, "cards": r["cards"], "tracking": r["tracking"], "nbs": r["nbs"]}
+        except Exception as e:
+            return self._fail(e)
+
     # ---- BG Tools: Copy permissions (on-prem AD groups) -------------------
     def _ad_perm_gate(self):
         gc = self._client()

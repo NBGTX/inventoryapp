@@ -11,7 +11,7 @@ const attr = s => (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/"
    must NOT lock the screen, so they are excluded. */
 const Busy = {
   n: 0, timer: null,
-  WRITE: /^(bulk_|device_dates_set|save_|set_|add_|hub_bulk|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|coil_card_delete|switch_|register_|reserve_|complete_|start_|issue_(create|comment|update|delete|vote|watch|notify)|issues_import)/,
+  WRITE: /^(bulk_|device_dates_set|save_|set_|add_|hub_bulk|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|coil_card_delete|coil_card_restore|switch_|register_|reserve_|complete_|start_|issue_(create|comment|update|delete|vote|watch|notify)|issues_import)/,
   LONG: /^(run_sync|enrich_inventory|sync_all_divisions|master_sync|populate_mfa|boneyard_sweep|software_refresh|mfa_people_refresh|pull_prod_snapshot|set_data_mode)$/,
   watches(method) { return this.WRITE.test(method) && !this.LONG.test(method); },
   /* Long jobs keep running when you move to another page (the work is in the backend); this shows them in the sidebar
@@ -214,7 +214,24 @@ const Mock = {
     const c = this._coil[nbs];
     if (!c) return { ok: false, error: `Coil card ${nbs} not found.` };
     delete this._coil[nbs];
-    return { ok: true, cards: 1, tracking: c.tracking, backup: "coilcard-backup-" + nbs + "-mock.json" };
+    const name = "coilcard-backup-" + nbs + "-20261002-084200.json";
+    this._coilBak[name] = { nbs, tracking: c.tracking, card: { NBSNumber: nbs, PartNumber: c.PartNumber, HeatNumber: c.HeatNumber, ActualWeight: c.ActualWeight, CardDate: c.CardDate }, c };
+    return { ok: true, cards: 1, tracking: c.tracking, backup: name };
+  },
+  _coilBak: {},
+  async coil_card_backups() {
+    return { ok: true, backups: Object.keys(this._coilBak).map(name => ({ name, nbs: this._coilBak[name].nbs, stamp: "20261002-084200", size: 9000, modified: "2026-10-02T08:42:00Z" })) };
+  },
+  async coil_card_restore(name, confirm, commit) {
+    const b = this._coilBak[name];
+    if (!b) return { ok: false, error: "Backup file not found." };
+    const exists = !!this._coil[b.nbs];
+    const plan = { nbs: b.nbs, card: b.card, tracking_rows: b.tracking, card_exists: exists, tracking_existing: 0, can_restore: !exists };
+    if (!commit) return { ok: true, ...plan };
+    if ((confirm || "").trim() !== b.nbs) return { ok: false, error: "Type the card number exactly to confirm." };
+    if (exists) return { ok: false, error: `Card ${b.nbs} already exists; nothing restored.` };
+    this._coil[b.nbs] = b.c;
+    return { ok: true, cards: 1, tracking: b.tracking, nbs: b.nbs };
   },
   async bg_locations() {
     return { ok: true, nbgw_company: "Nucor Buildings Group West",
@@ -3295,6 +3312,7 @@ const BGTools = {
   TOOLS: [
     { id: "timesheet", name: "Timesheet Fix", icon: "🔓", desc: "Unlock a timesheet week for an employee" },
     { id: "coilcard", name: "Delete Coil Card", icon: "🗑️", desc: "Remove a coil card and its tracking rows from the CoilCard database" },
+    { id: "coilrestore", name: "Restore Coil Card", icon: "♻️", desc: "Put a deleted coil card back from its SharePoint backup" },
     { id: "perms", name: "Permissions Finder", icon: "🔑", desc: "Find every group a teammate is in — direct + nested" },
     { id: "copyperms", name: "Copy Permissions", icon: "🧬", desc: "Compare two people's AD groups and copy groups from one to the other" },
     { id: "missing", name: "Missing Groups", icon: "🧩", desc: "Find groups a teammate or department is missing vs. peers" },
@@ -3321,6 +3339,7 @@ const BGTools = {
     if (id === "timesheet") this._renderTimesheet(p);
     else if (id === "perms") this._renderPerms(p);
     else if (id === "coilcard") this._renderCoil(p);
+    else if (id === "coilrestore") this._renderRestore(p);
     else if (id === "missing") this._renderMissing(p);
     else if (id === "copyperms") CopyPerms.render(p);
   },
@@ -3469,6 +3488,74 @@ const BGTools = {
     App.toast(`Deleted card ${nbs} and ${r.tracking} tracking rows.`);
     this._coil = null;
     document.getElementById("bgcBody").innerHTML = `<p class="hint">Deleted ${esc(nbs)} (${r.tracking} tracking rows). Backup: ${esc(r.backup)}</p>`;
+  },
+
+  // ---- Restore Coil Card ------------------------------------------------------
+  _bak: [], _bakSel: null,
+  async _renderRestore(p) {
+    this._bak = []; this._bakSel = null;
+    p.innerHTML =
+      `<div class="chart-card" style="max-width:720px">
+        <h4 style="margin:0 0 4px">Restore Coil Card</h4>
+        ${Help.box("bgt-coilrestore")}
+        <div id="bgrBody" style="margin-top:12px"><p class="hint">Loading backups…</p></div>
+      </div>`;
+    const r = await Backend.call("coil_card_backups");
+    const body = document.getElementById("bgrBody"); if (!body) return;
+    if (!r || !r.ok) { body.innerHTML = `<div class="cfg-warn">${esc((r && r.error) || "Could not list backups.")}</div>`; return; }
+    this._bak = r.backups || [];
+    if (!this._bak.length) { body.innerHTML = `<p class="hint">No coil card backups yet. One is made each time a card is deleted.</p>`; return; }
+    body.innerHTML =
+      `<div class="field" style="margin:0 0 8px"><label>Filter by card number</label>
+         <input id="bgrFilter" autocomplete="off" oninput="BGTools.restoreList()"></div>
+       <div id="bgrList" class="bgt-list"></div><div id="bgrPlan" style="margin-top:12px"></div>`;
+    this.restoreList();
+  },
+  restoreList() {
+    const q = ((document.getElementById("bgrFilter") || {}).value || "").trim().toLowerCase();
+    const list = document.getElementById("bgrList"); if (!list) return;
+    const rows = this._bak.map((b, i) => ({ b, i })).filter(x => !q || (x.b.nbs || "").toLowerCase().includes(q));
+    list.innerHTML = rows.length ? rows.map(({ b, i }) => {
+      const s = b.stamp || "";
+      const when = s.length === 15 ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)} ${s.slice(9, 11)}:${s.slice(11, 13)}` : "";
+      return `<div class="bgt-emp" onclick="BGTools.restorePick(${i})"><span>${esc(b.nbs || b.name)}</span><span class="muted">deleted ${esc(when)}</span></div>`;
+    }).join("") : `<p class="hint">No backup matches.</p>`;
+  },
+  async restorePick(i) {
+    const b = this._bak[i]; if (!b) return;
+    this._bakSel = b.name;
+    const el = document.getElementById("bgrPlan");
+    el.innerHTML = `<p class="hint">Checking the database…</p>`;
+    const r = await Backend.call("coil_card_restore", b.name, "", false);
+    if (!document.getElementById("bgrPlan")) return;
+    if (!r || !r.ok) { el.innerHTML = `<div class="cfg-warn">${esc((r && r.error) || "Check failed.")}</div>`; return; }
+    const c = r.card || {};
+    const f = (k, l) => c[k] ? `<tr><td class="muted">${l}</td><td>${esc(c[k])}</td></tr>` : "";
+    const why = r.card_exists ? "This card exists again, so it cannot be restored." : (r.tracking_existing ? "Tracking rows for this card already exist, so it cannot be restored." : "");
+    this._bakNbs = r.nbs;
+    el.innerHTML =
+      `<table class="fit bgt-tbl"><tbody>${f("NBSNumber", "Card")}${f("PartNumber", "Part")}${f("HeatNumber", "Heat")}${f("ActualWeight", "Weight")}
+         <tr><td class="muted">Tracking rows</td><td><b>${r.tracking_rows}</b></td></tr></tbody></table>` +
+      (why ? `<div class="cfg-warn" style="margin-top:8px">${esc(why)}</div>`
+           : `<div id="bgrBar" style="display:flex;justify-content:flex-end;margin-top:12px"><button class="primary" onclick="BGTools.restoreAsk()">♻️ Restore this card…</button></div>`);
+  },
+  restoreAsk() {
+    const bar = document.getElementById("bgrBar"); if (!bar) return;
+    bar.style.cssText = "display:block;margin-top:12px";
+    bar.innerHTML =
+      `<div class="cfg-warn" style="margin:0 0 8px">This puts card <b>${esc(this._bakNbs)}</b> and its tracking rows back. Type the card number to confirm.</div>
+       <div style="display:flex;gap:8px"><input id="bgrConfirm" style="flex:1" autocomplete="off" placeholder="${attr(this._bakNbs)}">
+       <button class="ghost" onclick="BGTools.restorePick(${this._bak.findIndex(b => b.name === this._bakSel)})">Cancel</button>
+       <button class="primary" onclick="BGTools.restoreDo()">Restore</button></div>`;
+    const el = document.getElementById("bgrConfirm"); if (el) el.focus();
+  },
+  async restoreDo() {
+    const typed = (document.getElementById("bgrConfirm").value || "").trim();
+    if (typed !== this._bakNbs) return App.toast("Type the card number exactly to confirm.", true);
+    const r = await Backend.call("coil_card_restore", this._bakSel, typed, true);
+    if (!r || !r.ok) { App.toast((r && r.error) || "Restore failed.", true); return; }
+    App.toast(`Restored card ${r.nbs} and ${r.tracking} tracking rows.`);
+    document.getElementById("bgrPlan").innerHTML = `<p class="hint">Restored ${esc(r.nbs)} (${r.tracking} tracking rows).</p>`;
   },
 
   // ---- Boms Permissions Finder ----------------------------------------------

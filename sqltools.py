@@ -19,6 +19,13 @@ _PS = r'''
 param([string]$InFile)
 $ErrorActionPreference = "Stop"
 function Fail($m) { Write-Output (@{ __error__ = $m } | ConvertTo-Json -Compress); exit 0 }
+function Fmt($v) {
+  $ic = [Globalization.CultureInfo]::InvariantCulture
+  if ($v -is [DateTime]) { return $v.ToString("yyyy-MM-ddTHH:mm:ss.fff", $ic) }
+  if ($v -is [byte[]]) { return "0x" + (($v | ForEach-Object { $_.ToString("X2") }) -join "") }
+  if ($v -is [bool]) { if ($v) { return "1" } else { return "0" } }
+  return [Convert]::ToString($v, $ic)
+}
 try { $cfg = Get-Content -Raw -LiteralPath $InFile | ConvertFrom-Json } catch { Fail "bad input" }
 $cs = "Server=$($cfg.server);Database=$($cfg.db);Integrated Security=True;TrustServerCertificate=True;Connect Timeout=15;Application Name=NBG Hub"
 $cn = New-Object System.Data.SqlClient.SqlConnection $cs
@@ -43,7 +50,8 @@ try {
       $o = [ordered]@{}
       for ($i = 0; $i -lt $r.FieldCount; $i++) {
         $v = $r.GetValue($i)
-        $o[$cols[$i]] = $(if ($v -is [DBNull]) { "" } else { ([string]$v).Trim() })
+        if ($cfg.exact) { $o[$cols[$i]] = $(if ($v -is [DBNull]) { $null } else { Fmt $v }) }
+        else { $o[$cols[$i]] = $(if ($v -is [DBNull]) { "" } else { ([string]$v).Trim() }) }
       }
       $rows += $o
     }
@@ -55,11 +63,13 @@ try {
 
 
 def run(server: str, db: str, sql: str, params: dict | None = None,
-        nonquery: bool = False, timeout: int = 45) -> dict:
+        nonquery: bool = False, timeout: int = 45, exact: bool = False) -> dict:
     """Execute one parameterized statement. Returns {"rows": [...]} for a query,
-    {"affected": n} for a nonquery, or {"__error__": "<why>"} on failure."""
+    {"affected": n} for a nonquery, or {"__error__": "<why>"} on failure.
+    exact=True keeps NULL as None and writes dates (ISO), bits, bytes (0x..) and numbers
+    in a culture-free form, untrimmed, so rows can be inserted back unchanged."""
     payload = {"server": server, "db": db, "sql": sql,
-               "params": params or {}, "nonquery": bool(nonquery)}
+               "params": params or {}, "nonquery": bool(nonquery), "exact": bool(exact)}
     in_path = ps_path = None
     try:
         fd, in_path = tempfile.mkstemp(suffix=".json")

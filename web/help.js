@@ -278,7 +278,7 @@ const Help = {
     /* ------------------------------------------------------------------ BG Tools */
     bgt: {
       title: "About BG Tools",
-      html: `<p>BG Tools are small admin utilities. Pick a tile: <b>Timesheet Fix</b> (unlock a timesheet week), <b>Delete Coil Card</b> (remove a card and its tracking rows),<b>Permissions Finder</b> (every group a person is in) and <b>Missing Groups</b> (what a person or department lacks compared with its peers). The first two read live from SQL / Entra as <b>you</b>, so you need the matching access. Searches start as you type.</p>`
+      html: `<p>BG Tools are small admin utilities. Pick a tile: <b>Timesheet Fix</b> (unlock a timesheet week), <b>Delete Coil Card</b> (remove a card and its tracking rows), <b>Restore Coil Card</b> (put one back from its backup), <b>Permissions Finder</b> (every group a person is in) and <b>Missing Groups</b> (what a person or department lacks compared with its peers). They read and write live in SQL / Entra as <b>you</b>, so you need the matching access. Searches start as you type.</p>`
     },
     "bgt-timesheet": {
       title: "How Timesheet Fix works",
@@ -299,6 +299,16 @@ const Help = {
           <li>Click <b>Delete this card</b>, type the card number again to confirm, then <b>Delete</b>.</li>
         </ol>
         <p>The tracking rows are deleted first, then the card, in one step: if the card is not removed exactly once, everything is rolled back. Before the delete, both are saved as a JSON file named <code>coilcard-backup-&lt;card&gt;-&lt;time&gt;.json</code> in your division's folder of the <b>Inventory - Hub Files</b> library on SharePoint, and read back to check it. If that fails, nothing is deleted. The file lets the rows be restored by hand. Every delete is written to the change log. It uses your division's SQL server and your Windows sign-in, and is disabled in Local data mode. Database and table names are in Settings &rarr; Platform &rarr; Master settings (Directory).</p>`
+    },
+    "bgt-coilrestore": {
+      title: "How Restore Coil Card works",
+      html: `
+        <ol>
+          <li>Pick a backup from the list (filter by card number). Backups are made by <b>Delete Coil Card</b> and stored in your division's folder of the <b>Inventory - Hub Files</b> library.</li>
+          <li>The tool checks the database and shows the card and its tracking rows. Nothing is changed yet.</li>
+          <li>Click <b>Restore this card</b>, type the card number, then <b>Restore</b>.</li>
+        </ol>
+        <p>The card and all its tracking rows go back in one step; if any row fails, everything is rolled back. A restore is refused when the card (or any of its tracking rows) already exists, so it can never overwrite or duplicate data. Values come back exactly as stored, including empty (NULL) fields; dates are restored to the millisecond. Each restore is written to the change log. It uses your division's SQL server and Windows sign-in, and is disabled in Local data mode.</p>`
     },
     "bgt-perms": {
       title: "How the Permissions Finder works",

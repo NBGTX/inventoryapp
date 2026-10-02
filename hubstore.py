@@ -124,6 +124,25 @@ class SharePointHubStore:
         item = gc._req("PUT", self._blob_url(name, ":/content"), data=data, headers={"Content-Type": "application/octet-stream"}).json()
         self._tag_blob(item, kind, name)
 
+    def list_names(self, prefix: str = "") -> list:
+        """Files in this division's folder of the Hub Files library whose name starts with prefix:
+        [{"name", "size", "modified"}], newest name first. An absent folder = no files."""
+        from urllib.parse import quote
+        from graph import GRAPH, GraphError
+        gc = self.gc
+        site, lid = gc._ensure_site(), gc._list_id("hub_files")
+        url = (f"{GRAPH}/sites/{site}/lists/{lid}/drive/root:/{quote(self._div(), safe='')}:/children"
+               "?$select=name,size,lastModifiedDateTime&$top=200")
+        try:
+            items = gc._get_all(url)
+        except GraphError as e:
+            if "404" in str(e):
+                return []
+            raise
+        out = [{"name": i.get("name", ""), "size": int(i.get("size") or 0), "modified": i.get("lastModifiedDateTime", "")}
+               for i in items if (i.get("name") or "").startswith(prefix)]
+        return sorted(out, key=lambda x: x["name"], reverse=True)
+
     def get_bytes(self, name: str):
         from graph import GraphError
         try:
