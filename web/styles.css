@@ -959,3 +959,8 @@ a.sw-user{color:var(--amber);cursor:pointer;}a.sw-user:hover{text-decoration:und
 .md-rule input{background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:14px;width:90px;}
 .md-preview{margin-top:16px;padding:10px 14px;border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.03);font-size:13px;}
 .sw-ed-row{grid-template-columns:1fr auto auto auto;}
+
+/* dropdowns inside windows match the rest of the app */
+.modal select,.modal-body select{background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;color-scheme:dark;cursor:pointer;}
+.modal select:focus{outline:none;border-color:var(--amber);}
+.sw-tools select{color-scheme:dark;}
