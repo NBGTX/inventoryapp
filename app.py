@@ -1970,6 +1970,14 @@ class Api:
             return self._fail(e)
 
     # ---- BG Tools: Delete coil card (CoilCard DB, integrated auth) ----------
+    def coil_card_info(self) -> dict:
+        """Whether the Coil Cards heading shows (Untested): on unless master setting coilcard_untested_label is 'off'."""
+        try:
+            v = (self._client().get_setting("coilcard_untested_label", "") or "").strip().lower()
+            return {"ok": True, "untested": v != "off"}
+        except Exception as e:
+            return self._fail(e)
+
     def coil_card_find(self, nbs: str) -> dict:
         """Read-only dry run: card details + how many CoilTracking rows would go with it."""
         try:

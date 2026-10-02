@@ -306,7 +306,7 @@ const Help = {
           <li>Click <b>Restore this card</b>, type the card number, then <b>Restore</b>.</li>
         </ol>
         <p>The card and all its tracking rows go back in one step; if any row fails, everything is rolled back. A restore is refused when the card (or any of its tracking rows) already exists, so it can never overwrite or duplicate data. Values come back exactly as stored, including empty (NULL) fields; dates are restored to the millisecond.</p>
-        <p>Every delete and restore is written to the change log. Both use your division's SQL server and the Windows account that started the app, and are disabled in Local data mode. Database and table names are in Settings &rarr; Platform &rarr; Master settings (Directory).</p>`
+        <p>Every delete and restore is written to the change log. Both use your division's SQL server and the Windows account that started the app, and are disabled in Local data mode. Database and table names are in Settings &rarr; Platform &rarr; Master settings (Directory). The <b>(Untested)</b> label in the heading is removed with <b>Mark Coil Cards as (Untested)</b> = Off in the same place.</p>`
     },
     "bgt-perms": {
       title: "How the Permissions Finder works",

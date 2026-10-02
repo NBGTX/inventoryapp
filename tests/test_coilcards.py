@@ -174,6 +174,16 @@ class CoilCardTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             coilcards.conf(self.gc)
 
+    def test_untested_label_setting(self):
+        self.assertTrue(self.api.coil_card_info()["untested"])            # default: shown
+        self.gc._base_cfg["coilcard_untested_label"] = "on"
+        self.assertTrue(self.api.coil_card_info()["untested"])
+        self.gc._base_cfg["coilcard_untested_label"] = "off"
+        self.assertFalse(self.api.coil_card_info()["untested"])
+        self.assertEqual(sc.check_value("coilcard_untested_label", "off"), "off")
+        with self.assertRaises(ValueError):
+            sc.check_value("coilcard_untested_label", "maybe")
+
     def test_catalog_validation(self):
         self.assertEqual(sc.check_value("coilcard_db", " CoilCard "), "CoilCard")
         self.assertEqual(sc.check_value("coilcard_card_table", "dbo.Card"), "dbo.Card")

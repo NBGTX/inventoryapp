@@ -78,6 +78,11 @@ CATALOG = [
      "options": [{"id": "on", "label": "On (default)"}, {"id": "off", "label": "Off - only the Sync buttons sync"}],
      "help": "With it on, opening the app starts a sync for the division you are in. Turn it off to stop that on every PC "
              "(the NBG_NO_AUTOSYNC setting on a single PC still wins)."},
+    {"key": "coilcard_untested_label", "group": "Tools", "label": "Mark Coil Cards as (Untested)",
+     "kind": "choice", "secret": False, "status": "active",
+     "options": [{"id": "on", "label": "On (default) - heading shows (Untested)"}, {"id": "off", "label": "Off - tested, remove the label"}],
+     "help": "BG Tools > Coil Cards (delete and restore of coil cards) shows (Untested) in its heading until you turn this Off "
+             "after a delete and restore have been checked against real data."},
     {"key": "upgrade_cpu_years", "group": "Upgrades", "label": "Queue for upgrade: processor older than (years)",
      "kind": "number", "secret": False, "min": 0, "max": 15, "default": 5, "status": "active",
      "help": "A device whose processor generation was released this many years ago or more is added to the Upgrade list. "

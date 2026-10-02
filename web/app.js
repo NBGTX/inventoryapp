@@ -201,6 +201,7 @@ const Mock = {
     return { ok: true, affected: 0 };
   },
   _coil: { "141487": { PartNumber: "CP060BK1406", HeatNumber: "2166339", ActualWeight: "10503", CardDate: "2026-10-02 08:42:00", tracking: 144 } },
+  async coil_card_info() { return { ok: true, untested: true }; },
   async coil_card_find(nbs) {
     nbs = (nbs || "").trim();
     const c = this._coil[nbs];
@@ -3435,10 +3436,13 @@ const BGTools = {
 
   // ---- Delete Coil Card -------------------------------------------------------
   _coil: null,
-  _renderCoilTool(p, tab) {
+  async _renderCoilTool(p, tab) {
+    const info = await Backend.call("coil_card_info");
+    if (this._tool !== "coilcard" || !document.getElementById("bgtPanel")) return;   // user moved on while loading
+    const untested = !info || !info.ok || info.untested !== false;                    // unknown = show the label
     p.innerHTML =
       `<div class="chart-card" style="max-width:720px">
-        <h4 style="margin:0 0 4px">Coil Cards</h4>
+        <h4 style="margin:0 0 4px">Coil Cards${untested ? ` <span class="muted" style="font-weight:400">(Untested)</span>` : ""}</h4>
         ${Help.box("bgt-coilcard")}
         <div class="tabs" style="padding:0;margin-bottom:12px">
           <div class="tab" id="bgcTabDelete" onclick="BGTools.coilTab('delete')">Delete</div>
