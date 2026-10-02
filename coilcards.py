@@ -7,7 +7,6 @@ then the Card row, in ONE transaction that rolls back unless exactly one Card ro
 from __future__ import annotations
 
 import json
-import os
 import re
 from datetime import datetime
 
@@ -62,18 +61,18 @@ def preview(server: str, c: dict, nbs: str) -> dict:
     return {"found": True, "nbs": nbs, "card": rows[0], "tracking_rows": n}
 
 
-def _backup(nbs: str, payload: dict) -> str:
-    import paths
-    folder = os.path.join(paths.user_dir(), "coilcard_backups")
-    os.makedirs(folder, exist_ok=True)
-    path = os.path.join(folder, f"{nbs}-{datetime.now():%Y%m%d-%H%M%S}.json")
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=1)
-    return path
+def _backup(nbs: str, payload: dict, put, get) -> str:
+    """Upload the rows as a JSON file and read it back. Any failure raises, so nothing is deleted."""
+    name = f"coilcard-backup-{nbs}-{datetime.now():%Y%m%d-%H%M%S}.json"
+    data = json.dumps(payload, indent=1).encode("utf-8")
+    put(name, data)
+    if get(name) != data:
+        raise RuntimeError("Backup could not be verified in SharePoint; nothing was deleted.")
+    return name
 
 
-def delete(server: str, c: dict, nbs: str) -> dict:
-    """Back up the rows locally, then delete CoilTracking + Card in one transaction."""
+def delete(server: str, c: dict, nbs: str, put, get) -> dict:
+    """Back up CoilTracking + Card rows via put(name, bytes)/get(name), then delete both in one transaction."""
     from sqltools import run
     nbs = clean_nbs(nbs)
     p = preview(server, c, nbs)
@@ -83,7 +82,7 @@ def delete(server: str, c: dict, nbs: str) -> dict:
     if "__error__" in tr:
         raise RuntimeError(tr["__error__"])
     backup = _backup(nbs, {"card": p["card"], "tracking": tr.get("rows", []), "server": server,
-                           "db": c["coilcard_db"]})
+                           "db": c["coilcard_db"]}, put, get)
     sql = (
         "SET XACT_ABORT ON; BEGIN TRAN; DECLARE @t int, @c int; "
         f"DELETE FROM {c['track']} WHERE CoilID = @nbs; SET @t = @@ROWCOUNT; "

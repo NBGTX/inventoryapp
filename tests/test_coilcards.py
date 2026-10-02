@@ -41,9 +41,21 @@ class FakeSql:
 class FakeHub:
     def __init__(self):
         self.changes = []
+        self.files = {}
+        self.put_error = None
+        self.corrupt = False
 
     def _change(self, kind, text):
         self.changes.append((kind, text))
+
+    def put_attachment(self, name, data):
+        if self.put_error:
+            raise RuntimeError(self.put_error)
+        self.files[name] = data
+
+    def get_attachment(self, name):
+        d = self.files.get(name)
+        return d + b"x" if (d is not None and self.corrupt) else d
 
 
 class CoilCardTests(unittest.TestCase):
@@ -90,12 +102,26 @@ class CoilCardTests(unittest.TestCase):
         self.assertLess(sql.index("[CoilTracking]"), sql.index("DELETE FROM [dbo].[Card]"))
         self.assertIn("ROLLBACK", sql)
         self.assertNotIn("141487", sql)                      # value is a parameter, never concatenated
-        with open(r["backup"], encoding="utf-8") as f:
-            saved = json.load(f)
+        saved = json.loads(self.api._hub.files[r["backup"]].decode("utf-8"))   # backup went to the hub library
         self.assertEqual(saved["card"]["PartNumber"], "P1")
         self.assertEqual(len(saved["tracking"]), 3)
         self.assertEqual(len(self.api._hub.changes), 1)      # one audit entry per run
         self.assertIn("141487", self.api._hub.changes[0][1])
+
+    def test_failed_backup_upload_deletes_nothing(self):
+        self.api._hub.put_error = "SharePoint down"
+        r = self.api.coil_card_delete("141487", "141487", True)
+        self.assertFalse(r["ok"])
+        self.assertIn("141487", self.sql.cards)
+        self.assertFalse(any(c[2].startswith("SET XACT_ABORT") for c in self.sql.calls))
+        self.assertEqual(self.api._hub.changes, [])
+
+    def test_unverifiable_backup_deletes_nothing(self):
+        self.api._hub.corrupt = True
+        r = self.api.coil_card_delete("141487", "141487", True)
+        self.assertFalse(r["ok"])
+        self.assertIn("141487", self.sql.cards)
+        self.assertFalse(any(c[2].startswith("SET XACT_ABORT") for c in self.sql.calls))
 
     def test_unknown_card_not_deleted(self):
         r = self.api.coil_card_delete("999", "999", True)

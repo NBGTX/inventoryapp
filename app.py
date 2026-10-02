@@ -1981,7 +1981,7 @@ class Api:
 
     def coil_card_delete(self, nbs: str, confirm: str = "", commit: bool = False) -> dict:
         """Delete a coil card and its CoilTracking rows in one transaction. `confirm` must equal the
-        card number. Rows are saved to a local backup file first; one audit entry per run."""
+        card number. Rows are saved to the Hub Files library (and read back) first; one audit entry per run."""
         try:
             import coilcards
             gc = self._client()
@@ -1994,7 +1994,9 @@ class Api:
                 return {"ok": False, "error": "Local data mode: Delete Coil Card writes to the production SQL "
                                               "server, so it is disabled. Switch to Live."}
             actor = (self._actor() or "NBG Hub")[:60]
-            r = coilcards.delete(self._ts_server(), coilcards.conf(gc), nbs)
+            hub = self._hubc()
+            r = coilcards.delete(self._ts_server(), coilcards.conf(gc), nbs,
+                                 hub.put_attachment, hub.get_attachment)
             card = r["card"]
             try:
                 self._hubc()._change("Coil card deleted",

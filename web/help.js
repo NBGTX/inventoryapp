@@ -298,7 +298,7 @@ const Help = {
           <li>Type the coil card number (the NBSNumber) and click <b>Look up</b>. You see the card and how many tracking rows go with it. Nothing is changed yet.</li>
           <li>Click <b>Delete this card</b>, type the card number again to confirm, then <b>Delete</b>.</li>
         </ol>
-        <p>The tracking rows are deleted first, then the card, in one step: if the card is not removed exactly once, everything is rolled back. Before the delete, both are saved to a file under <code>%LOCALAPPDATA%\\NBG Hub\\coilcard_backups</code> so they can be restored by hand. Every delete is written to the change log. It uses your division's SQL server and your Windows sign-in, and is disabled in Local data mode. Database and table names are in Settings &rarr; Platform &rarr; Master settings (Directory).</p>`
+        <p>The tracking rows are deleted first, then the card, in one step: if the card is not removed exactly once, everything is rolled back. Before the delete, both are saved as a JSON file named <code>coilcard-backup-&lt;card&gt;-&lt;time&gt;.json</code> in your division's folder of the <b>Inventory - Hub Files</b> library on SharePoint, and read back to check it. If that fails, nothing is deleted. The file lets the rows be restored by hand. Every delete is written to the change log. It uses your division's SQL server and your Windows sign-in, and is disabled in Local data mode. Database and table names are in Settings &rarr; Platform &rarr; Master settings (Directory).</p>`
     },
     "bgt-perms": {
       title: "How the Permissions Finder works",

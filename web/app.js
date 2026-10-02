@@ -214,7 +214,7 @@ const Mock = {
     const c = this._coil[nbs];
     if (!c) return { ok: false, error: `Coil card ${nbs} not found.` };
     delete this._coil[nbs];
-    return { ok: true, cards: 1, tracking: c.tracking, backup: "(mock) coilcard_backups\\" + nbs + ".json" };
+    return { ok: true, cards: 1, tracking: c.tracking, backup: "coilcard-backup-" + nbs + "-mock.json" };
   },
   async bg_locations() {
     return { ok: true, nbgw_company: "Nucor Buildings Group West",
