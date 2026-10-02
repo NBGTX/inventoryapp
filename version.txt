@@ -4,8 +4,8 @@
 # suspicious to Defender's ML heuristics). Bump the numbers each release.
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(2026, 10, 1, 0),
-    prodvers=(2026, 10, 1, 0),
+    filevers=(2026, 10, 2, 0),
+    prodvers=(2026, 10, 2, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -18,12 +18,12 @@ VSVersionInfo(
       StringTable('040904B0', [
         StringStruct('CompanyName', 'Nucor'),
         StringStruct('FileDescription', 'NBG Hub - Systems inventory & endpoint console'),
-        StringStruct('FileVersion', '2026.10.01'),
+        StringStruct('FileVersion', '2026.10.02'),
         StringStruct('InternalName', 'NBG Hub'),
         StringStruct('LegalCopyright', 'Copyright (c) Nucor. Internal use only.'),
         StringStruct('OriginalFilename', 'NBG Hub.exe'),
         StringStruct('ProductName', 'NBG Hub'),
-        StringStruct('ProductVersion', '2026.10.01')
+        StringStruct('ProductVersion', '2026.10.02')
       ])
     ]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])

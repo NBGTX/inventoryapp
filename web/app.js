@@ -160,8 +160,8 @@ const Mock = {
   async get_status() { return { ok: true, signed_in: true, account: "Demo User (mock data)", upn: "demo.user@nucor.com" }; },
   async sign_in() { return { ok: true, account: "Demo User (mock data)" }; },
   async sign_out() { return { ok: true }; },
-  async app_version() { return { ok: true, version: "2026.10.01" }; },
-  async register_client() { return { ok: true, version: "2026.10.01" }; },
+  async app_version() { return { ok: true, version: "2026.10.02" }; },
+  async register_client() { return { ok: true, version: "2026.10.02" }; },
   async get_clients() {
     return { ok: true, clients: [
       { machine: "BGPF5MDA4B", user: "blake.stevenson", version: "2026.09.29", last_seen: "2026-09-28T15:40:00Z" },
