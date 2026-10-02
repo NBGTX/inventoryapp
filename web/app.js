@@ -575,6 +575,7 @@ const App = {
     tab: "stock", stock: [], use: [], boneyard: [], account: null, siteTags: ["LTR", "BRI"],
     sort: { stock: { key: "date_added", dir: -1 }, use: { key: "serial", dir: 1 }, boneyard: { key: "moved_at", dir: -1 } },
     expanded: new Set(),
+    userFilter: null,                            // Set of lower-case user names, from the Teammates page ("Show devices")
     sel: new Set(),                              // serials ticked for a bulk action (only ever the rows currently shown)
   },
 
@@ -857,7 +858,9 @@ const App = {
     setTimeout(() => this._applyPendingFilters(true), 0);   // saved dropdown choices can be applied now that the options exist
     fill("fSite", "All sites", [].concat(this.state.siteTags || [], this.state.stock.map(r => r.site_tag), this.state.use.map(r => r.site_tag), (this.state.boneyard || []).map(r => r.site_tag)));
   },
+  clearUserFilter() { this.state.userFilter = null; this.render(); },
   clearFilters() {
+    this.state.userFilter = null;
     ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fSite", "fWarr", "fAge"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
     const s = document.getElementById("search"); if (s) s.value = "";
     this.render();
@@ -882,7 +885,9 @@ const App = {
     const el = document.getElementById("devCount");
     if (el) el.textContent = rows.length === total ? `${total} ${total === 1 ? "device" : "devices"}` : `Showing ${rows.length} of ${total}`;
     const q = (document.getElementById("search") || {}).value;
-    const any = !!(q && q.trim()) || ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fSite", "fWarr", "fAge"].some(id => { const e = document.getElementById(id); return e && e.value && !e.classList.contains("hidden"); });
+    const uf = this.state.userFilter, chip = document.getElementById("ufChip");
+    if (chip) { chip.classList.toggle("hidden", !uf); chip.innerHTML = uf ? `Teammates: ${uf.size} <a onclick="App.clearUserFilter()" title="Show everyone again">&times;</a>` : ""; }
+    const any = !!uf || !!(q && q.trim()) || ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fSite", "fWarr", "fAge"].some(id => { const e = document.getElementById(id); return e && e.value && !e.classList.contains("hidden"); });
     const c = document.getElementById("fClear"); if (c) c.classList.toggle("hidden", !any);
   },
   /* ---- bulk select ---- */
@@ -1101,7 +1106,8 @@ const App = {
     ].map(v => (v == null ? "" : String(v)).toLowerCase()).join(" ");
     const match = r => (!q || hay(r).includes(q))
       && (!fm || (r.model || "") === fm) && (!fc || (r.cpu || "") === fc) && (!fr || (r.ram || "") === fr) && checkinOk(r) && mfaOk(r)
-      && (!fsite || (r.site_tag || "") === fsite) && (!fwarr || warrState(r.warranty) === fwarr) && ageOk(r);
+      && (!fsite || (r.site_tag || "") === fsite) && (!fwarr || warrState(r.warranty) === fwarr) && ageOk(r)
+      && (!this.state.userFilter || this.state.userFilter.has((r.user || "").toLowerCase()));
     const wrap = document.getElementById("tableWrap");
     const dcol = "white-space:nowrap";  // keep dates on one line
     const day = v => (v || "").slice(0, 10);  // ISO datetime -> YYYY-MM-DD
@@ -1604,7 +1610,7 @@ const LogView = {
 /* ---- left-nav ------------------------------------------------------------ */
 /* ---- Teammates: one row per person with MFA (MFA is the person's, not the device's) ---- */
 const People = {
-  doc: null, f: { q: "", mfa: "all" }, sort: { key: "user", dir: 1 },
+  doc: null, f: { q: "", mfa: "all" }, sort: { key: "user", dir: 1 }, sel: new Set(),
   METHODS: { microsoftAuthenticatorPush: "Authenticator app", microsoftAuthenticatorPasswordless: "Authenticator (passwordless)", mobilePhone: "Phone", alternateMobilePhone: "Alt phone",
              officePhone: "Office phone", softwareOneTimePasscode: "Authenticator code", hardwareOneTimePasscode: "Hardware code", fido2: "Security key", windowsHelloForBusiness: "Windows Hello",
              email: "Email", temporaryAccessPass: "Temp access pass", passKeyDeviceBound: "Passkey", passKeyDeviceBoundAuthenticator: "Passkey", passKeySynced: "Passkey" },
@@ -1652,6 +1658,8 @@ const People = {
     const t = d.people.length, pct = t ? Math.round(100 * d.yes / t) : 0;
     const card = (n, label, f, cls) => `<div class="stat clickable ${cls || ""}" onclick="People.setF('mfa','${f}')"><div class="n">${n}</div><div class="l">${label} ›</div></div>`;
     const rows = this.rows();
+    const shownKeys = new Set(rows.map(p => (p.user || "").toLowerCase()));
+    [...this.sel].forEach(k => { if (!shownKeys.has(k)) this.sel.delete(k); });          // only people you can see stay ticked
     const th = (label, key) => `<th style="cursor:pointer;user-select:none" onclick="People.sortBy('${key}')">${label}${this.sort.key === key ? (this.sort.dir > 0 ? " ▲" : " ▼") : ""}</th>`;
     const seg = (v, l) => `<label class="${this.f.mfa === v ? "on" : ""}"><input type="radio" name="pplMfa" ${this.f.mfa === v ? "checked" : ""} onchange="People.setF('mfa','${v}')">${l}</label>`;
     const mfaCell = v => v === "Yes" ? '<span style="color:#3ecf8e;font-weight:600">Yes</span>' : v === "No" ? '<span style="color:#ff6b6b;font-weight:600">No</span>' : '<span class="muted" title="Entra did not report this person">Unknown</span>';
@@ -1663,9 +1671,11 @@ const People = {
         <input id="pplQ" type="search" placeholder="Search name, email, device or serial…" value="${attr(this.f.q)}" oninput="People.typed(this.value)" autocomplete="off">
         <div class="iss-seg" role="radiogroup" aria-label="MFA">${seg("all", "Everyone")}${seg("No", "No MFA")}${seg("Yes", "Registered")}${seg("unknown", "Unknown")}</div>
         <span class="dev-tools-r"><span class="muted">${rows.length === t ? t + " people" : "Showing " + rows.length + " of " + t}</span><button class="rowbtn" onclick="People.copy()">Copy list</button></span></div>
-        ${rows.length ? `<table class="fit"><colgroup><col style="width:30%"><col style="width:9%"><col style="width:30%"><col style="width:23%"><col style="width:8%"></colgroup>
-          <thead><tr>${th("Person", "user")}${th("MFA", "mfa")}<th>Sign-in methods</th>${th("Devices", "devices")}${th("Updated", "updated")}</tr></thead><tbody>` +
+        <div id="pplBar" class="bulk-bar${this.sel.size ? "" : " hidden"}">${this._barHtml()}</div>
+        ${rows.length ? `<table class="fit"><colgroup><col style="width:40px"><col style="width:28%"><col style="width:8%"><col style="width:28%"><col style="width:22%"><col style="width:8%"></colgroup>
+          <thead><tr><th><input type="checkbox" id="pplAll" title="Select everyone shown" ${rows.length && this.sel.size === rows.length ? "checked" : ""} onchange="People.pickAll(this.checked)"></th>${th("Person", "user")}${th("MFA", "mfa")}<th>Sign-in methods</th>${th("Devices", "devices")}${th("Updated", "updated")}</tr></thead><tbody>` +
         rows.map(p => `<tr>
+          <td><input type="checkbox" class="rowsel" data-u="${attr((p.user || "").toLowerCase())}" ${this.sel.has((p.user || "").toLowerCase()) ? "checked" : ""} onchange="People.pick(this.dataset.u,this.checked)"></td>
           <td><b>${esc(p.name || p.user)}</b>${p.name ? `<div class="muted" style="font-size:12px">${esc(p.user)}</div>` : ""}</td>
           <td>${mfaCell(p.mfa)}</td>
           <td>${(p.methods || []).length ? (p.methods || []).map(m => `<span class="md-tag${m === p.default ? " you" : ""}" title="${m === p.default ? "Default method" : ""}">${esc(this.label(m))}</span>`).join(" ") : '<span class="muted">—</span>'}</td>
@@ -1674,11 +1684,81 @@ const People = {
     const q = document.getElementById("pplQ");
     if (q && this._focusQ) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
   },
+  _barHtml() {
+    const n = this.sel.size;
+    return `<b>${n} selected</b><span class="bulk-actions">
+      <button class="rowbtn" onclick="People.copy(true)">Copy selected</button>
+      <button class="rowbtn" onclick="People.showDevices()">Show their devices</button>
+      <button class="rowbtn" onclick="People.email()">✉ E-mail…</button></span>
+      <a class="bulk-clear" onclick="People.pickAll(false)">Clear selection</a>`;
+  },
+  _bar() {
+    const bar = document.getElementById("pplBar"); if (!bar) return;
+    bar.classList.toggle("hidden", !this.sel.size);
+    bar.innerHTML = this.sel.size ? this._barHtml() : "";
+    const a = document.getElementById("pplAll"); if (a) a.checked = !!this.rows().length && this.sel.size === this.rows().length;
+  },
+  pick(u, on) { if (on) this.sel.add(u); else this.sel.delete(u); this._bar(); },
+  pickAll(on) {
+    this.sel.clear();
+    if (on) this.rows().forEach(p => this.sel.add((p.user || "").toLowerCase()));
+    document.querySelectorAll("#pplHost .rowsel").forEach(cb => { cb.checked = on; });
+    this._bar();
+  },
+  picked() { return this.rows().filter(p => this.sel.has((p.user || "").toLowerCase())); },
+  showDevices() {
+    const users = this.picked().map(p => (p.user || "").toLowerCase()); if (!users.length) return;
+    App.state.userFilter = new Set(users);
+    const s = document.getElementById("search"); if (s) s.value = "";
+    Nav.go("inventory"); App.showTab("use");
+  },
+  /* A draft in the PC's default mail app (classic or new Outlook). Nothing is sent from here. */
+  email() {
+    const ppl = this.picked(); if (!ppl.length) return;
+    const noMfa = ppl.every(p => p.mfa === "No");
+    this._mail = { to: ppl.map(p => p.user), subject: noMfa ? "Please set up multi-factor sign-in (MFA)" : "" };
+    const body = noMfa ? "Hi,\n\nOur records show you have not set up a second sign-in method (MFA) for your Nucor account. Please register one at https://aka.ms/mysecurityinfo. It takes about five minutes.\n\nThank you,\nSystems / IT" : "";
+    document.getElementById("modalRoot").innerHTML =
+      `<div class="overlay"><div class="modal" style="width:640px;max-width:96vw">
+        <div class="modal-head"><h3>E-mail ${ppl.length} teammate${ppl.length === 1 ? "" : "s"}</h3><button onclick="People.mailClose()">&times;</button></div>
+        <div class="modal-body">
+          <p class="sub-note" style="margin:0 0 10px">This only opens a <b>draft</b>. Nothing is sent until you press Send in your mail program.</p>
+          <div class="bulk-list">${ppl.slice(0, 6).map(p => `<span class="md-tag">${esc(p.name || p.user)}</span>`).join(" ")}${ppl.length > 6 ? ` <span class="muted">+ ${ppl.length - 6} more</span>` : ""}</div>
+          <div class="field"><label>Subject</label><input id="mlSub" value="${attr(this._mail.subject)}" autocomplete="off"></div>
+          <div class="field"><label>Message</label><textarea id="mlBody" rows="8" style="width:100%">${esc(body)}</textarea></div>
+        </div>
+        <div class="modal-foot" style="flex-wrap:wrap;gap:8px">
+          <button class="ghost" onclick="People.mailCopy()">Copy addresses</button>
+          <button class="ghost" onclick="People.mailWeb()" title="Outlook on the web (outlook.office.com), signed in with your Microsoft account">Open in Outlook on the web</button>
+          <button class="primary" onclick="People.mailApp(this)" title="Your default mail program: classic Outlook or the new Outlook">Open in Outlook</button>
+        </div></div></div>`;
+  },
+  mailClose() { document.getElementById("modalRoot").innerHTML = ""; },
+  _mailParts() { return { to: this._mail.to, subject: (document.getElementById("mlSub") || {}).value || "", body: (document.getElementById("mlBody") || {}).value || "" }; },
+  async mailApp(btn) {
+    const m = this._mailParts();
+    let r; await Ui.working(btn, "Opening…", async () => { r = await Backend.call("open_mailto", m.to, m.subject, m.body); return false; });
+    if (r && r.ok) { this.mailClose(); App.toast("Draft opened. Check your mail program."); return; }
+    if (r && r.too_long) { this.mailCopy(true); App.toast("Too many people for one e-mail link. The addresses are copied: open a new message and paste them into To.", true); return; }
+    App.toast((r && r.error) || "Could not open the mail program.", true);
+  },
+  mailWeb() {
+    const m = this._mailParts(), q = encodeURIComponent;
+    const url = `https://outlook.office.com/mail/deeplink/compose?to=${q(m.to.join(";"))}&subject=${q(m.subject)}&body=${q(m.body)}`;
+    if (url.length > 7000) { this.mailCopy(true); return App.toast("Too many people for one link. The addresses are copied: paste them into To.", true); }
+    Backend.call("open_external", url).then(r => { if (r && r.ok) { this.mailClose(); App.toast("Opening Outlook on the web."); } else App.toast((r && r.error) || "Could not open it.", true); });
+  },
+  mailCopy(quiet) {
+    const txt = this._mail.to.join("; ");
+    const done = () => { if (!quiet) App.toast(`Copied ${this._mail.to.length} address${this._mail.to.length === 1 ? "" : "es"}.`); };
+    const fb = () => { const t = document.createElement("textarea"); t.value = txt; document.body.appendChild(t); t.select(); try { document.execCommand("copy"); done(); } catch (e) { App.toast("Could not copy.", true); } t.remove(); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, fb); else fb();
+  },
   _t: null,
   typed(v) { this.f.q = v; this._focusQ = true; clearTimeout(this._t); this._t = setTimeout(() => this.render(), 150); },
   toDevices(user) { const s = document.getElementById("search"); if (s) s.value = user; Nav.go("inventory"); App.showTab("use"); },
-  copy() {
-    const rows = this.rows(), cell = v => String(v == null ? "" : v).replace(/[\t\r\n]+/g, " ");
+  copy(onlySelected) {
+    const rows = onlySelected ? this.picked() : this.rows(), cell = v => String(v == null ? "" : v).replace(/[\t\r\n]+/g, " ");
     const txt = ["Person\tEmail\tMFA\tMethods\tDevices\tUpdated"].concat(rows.map(p => [p.name, p.user, p.mfa || "Unknown", (p.methods || []).map(m => this.label(m)).join("; "), (p.devices || []).map(x => x.name || x.serial).join("; "), p.updated].map(cell).join("\t"))).join("\n");
     const done = () => App.toast(`Copied ${rows.length} row${rows.length === 1 ? "" : "s"}.`);
     const fb = () => { const t = document.createElement("textarea"); t.value = txt; document.body.appendChild(t); t.select(); try { document.execCommand("copy"); done(); } catch (e) { App.toast("Could not copy.", true); } t.remove(); };
@@ -5673,6 +5753,7 @@ Object.assign(Mock, {
     return { ok: true, data: this._mfaPeople };
   },
   async bulk_audit() { return { ok: true }; },
+  async open_mailto(to, subject, body) { console.log("mailto", to, subject); return { ok: true }; },
   async issue_counts() { return { ok: true, new: this._issues.filter(d => d.status === "new").length, updates: 1, triage: true }; },
   async get_update_info() { return { ok: true, current: "2026.10.01", latest: "", min: "", update_available: false, update_required: false }; },
   async get_my_role() { return { ok: true, role: "super", sections: ["models", "links", "access", "sites", "sql", "perms", "storage"] }; },

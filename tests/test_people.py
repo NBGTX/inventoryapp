@@ -42,5 +42,21 @@ class BuildPeople(unittest.TestCase):
         self.assertEqual((d["people"][0]["mfa"], d["unknown"], d["source"]), ("", 1, "none"))
 
 
+class MailLink(unittest.TestCase):
+    def test_builds_a_safe_draft_link(self):
+        import app
+        u = app.Api._mailto_url(["a@nucor.com", "b.c@nucor.com"], "Hi there & more", "Line one\nLine two")
+        self.assertTrue(u.startswith("mailto:a@nucor.com,b.c@nucor.com?subject=Hi%20there%20%26%20more&body=Line%20one%0ALine%20two"))
+
+    def test_refuses_bad_or_too_many_addresses(self):
+        import app
+        for bad in (["not-an-email"], ["a@b"], ["a@nucor.com;evil@x.com"], ["a b@nucor.com"], []):
+            with self.assertRaises(ValueError, msg=str(bad)):
+                app.Api._mailto_url(bad, "s", "b")
+        with self.assertRaises(ValueError) as cm:
+            app.Api._mailto_url([f"user{i}@nucor.com" for i in range(300)], "s", "b")
+        self.assertIn("Too many", str(cm.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

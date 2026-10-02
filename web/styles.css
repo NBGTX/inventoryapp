@@ -993,3 +993,8 @@ td.cell-user a.sw-user{color:inherit;border-bottom:1px dotted var(--muted);}td.c
 .bulk-clear{margin-left:auto;color:var(--amber);cursor:pointer;}.bulk-clear:hover{text-decoration:underline;}
 .bulk-list{display:flex;gap:6px;flex-wrap:wrap;}
 .bulk-fails{max-height:160px;overflow:auto;margin-top:8px;font-size:12.5px;color:var(--red);}
+
+.uf-chip{display:inline-flex;align-items:center;gap:8px;padding:4px 6px 4px 12px;border:1px solid var(--amber);border-radius:14px;background:rgba(224,165,65,.15);color:var(--amber);font-size:12.5px;}
+.uf-chip a{cursor:pointer;font-size:16px;line-height:1;padding:0 6px;}
+.uf-chip.hidden{display:none;}
+#appview-people .rowsel,#pplAll{margin:0;}

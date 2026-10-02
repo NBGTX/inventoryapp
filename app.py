@@ -1142,6 +1142,34 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    @staticmethod
+    def _mailto_url(to, subject: str = "", body: str = "", limit: int = 1900) -> str:
+        """A mailto: link for a draft. Raises ValueError for a bad address, no recipients, or a link too long for Windows."""
+        import re
+        from urllib.parse import quote
+        addrs = [str(x).strip() for x in (to or []) if str(x).strip()]
+        if not addrs:
+            raise ValueError("Nobody to e-mail.")
+        for x in addrs:
+            if not re.fullmatch(r"[^@\s;,<>\"]+@[^@\s;,<>\"]+\.[^@\s;,<>\"]+", x):
+                raise ValueError(f"'{x}' is not an e-mail address.")
+        url = "mailto:" + ",".join(quote(x, safe="@") for x in addrs) + "?subject=" + quote(subject or "", safe="") + "&body=" + quote(body or "", safe="")
+        if len(url) > limit:
+            raise ValueError("Too many people (or too long a message) for one e-mail link.")
+        return url
+
+    def open_mailto(self, to, subject: str = "", body: str = "") -> dict:
+        """Open a DRAFT in the PC's default mail app (classic or new Outlook, whichever is the default). Nothing is sent."""
+        try:
+            import os
+            url = self._mailto_url(to, subject, body)
+            os.startfile(url)
+            return {"ok": True}
+        except ValueError as e:
+            return {"ok": False, "too_long": "Too many" in str(e), "error": str(e)}
+        except Exception as e:
+            return self._fail(e)
+
     def open_external(self, url: str) -> dict:
         """Open a URL in the user's DEFAULT system browser (Edge), which carries
         their Windows/Entra SSO — so sign-in portals auto-sign-in like normal web

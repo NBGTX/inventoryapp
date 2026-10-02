@@ -222,6 +222,8 @@ const Help = {
           <li>The four boxes count everyone, people with MFA, people <b>without</b> it, and people Entra did not report. Click a box (or use the toggle) to filter.</li>
           <li>The <b>Sign-in methods</b> column shows what each person has set up; the amber one is their default. Someone with no methods and "No" needs to register.</li>
           <li>Click a device name to jump to it on the Devices page. <b>Copy list</b> copies what you see for Excel or a message.</li>
+          <li>Tick people (the box in the heading ticks everyone shown) for a bar with three actions: <b>Copy selected</b>; <b>Show their devices</b>, which opens Devices limited to those people (click the &times; on its Teammates chip to undo); and <b>E-mail</b>, which opens a <b>draft</b> addressed to them. Nothing is ever sent for you.</li>
+          <li>For the draft, <b>Open in Outlook</b> uses your default mail program (classic or new Outlook), and <b>Open in Outlook on the web</b> works in the browser. Very long lists do not fit in one link; the addresses are then copied so you can paste them into To.</li>
           <li>The Devices page's MFA column and filter read from this list, and the Dashboard's "Users without MFA" box opens it filtered to people without MFA.</li>
         </ul>
         <p>Reading registrations needs the <code>AuditLog.Read.All</code> permission and a reader role (Security Reader, Security Administrator or Global Reader). Without them everyone shows as Unknown.</p>`
