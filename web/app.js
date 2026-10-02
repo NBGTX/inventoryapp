@@ -3311,8 +3311,7 @@ const BGTools = {
   _perm: { user: null, groups: [], found: [] },
   TOOLS: [
     { id: "timesheet", name: "Timesheet Fix", icon: "🔓", desc: "Unlock a timesheet week for an employee" },
-    { id: "coilcard", name: "Delete Coil Card", icon: "🗑️", desc: "Remove a coil card and its tracking rows from the CoilCard database" },
-    { id: "coilrestore", name: "Restore Coil Card", icon: "♻️", desc: "Put a deleted coil card back from its SharePoint backup" },
+    { id: "coilcard", name: "Coil Cards", icon: "🗑️", desc: "Delete a coil card (with a backup) or restore a deleted one" },
     { id: "perms", name: "Permissions Finder", icon: "🔑", desc: "Find every group a teammate is in — direct + nested" },
     { id: "copyperms", name: "Copy Permissions", icon: "🧬", desc: "Compare two people's AD groups and copy groups from one to the other" },
     { id: "missing", name: "Missing Groups", icon: "🧩", desc: "Find groups a teammate or department is missing vs. peers" },
@@ -3338,8 +3337,7 @@ const BGTools = {
     document.querySelectorAll("#bgtHost .bgt-tool").forEach(el => el.classList.toggle("active", el.dataset.tool === id));
     if (id === "timesheet") this._renderTimesheet(p);
     else if (id === "perms") this._renderPerms(p);
-    else if (id === "coilcard") this._renderCoil(p);
-    else if (id === "coilrestore") this._renderRestore(p);
+    else if (id === "coilcard") this._renderCoilTool(p);
     else if (id === "missing") this._renderMissing(p);
     else if (id === "copyperms") CopyPerms.render(p);
   },
@@ -3437,19 +3435,34 @@ const BGTools = {
 
   // ---- Delete Coil Card -------------------------------------------------------
   _coil: null,
+  _renderCoilTool(p, tab) {
+    p.innerHTML =
+      `<div class="chart-card" style="max-width:720px">
+        <h4 style="margin:0 0 4px">Coil Cards</h4>
+        ${Help.box("bgt-coilcard")}
+        <div class="tabs" style="padding:0;margin-bottom:12px">
+          <div class="tab" id="bgcTabDelete" onclick="BGTools.coilTab('delete')">Delete</div>
+          <div class="tab" id="bgcTabRestore" onclick="BGTools.coilTab('restore')">Restore</div>
+        </div>
+        <div id="bgcHost"></div>
+      </div>`;
+    this.coilTab(tab || "delete");
+  },
+  coilTab(tab) {
+    const host = document.getElementById("bgcHost"); if (!host) return;
+    document.getElementById("bgcTabDelete").classList.toggle("active", tab === "delete");
+    document.getElementById("bgcTabRestore").classList.toggle("active", tab === "restore");
+    if (tab === "restore") this._renderRestore(host); else this._renderCoil(host);
+  },
   _renderCoil(p) {
     this._coil = null;
     p.innerHTML =
-      `<div class="chart-card" style="max-width:640px">
-        <h4 style="margin:0 0 4px">Delete Coil Card</h4>
-        ${Help.box("bgt-coilcard")}
-        <div style="display:flex;gap:8px;align-items:flex-end">
+      `<div style="display:flex;gap:8px;align-items:flex-end">
           <div class="field" style="flex:1;margin:0"><label>Coil card number (NBSNumber)</label>
             <input id="bgcNbs" placeholder="e.g. 141487" autocomplete="off" onkeydown="if(event.key==='Enter')BGTools.coilFind()"></div>
           <button class="primary" onclick="BGTools.coilFind()">Look up</button>
         </div>
-        <div id="bgcBody" style="margin-top:16px"><p class="hint">Look up a card to see what would be deleted.</p></div>
-      </div>`;
+        <div id="bgcBody" style="margin-top:16px"><p class="hint">Look up a card to see what would be deleted.</p></div>`;
     const el = document.getElementById("bgcNbs"); if (el) el.focus();
   },
   async coilFind() {
@@ -3494,12 +3507,7 @@ const BGTools = {
   _bak: [], _bakSel: null,
   async _renderRestore(p) {
     this._bak = []; this._bakSel = null;
-    p.innerHTML =
-      `<div class="chart-card" style="max-width:720px">
-        <h4 style="margin:0 0 4px">Restore Coil Card</h4>
-        ${Help.box("bgt-coilrestore")}
-        <div id="bgrBody" style="margin-top:12px"><p class="hint">Loading backups…</p></div>
-      </div>`;
+    p.innerHTML = `<div id="bgrBody"><p class="hint">Loading backups…</p></div>`;
     const r = await Backend.call("coil_card_backups");
     const body = document.getElementById("bgrBody"); if (!body) return;
     if (!r || !r.ok) { body.innerHTML = `<div class="cfg-warn">${esc((r && r.error) || "Could not list backups.")}</div>`; return; }
