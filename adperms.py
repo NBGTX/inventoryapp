@@ -61,6 +61,34 @@ try {
       $out += @{ dn = (One $p "distinguishedname"); name = (One $p "cn"); desc = (One $p "description"); security = (($gt -band -2147483648) -ne 0); privileged = ($ac -eq 1) }
     }
     Write-Output (@{ groups = $out } | ConvertTo-Json -Depth 4 -Compress)
+  } elseif ($cfg.mode -eq "upn") {
+    $q = Esc ([string]$cfg.q)
+    $s = NewSearcher "(&(objectCategory=person)(objectClass=user)(|(userPrincipalName=$q)(mail=$q)))" 5
+    foreach ($p in "distinguishedName","sAMAccountName","displayName") { $null = $s.PropertiesToLoad.Add($p) }
+    $out = @()
+    foreach ($r in $s.FindAll()) { $p = $r.Properties; $out += @{ dn = (One $p "distinguishedname"); sam = (One $p "samaccountname"); name = (One $p "displayname") } }
+    Write-Output (@{ users = $out } | ConvertTo-Json -Depth 4 -Compress)
+  } elseif ($cfg.mode -eq "groupnames") {
+    $out = @()
+    foreach ($n in @($cfg.names)) {
+      $q = Esc ([string]$n)
+      $s = NewSearcher "(&(objectCategory=group)(cn=$q))" 3
+      foreach ($p in "distinguishedName","cn") { $null = $s.PropertiesToLoad.Add($p) }
+      $found = @($s.FindAll())
+      if ($found.Count -eq 1) { $out += @{ name = [string]$n; dn = (One $found[0].Properties "distinguishedname"); n = 1 } }
+      else { $out += @{ name = [string]$n; dn = ""; n = $found.Count } }
+    }
+    Write-Output (@{ groups = $out } | ConvertTo-Json -Depth 4 -Compress)
+  } elseif ($cfg.mode -eq "groupdns") {
+    $out = @()
+    foreach ($d in @($cfg.dns)) {
+      $q = Esc ([string]$d)
+      $s = NewSearcher "(&(objectCategory=group)(distinguishedName=$q))" 1
+      $null = $s.PropertiesToLoad.Add("distinguishedName")
+      $r = $s.FindOne()
+      if ($null -ne $r) { $out += (One $r.Properties "distinguishedname") }
+    }
+    Write-Output (@{ dns = $out } | ConvertTo-Json -Depth 4 -Compress)
   } else { Fail "unknown mode" }
 } catch { Fail "AD query failed: $($_.Exception.Message)" }
 '''
@@ -263,6 +291,37 @@ def user_groups(dn: str, domain: str) -> dict:
     return {"groups": sorted(gs, key=lambda g: (g.get("name") or "").lower())}
 
 
+def find_user_by_upn(upn: str, domain: str) -> dict:
+    """The one AD user whose userPrincipalName or mail is `upn`, or {} when there is none / more than one."""
+    r = _read({"mode": "upn", "q": (upn or "").strip(), "domain": domain})
+    if "__error__" in r:
+        return r
+    us = _listify(r.get("users"))
+    return us[0] if len(us) == 1 else {}
+
+
+def find_groups_by_name(names: list, domain: str) -> dict:
+    """{name_lower: {name, dn, n}} (n = how many AD groups carry that exact cn; dn is empty unless exactly one)."""
+    names = [n for n in dict.fromkeys(names or []) if n]
+    if not names:
+        return {}
+    r = _read({"mode": "groupnames", "names": names, "domain": domain})
+    if "__error__" in r:
+        return r
+    return {g["name"].lower(): g for g in _listify(r.get("groups"))}
+
+
+def verify_group_dns(dns: list, domain: str) -> set:
+    """The subset of `dns` that really are group objects in this directory (lower-case DNs)."""
+    dns = list(dict.fromkeys(dns or []))
+    if not dns:
+        return set()
+    r = _read({"mode": "groupdns", "dns": dns, "domain": domain})
+    if "__error__" in r:
+        return r
+    return {d.lower() for d in _listify(r.get("dns"))}
+
+
 def compare(src: list, dst: list) -> dict:
     """Split two direct-group lists into only-source / only-destination / both (by DN, case-insensitive)."""
     s = {g["dn"].lower(): g for g in src}
@@ -283,12 +342,13 @@ def plan_copy(src: list, dst: list, wanted: list) -> dict:
     add, skipped = [], []
     for dn in dict.fromkeys(wanted or []):
         g = s.get((dn or "").lower())
+        nm = ((g or {}).get("name")) or (dn or "").split(",")[0][3:]
         if g is None:
-            skipped.append({"dn": dn, "why": "source user is not in this group"})
+            skipped.append({"dn": dn, "name": nm, "why": "source user is not in this group"})
         elif dn.lower() in have:
-            skipped.append({"dn": dn, "why": "destination already in this group"})
+            skipped.append({"dn": dn, "name": nm, "why": "destination already in this group"})
         elif not copyable(g):
-            skipped.append({"dn": dn, "why": "not a security group"})
+            skipped.append({"dn": dn, "name": nm, "why": "not a security group"})
         else:
             add.append(g)
     return {"add": add, "skipped": skipped}

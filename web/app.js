@@ -2584,14 +2584,55 @@ const HotSpares = {
    (sets NBSTimesheet.dbo.WeekLocked.Locked = 0). SQL runs as the signed-in user
    (integrated auth); every unlock is confirmed and audited. */
 /* ---- BG Tools: Copy Permissions (on-prem AD groups) ---- */
+/* ---- the admin account used to write to AD: found on the inserted YubiKey (shown as buttons), remembered, editable ---- */
+const AdKey = {
+  KEY: "nbg_ad_admin_acct",
+  html(p) {
+    return `<div class="field cp-acct" style="max-width:560px;margin-top:14px"><label>Your admin account for writing (YubiKey)</label>
+      <input id="${p}Acct" placeholder="adm.name.pa" autocomplete="off" oninput="AdKey.mark('${p}')">
+      <div class="ak-chips" id="${p}Chips"></div><div class="sub-note" id="${p}Note" style="margin:4px 0 0">Looking for your YubiKey…</div></div>`;
+  },
+  value(p) { return ((document.getElementById(p + "Acct") || {}).value || "").trim(); },
+  remember(p) { try { localStorage.setItem(this.KEY, this.value(p)); } catch (e) {} },
+  /* adm.sanderson.azure@nucor.onmicrosoft.com -> adm.sanderson.pa ; sims.anderson@nucor.com -> adm.sanderson.pa */
+  guess(upn) {
+    const parts = String(upn || "").split("@")[0].toLowerCase().split(".").filter(Boolean);
+    if (!parts.length) return "";
+    if (parts[0] === "adm") return parts.length > 2 ? "adm." + parts.slice(1, -1).join(".") + ".pa" : "";
+    return parts.length > 1 ? "adm." + parts[0][0] + parts[parts.length - 1] + ".pa" : "";
+  },
+  async init(p) {
+    const el = document.getElementById(p + "Acct"); if (!el) return;
+    let saved = ""; try { saved = localStorage.getItem(this.KEY) || ""; } catch (e) {}
+    const who = () => (App.state && (App.state.upn || App.state.account)) || (document.getElementById("acct") || {}).textContent || "";
+    el.value = saved || this.guess(who());
+    if (!el.value) Backend.call("get_status").then(st => { const g = this.guess((st && (st.upn || st.account)) || ""); if (el && !el.value && g) el.value = g; });
+    await this.scan(p, !!saved);
+  },
+  async scan(p, haveSaved) {
+    const r = await Backend.call("ad_smartcard_accounts");
+    const el = document.getElementById(p + "Acct"), chips = document.getElementById(p + "Chips"), note = document.getElementById(p + "Note");
+    if (!el || !chips) return;
+    const list = (r && r.ok && r.accounts) || [];
+    this._list = list;
+    chips.innerHTML = list.map(a => `<button type="button" class="ak-chip" data-upn="${attr(a.upn)}" title="${attr(a.cn)} · expires ${attr(a.expires)}" onclick="AdKey.pick('${p}','${attr(a.upn)}')">${esc(a.upn)}</button>`).join("");
+    if (!list.length) { note.innerHTML = `No YubiKey certificate found. Insert the key, or type the account. <a style="cursor:pointer;color:var(--amber)" onclick="AdKey.scan('${p}')">Look again</a>`; return; }
+    note.textContent = list.length + " account" + (list.length === 1 ? "" : "s") + " on your key: click one to use it.";
+    if (!haveSaved) {                                                   // better than a guess: the key's own account for this person
+      const base = (el.value || "").split("@")[0].toLowerCase();
+      const m = list.find(a => a.upn.split("@")[0].toLowerCase() === base) || (list.length === 1 ? list[0] : null);
+      if (m) el.value = m.upn;
+    }
+    this.mark(p);
+  },
+  pick(p, upn) { const el = document.getElementById(p + "Acct"); if (el) el.value = upn; this.mark(p); },
+  mark(p) { const v = this.value(p).toLowerCase(); document.querySelectorAll("#" + p + "Chips .ak-chip").forEach(b => b.classList.toggle("on", b.dataset.upn.toLowerCase() === v)); },
+};
 const localStorageGet = k => { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } };
 const CopyPerms = {
   s: { src: null, dst: null, cmp: null, picked: {}, res: null }, _t: {},
   render(p) {
     this.s = { src: null, dst: null, cmp: null, picked: {}, res: null };
-    let acct = ""; try { acct = localStorage.getItem("nbg_ad_admin_acct") || ""; } catch (e) {}
-    const who = () => (App.state && (App.state.upn || App.state.account)) || (document.getElementById("acct") || {}).textContent || "";
-    if (!acct) acct = this.guessAdmin(who());
     p.innerHTML = `<div class="chart-card">
       <h4 style="margin:0 0 4px">Copy Permissions</h4>${Help.box("bgt-copyperms")}
       <label class="cp-all"><input type="checkbox" id="cpAll"> Include people from other divisions</label>
@@ -2601,36 +2642,8 @@ const CopyPerms = {
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="primary" id="cpCmp" onclick="CopyPerms.compare()" disabled>Compare</button>
         <span class="sub-note" id="cpMsg" style="margin:0"></span></div>
       <div id="cpOut"></div>
-      <div class="field cp-acct" style="max-width:380px;margin-top:14px"><label>Your admin account for writing (YubiKey)</label>
-        <input id="cpAcct" list="cpAcctList" placeholder="adm.name.pa" value="${attr(acct)}" autocomplete="off">
-        <datalist id="cpAcctList"></datalist><div class="sub-note" id="cpAcctNote" style="margin:4px 0 0">Looking for your YubiKey…</div></div></div>`;
-    this.loadCards(acct);
-    if (!acct) Backend.call("get_status").then(st => {        // sign-in may still be resolving: ask again, fill only if the box is still empty
-      const el = document.getElementById("cpAcct"), g = this.guessAdmin((st && (st.upn || st.account)) || "");
-      if (el && !el.value && g) el.value = g;
-    });
-  },
-  /* Offer the accounts on the inserted YubiKey as choices; typing stays possible. */
-  async loadCards(current) {
-    const r = await Backend.call("ad_smartcard_accounts");
-    const el = document.getElementById("cpAcct"), dl = document.getElementById("cpAcctList"), note = document.getElementById("cpAcctNote");
-    if (!el || !dl) return;
-    const list = (r && r.ok && r.accounts) || [];
-    dl.innerHTML = list.map(a => `<option value="${attr(a.upn)}">${esc(a.cn)} · expires ${esc(a.expires)}</option>`).join("");
-    if (!list.length) { note.innerHTML = `No YubiKey certificate found. Insert the key, or type the account. <a style="cursor:pointer;color:var(--amber)" onclick="CopyPerms.loadCards()">Look again</a>`; return; }
-    note.textContent = list.length + " account" + (list.length === 1 ? "" : "s") + " found on your key: click the box to choose.";
-    if (!current || !el.value || el.value === current) {                       // better than a guess: the key's own account for this person
-      const base = (el.value || "").split("@")[0].toLowerCase();
-      const m = list.find(a => a.upn.split("@")[0].toLowerCase() === base) || (list.length === 1 ? list[0] : null);
-      if (m && (!current || el.value === current) && !localStorageGet("nbg_ad_admin_acct")) el.value = m.upn;
-    }
-  },
-  /* adm.sanderson.azure@nucor.onmicrosoft.com -> adm.sanderson.pa ; sims.anderson@nucor.com -> adm.sanderson.pa */
-  guessAdmin(upn) {
-    const parts = String(upn || "").split("@")[0].toLowerCase().split(".").filter(Boolean);
-    if (!parts.length) return "";
-    if (parts[0] === "adm") return parts.length > 2 ? "adm." + parts.slice(1, -1).join(".") + ".pa" : "";
-    return parts.length > 1 ? "adm." + parts[0][0] + parts[parts.length - 1] + ".pa" : "";
+      ${AdKey.html("cp")}</div>`;
+    AdKey.init("cp");
   },
   typed(w) {
     clearTimeout(this._t[w]);
@@ -2682,21 +2695,25 @@ const CopyPerms = {
         <button class="primary" id="cpGo" ${n ? "" : "disabled"} onclick="CopyPerms.go(true)">Copy ${n} group${n === 1 ? "" : "s"} to ${esc(this.s.dst.sam)}…</button></div>
       <div id="cpRes">${this.s.res || ""}</div>`;
   },
+  resultHtml(r) {
+    const nm = x => x.name || (x.dn || "").split(",")[0].replace(/^CN=/i, "");
+    if (!r || !r.ok) return `<div class="cp-res bad">${esc((r && r.error) || "Failed.")}</div>`;
+    const skip = (r.skipped || []).length ? " Skipped: " + esc(r.skipped.map(x => nm(x) + " (" + x.why + ")").join("; ")) : "";
+    if (!r.committed) return `<div class="cp-res">Would add ${r.would_add.length}: ${esc(r.would_add.join(", ") || "nothing")}.${skip}</div>`;
+    return `<div class="cp-res ${r.failed.length ? "bad" : "good"}">Added ${r.added.length}${r.who ? " as " + esc(r.who) : ""}${r.dc ? " on " + esc(r.dc) : ""}: ${esc(r.added.join(", ") || "none")}.${skip}
+      ${r.failed.length ? "<br>Failed: " + esc(r.failed.map(f => f.name + " — " + f.error).join("; ")) : ""}${r.unverified.length ? "<br>Accepted by AD; some domain controllers may take a few minutes to show it: " + esc(r.unverified.join(", ")) : ""}</div>`;
+  },
   async go(commit) {
     const { src, dst } = this.s, dns = Object.keys(this.s.picked);
-    const acct = (document.getElementById("cpAcct").value || "").trim();
+    const acct = AdKey.value("cp");
     if (commit) {
       if (!acct) { App.toast("Enter your admin account (for example adm.name.pa) first.", true); return; }
-      try { localStorage.setItem("nbg_ad_admin_acct", acct); } catch (e) {}
+      AdKey.remember("cp");
       if (!confirm(`Add ${dst.name || dst.sam} to ${dns.length} AD group(s) copied from ${src.name || src.sam}?\n\nA PIN window opens (look in the taskbar if you do not see it). You enter the PIN once, there.`)) return;
     }
     const btn = document.getElementById(commit ? "cpGo" : "cpPrev");
     let r; await Ui.working(btn, commit ? "Waiting for the PIN window…" : "Checking…", async () => { r = await Backend.call("ad_perm_copy", src.dn, dst.dn, dns, acct, commit); return false; });
-    let h;
-    if (!r || !r.ok) h = `<div class="cp-res bad">${esc((r && r.error) || "Failed.")}</div>`;
-    else if (!r.committed) h = `<div class="cp-res">Would add ${r.would_add.length}: ${esc(r.would_add.join(", ") || "nothing")}.${r.skipped.length ? " Skipped: " + esc(r.skipped.map(x => x.dn.split(",")[0].slice(3) + " (" + x.why + ")").join("; ")) : ""}</div>`;
-    else h = `<div class="cp-res ${r.failed.length ? "bad" : "good"}">Added ${r.added.length}${r.who ? " as " + esc(r.who) : ""}${r.dc ? " on " + esc(r.dc) : ""}: ${esc(r.added.join(", ") || "none")}.
-      ${r.failed.length ? "<br>Failed: " + esc(r.failed.map(f => f.name + " — " + f.error).join("; ")) : ""}${r.unverified.length ? "<br>Accepted by AD; some domain controllers may take a few minutes to show it: " + esc(r.unverified.join(", ")) : ""}</div>`;
+    const h = this.resultHtml(r);
     this.s.res = h;
     if (commit && r && r.ok && r.committed) { await this.compare(); this.s.res = h; this.draw(); } else document.getElementById("cpRes").innerHTML = h;
   },
@@ -3049,7 +3066,10 @@ const BGTools = {
     const missing = r.missing || [], present = r.present || [];
     const missCard = missing.length
       ? `<div class="miss-card miss-bad"><div class="miss-card-h">✗ Missing ${missing.length} expected group${missing.length === 1 ? "" : "s"}</div>` +
-        missing.map(g => `<div class="miss-row"><span class="miss-name" title="${attr(g.name)}">${esc(g.name)}</span><span class="miss-cov">${esc(cov(g))}</span></div>`).join("") + `</div>`
+        missing.map(g => `<label class="miss-row"><span class="miss-pick"><input type="checkbox" class="miss-ck" data-g="${attr(g.name)}" onchange="BGTools.missCount()"><span class="miss-name" title="${attr(g.name)}">${esc(g.name)}</span></span><span class="miss-cov">${esc(cov(g))}</span></label>`).join("") + `</div>
+        <div class="miss-ad"><div class="miss-ad-h">Add the ticked groups to ${esc(u.display || "this person")} in AD</div>${AdKey.html("ms")}
+          <div class="cp-actions"><button class="ghost" id="msPrev" onclick="BGTools.missAd(false)" disabled>Preview</button><button class="primary" id="msGo" onclick="BGTools.missAd(true)" disabled>Add ticked groups…</button></div>
+          <div id="msRes"></div></div>`
       : `<div class="miss-card miss-good"><div class="miss-card-h">✓ Not missing any expected groups</div><div class="sub-note" style="margin:2px 0 0">Has all ${present.length} common group${present.length === 1 ? "" : "s"} for this department.</div></div>`;
     const presCard = present.length
       ? `<details class="miss-card miss-ok"><summary class="miss-card-h">Has ${present.length} of ${present.length + missing.length} expected group${(present.length + missing.length) === 1 ? "" : "s"}</summary>` +
@@ -3058,6 +3078,27 @@ const BGTools = {
     body.innerHTML = head +
       `<p class="sub-note" style="margin:0 0 10px">Compared against the <b>${esc(u.dept)}</b> common-groups baseline (${total} ${esc(Divisions.label())} peer${total === 1 ? "" : "s"}${r.updated ? `, analyzed ${esc(String(r.updated).slice(0, 10))}` : ""}).</p>` +
       missCard + presCard;
+    if (missing.length) AdKey.init("ms");
+  },
+  missCount() {
+    const n = document.querySelectorAll("#missBody .miss-ck:checked").length;
+    ["msPrev", "msGo"].forEach(id => { const b = document.getElementById(id); if (b) b.disabled = !n; });
+    const go = document.getElementById("msGo"); if (go && !go.dataset.busy) go.innerHTML = n ? `Add ${n} group${n === 1 ? "" : "s"}…` : "Add ticked groups…";
+  },
+  async missAd(commit) {
+    const u = this._miss.user || {};
+    const names = [...document.querySelectorAll("#missBody .miss-ck:checked")].map(e => e.dataset.g);
+    if (!names.length) return;
+    const acct = AdKey.value("ms");
+    if (commit) {
+      if (!acct) { App.toast("Enter your admin account (for example adm.name.pa) first.", true); return; }
+      AdKey.remember("ms");
+      if (!confirm(`Add ${u.display || u.upn} to ${names.length} AD group(s)?\n\nA PIN window opens (look in the taskbar if you do not see it). You enter the PIN once, there.`)) return;
+    }
+    const btn = document.getElementById(commit ? "msGo" : "msPrev");
+    let r; await Ui.working(btn, commit ? "Waiting for the PIN window…" : "Checking…", async () => { r = await Backend.call("ad_add_missing", u.upn, names, acct, commit); return false; });
+    document.getElementById("msRes").innerHTML = CopyPerms.resultHtml(r);
+    this.missCount();
   },
   async missAnalyzeThenUser(dept, uid) {
     const body = document.getElementById("missBody");
@@ -5115,6 +5156,10 @@ Object.assign(Mock, {
   _adg: { "CN=Anderson\\, Sims,OU=Admins,DC=bg": [["IT-Intune-Admins", false], ["IT-ServerOps", false], ["Domain Admins", true], ["VPN-Users", false]], "CN=Smith\\, Pat,OU=Admins,DC=bg": [["VPN-Users", false], ["IT-HelpDesk", false]] },
   _adgl(dn) { return (this._adg[dn] || []).map(([n, p]) => ({ dn: "CN=" + n + ",OU=Groups,DC=bg", name: n, desc: p ? "Protected admin group" : "", security: true, privileged: p })); },
   async ad_smartcard_accounts() { return { ok: true, accounts: [{ upn: "adm.sanderson.pa@nucorsteel.local", cn: "adm.sanderson.pa", expires: "2027-03-03" }, { upn: "adm.sanderson.dvc@nucorsteel.local", cn: "adm.sanderson.dvc", expires: "2027-03-03" }] }; },
+  async ad_add_missing(upn, names, acct, commit) {
+    if (!commit) return { ok: true, committed: false, would_add: names, skipped: [] };
+    return { ok: true, committed: true, would_add: names, skipped: [], added: names, failed: [], unverified: [], who: "BG\\" + (acct || "adm"), dc: "BGDALDCRW02" };
+  },
   async ad_user_search(q, all) { q = (q || "").toLowerCase(); return { ok: true, users: this._adu.filter(u => (u.name + u.sam).toLowerCase().includes(q)) }; },
   async ad_perm_compare(a, b) { const s = this._adgl(a), d = this._adgl(b), dn = new Set(d.map(x => x.dn)), sn = new Set(s.map(x => x.dn));
     return { ok: true, src_count: s.length, dst_count: d.length, only_src: s.filter(x => !dn.has(x.dn)), only_dst: d.filter(x => !sn.has(x.dn)), both: s.filter(x => dn.has(x.dn)) }; },

@@ -267,7 +267,7 @@ const Help = {
           <li>Nothing is ticked for you: tick the groups to copy in the <b>Only source has</b> list (or use <i>Select all (not privileged)</i>). Groups marked <b>privileged</b> are protected admin groups.</li>
           <li><b>Preview</b> lists what would be added and changes nothing. <b>Copy now</b> asks you to confirm, then adds the destination to the groups.</li>
         </ol>
-        <p>Writing uses <b>your own admin account on your YubiKey</b>: insert the key and pick the account from the box (it lists only certificates on the inserted key). A separate window opens and asks for the PIN <b>once</b>, with hidden typing; the app never sees the PIN. A wrong PIN stops the run at once (no retries, to protect the key from locking). Reading works on a PC that is not joined to AD, as long as you are on the corporate network or VPN. Each copy is written to the change log. Removing groups is not supported.</p>`
+        <p>Writing uses <b>your own admin account on your YubiKey</b>: insert the key and click your account in the box (the accounts on the inserted key are found automatically; you can also type one). A separate window opens and asks for the PIN <b>once</b>, with hidden typing; the app never sees the PIN. A wrong PIN stops the run at once (no retries, to protect the key from locking). Reading works on a PC that is not joined to AD, as long as you are on the corporate network or VPN. Each copy is written to the change log. Removing groups is not supported.</p>`
     },
     "bgt-missing": {
       title: "How Missing Groups works",
@@ -275,6 +275,7 @@ const Help = {
         <p>Missing Groups compares a person (or a whole department) with its <b>group baseline</b>: the groups most people in that department hold. Anything the baseline expects but the person lacks is listed as <b>missing</b>.</p>
         <ul>
           <li><b>By teammate</b>: start typing a name, click the match. You see what they are missing and what they have.</li>
+          <li><b>Add to AD</b> (by teammate): tick the missing groups you want (none are ticked for you), choose your YubiKey account, then <b>Preview</b> or <b>Add</b>. A window asks for the PIN once. Groups are matched in on-premises AD by exact name; any with no match (for example cloud-only groups) are skipped and listed. Each add is written to the change log.</li>
           <li><b>By department</b>: pick a department that has a baseline and click <b>Check</b> to see everyone in it who is missing something.</li>
         </ul>
         <p>It only works for departments that have a saved baseline. Build one in <a onclick="Settings.open('perms')">Settings → Group baselines</a> (or use the <b>Analyze</b> button offered when one is missing). Only people in the current division's Entra company are searched, because department names are shared between divisions.</p>`

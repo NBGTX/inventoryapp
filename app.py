@@ -1880,33 +1880,76 @@ class Api:
                     return {"ok": False, "error": r["__error__"]}
             plan = adperms.plan_copy(s["groups"], d["groups"], group_dns)
             out = {"ok": True, "committed": False, "would_add": [g["name"] for g in plan["add"]], "skipped": plan["skipped"]}
-            if not commit or not plan["add"]:
-                return out
-            if self._client().data_mode == "local":
-                return {"ok": False, "error": "Local data mode: this writes to production AD, so it is disabled. Switch to Live."}
-            w = adperms.write_groups(dst_dn, [g["dn"] for g in plan["add"]], domain, (account or "").strip())
-            if "__error__" in w:
-                return {"ok": False, "error": w["__error__"]}
-            names = {g["dn"]: g["name"] for g in plan["add"]}
-            import time
-            written = [x for x in w["done"] if x in names]
-            have = None
-            for attempt in range(3):                       # another domain controller may answer before the write has replicated
-                after = adperms.user_groups(dst_dn, w.get("dc") or domain)      # ask the controller that took the write first
-                have = {g["dn"].lower() for g in after.get("groups", [])} if "__error__" not in after else None
-                if have is None or all(x.lower() in have for x in written):
-                    break
-                time.sleep(2)
-            added = [names[x] for x in written]            # the directory accepted these writes
-            failed = [{"name": names.get(f.get("dn"), f.get("dn")), "error": f.get("error", "")} for f in w["failed"]]
-            unverified = [names[x] for x in written if have is not None and x.lower() not in have]
-            try:
-                self._hubc()._change("AD copy permissions", f"{self._actor() or 'NBG Hub'} added {dst_dn.split(',')[0][3:]} to {len(added)} group(s) "
-                                     f"copied from {src_dn.split(',')[0][3:]} as {w.get('who') or 'admin account'} on {w.get('dc') or 'a domain controller'}: {', '.join(added)[:300]}")
-            except Exception:
-                pass
-            out.update({"committed": True, "added": added, "failed": failed, "unverified": unverified, "who": w.get("who", ""), "dc": w.get("dc", "")})
+            return self._ad_apply(out, plan["add"], dst_dn, domain, account, commit,
+                                  f"copied from {src_dn.split(',')[0][3:]}")
+        except Exception as e:
+            return self._fail(e)
+
+    def _ad_apply(self, out: dict, add: list, dst_dn: str, domain: str, account: str, commit: bool, how: str) -> dict:
+        """Shared tail of every AD group add: dry run unless commit, then write with the YubiKey account, verify, audit."""
+        import adperms
+        if not commit or not add:
             return out
+        if self._client().data_mode == "local":
+            return {"ok": False, "error": "Local data mode: this writes to production AD, so it is disabled. Switch to Live."}
+        w = adperms.write_groups(dst_dn, [g["dn"] for g in add], domain, (account or "").strip())
+        if "__error__" in w:
+            return {"ok": False, "error": w["__error__"]}
+        names = {g["dn"]: g["name"] for g in add}
+        import time
+        written = [x for x in w["done"] if x in names]
+        have = None
+        for attempt in range(3):                       # another domain controller may answer before the write has replicated
+            after = adperms.user_groups(dst_dn, w.get("dc") or domain)      # ask the controller that took the write first
+            have = {g["dn"].lower() for g in after.get("groups", [])} if "__error__" not in after else None
+            if have is None or all(x.lower() in have for x in written):
+                break
+            time.sleep(2)
+        added = [names[x] for x in written]            # the directory accepted these writes
+        failed = [{"name": names.get(f.get("dn"), f.get("dn")), "error": f.get("error", "")} for f in w["failed"]]
+        unverified = [names[x] for x in written if have is not None and x.lower() not in have]
+        try:
+            self._hubc()._change("AD add groups", f"{self._actor() or 'NBG Hub'} added {dst_dn.split(',')[0][3:]} to {len(added)} group(s) "
+                                 f"{how} as {w.get('who') or 'admin account'} on {w.get('dc') or 'a domain controller'}: {', '.join(added)[:300]}")
+        except Exception:
+            pass
+        out.update({"committed": True, "added": added, "failed": failed, "unverified": unverified, "who": w.get("who", ""), "dc": w.get("dc", "")})
+        return out
+
+    def ad_add_missing(self, upn: str, group_names, account: str = "", commit: bool = False) -> dict:
+        """Missing Groups -> AD: add one person (by sign-in name) to the chosen groups, looked up in AD by exact name."""
+        try:
+            domain = self._ad_perm_gate()
+            import adperms
+            names = [n for n in dict.fromkeys(group_names or []) if (n or "").strip()]
+            if not names:
+                return {"ok": False, "error": "Select at least one group."}
+            if len(names) > adperms.MAX_COPY:
+                return {"ok": False, "error": f"At most {adperms.MAX_COPY} groups at a time."}
+            u = adperms.find_user_by_upn(upn, domain)
+            if "__error__" in u:
+                return {"ok": False, "error": u["__error__"]}
+            if not u.get("dn"):
+                return {"ok": False, "error": f"No single on-premises AD account matches {upn}."}
+            found = adperms.find_groups_by_name(names, domain)
+            if "__error__" in found:
+                return {"ok": False, "error": found["__error__"]}
+            cur = adperms.user_groups(u["dn"], domain)
+            if "__error__" in cur:
+                return {"ok": False, "error": cur["__error__"]}
+            have = {g["dn"].lower() for g in cur["groups"]}
+            add, skipped = [], []
+            for n in names:
+                g = found.get(n.lower()) or {}
+                if not g.get("dn"):
+                    skipped.append({"name": n, "dn": "", "why": "more than one AD group has this name" if g.get("n", 0) > 1 else "no AD group with this name (cloud-only?)"})
+                elif g["dn"].lower() in have:
+                    skipped.append({"name": n, "dn": g["dn"], "why": "already a member"})
+                else:
+                    add.append({"dn": g["dn"], "name": n})
+            out = {"ok": True, "committed": False, "would_add": [g["name"] for g in add], "skipped": skipped,
+                   "user": {"dn": u["dn"], "name": u.get("name", ""), "sam": u.get("sam", "")}}
+            return self._ad_apply(out, add, u["dn"], domain, account, commit, "from the department baseline (Missing Groups)")
         except Exception as e:
             return self._fail(e)
 

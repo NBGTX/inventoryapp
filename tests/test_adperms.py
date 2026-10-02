@@ -104,6 +104,27 @@ class ApiFlow(unittest.TestCase):
         r = self.api.ad_perm_copy(self.src_dn, self.dst_dn, [G("A")["dn"]], "", True)
         self.assertEqual(r["unverified"], ["A"])
 
+    def test_add_missing_groups_by_name(self):
+        def fg(names, domain):
+            return {n.lower(): ({"name": n, "dn": f"CN={n},OU=G,DC=bg", "n": 1} if n != "CloudOnly" else {"name": n, "dn": "", "n": 0}) for n in names}
+        o = (adperms.find_user_by_upn, adperms.find_groups_by_name)
+        adperms.find_user_by_upn = lambda upn, domain: {"dn": self.dst_dn, "name": "Dst", "sam": "dst"}
+        adperms.find_groups_by_name = fg
+        try:
+            r = self.api.ad_add_missing("dst@nucor.com", ["A", "B", "CloudOnly"], "adm.x.pa@nucorsteel.local", False)
+            self.assertTrue(r["ok"], r)
+            self.assertEqual(r["would_add"], ["A"])                                          # B: already a member, CloudOnly: no AD group
+            self.assertEqual(sorted(x["why"] for x in r["skipped"]), ["already a member", "no AD group with this name (cloud-only?)"])
+            self.assertEqual(self.writes, [])
+            r = self.api.ad_add_missing("dst@nucor.com", ["A"], "adm.x.pa@nucorsteel.local", True)
+            self.assertEqual((r["ok"], r["added"]), (True, ["A"]))
+            self.assertEqual(self.writes[0][0], self.dst_dn)
+            self.assertFalse(self.api.ad_add_missing("dst@nucor.com", [], "", True)["ok"])
+            adperms.find_user_by_upn = lambda upn, domain: {}
+            self.assertFalse(self.api.ad_add_missing("nobody@nucor.com", ["A"], "", False)["ok"])
+        finally:
+            adperms.find_user_by_upn, adperms.find_groups_by_name = o
+
     def test_needs_admin_and_a_selection(self):
         self.assertFalse(self.api.ad_perm_copy(self.src_dn, self.dst_dn, [], "", True)["ok"])
         self.gc.account_upn = "tech@nucor.com"
