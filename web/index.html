@@ -209,8 +209,13 @@
         <div class="actions">
           <button class="ghost" id="logBtn" onclick="LogView.open()">☰ Log</button>
           <button class="ghost" id="syncBtn" onclick="App.runSync()">↻ Sync now</button>
-          <button class="ghost" id="mfaBtn" onclick="App.populateMfa()" title="Fill the MFA column from each user's registered authentication methods (needs UserAuthenticationMethod.Read.All + your auth-admin role)">🔒 Populate MFA</button>
-          <button class="ghost" id="masterSyncBtn" onclick="App.masterSync()" title="Force-refresh every device's primary user, specs, MFA, last check-in and OS from Intune/Entra (overwrites stored values; can take a few minutes)">⟳ Master sync</button>
+          <div class="menu-wrap">
+            <button class="ghost" id="moreBtn" onclick="App.toggleMore(event)" title="Less-used tools">⋯ More</button>
+            <div class="menu hidden" id="devMore">
+              <button id="mfaBtn" onclick="App.populateMfa()" title="Fill the MFA column from each user's registered authentication methods (needs UserAuthenticationMethod.Read.All + your auth-admin role)">🔒 Populate MFA</button>
+              <button id="masterSyncBtn" onclick="App.masterSync()" title="Force-refresh every device's primary user, specs, MFA, last check-in and OS from Intune/Entra (overwrites stored values; can take a few minutes)">⟳ Master sync</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -229,7 +234,15 @@
           <div class="tab" data-tab="boneyard" onclick="App.showTab('boneyard')">Boneyard (<span id="tBone">0</span>)</div>
         </div>
         <div class="tools">
-          <input id="search" placeholder="Search anything — serial, hostname, user, model, OS (e.g. Windows 11), site…" oninput="App.render()">
+          <input id="search" placeholder="Search serial, hostname, user, model, OS, site…" oninput="App.render()">
+          <select id="fSite" class="filt" onchange="App.render()"><option value="">All sites</option></select>
+          <select id="fWarr" class="filt" onchange="App.render()">
+            <option value="">All warranties</option>
+            <option value="expired">Warranty expired</option>
+            <option value="soon">Expires within 90 days</option>
+            <option value="active">In warranty</option>
+            <option value="unknown">No warranty date</option>
+          </select>
           <select id="fModel" class="filt hidden" onchange="App.render()"><option value="">All models</option></select>
           <select id="fCpu" class="filt hidden" onchange="App.render()"><option value="">All CPUs</option></select>
           <select id="fRam" class="filt hidden" onchange="App.render()"><option value="">All RAM</option></select>
@@ -245,7 +258,8 @@
             <option value="Yes">MFA: registered</option>
             <option value="unknown">MFA: unknown</option>
           </select>
-          <button id="fClear" class="rowbtn hidden" onclick="App.clearFilters()">Clear</button>
+          <button id="fClear" class="rowbtn hidden" onclick="App.clearFilters()">Clear filters</button>
+          <span class="dev-tools-r"><span class="muted" id="devCount"></span><button class="rowbtn" onclick="App.copyList()" title="Copy the rows shown, ready to paste into Excel">Copy list</button></span>
         </div>
         <div id="tableWrap"><div class="empty">Loading…</div></div>
       </div>

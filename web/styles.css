@@ -964,3 +964,18 @@ a.sw-user{color:var(--amber);cursor:pointer;}a.sw-user:hover{text-decoration:und
 .modal select,.modal-body select{background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;color-scheme:dark;cursor:pointer;}
 .modal select:focus{outline:none;border-color:var(--amber);}
 .sw-tools select{color-scheme:dark;}
+
+/* ---- Devices page: More menu, row hover, warranty colours ---- */
+.menu-wrap{position:relative;display:inline-block;}
+.menu{position:absolute;right:0;top:calc(100% + 6px);z-index:30;min-width:240px;background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.4);padding:6px;display:flex;flex-direction:column;}
+.menu.hidden{display:none;}
+.menu button{background:transparent;border:none;color:var(--text);text-align:left;padding:9px 12px;border-radius:8px;font-size:13px;cursor:pointer;}
+.menu button:hover:not(:disabled){background:rgba(255,255,255,.07);}
+.menu button:disabled{opacity:.5;cursor:default;}
+#search{max-width:520px;min-width:260px;}
+.dev-tools-r{margin-left:auto;display:flex;gap:12px;align-items:center;}
+#tableWrap tbody tr:has(button[data-action="expand"]){cursor:pointer;}
+#tableWrap tbody tr:has(button[data-action="expand"]):hover td{background:rgba(255,255,255,.035);}
+#tableWrap .detailcell{cursor:default;}
+.w-exp{color:var(--red);font-weight:600;}.w-soon{color:var(--amber);font-weight:600;}
+td.cell-user a.sw-user{color:inherit;border-bottom:1px dotted var(--muted);}td.cell-user a.sw-user:hover{color:var(--amber);border-bottom-color:var(--amber);}

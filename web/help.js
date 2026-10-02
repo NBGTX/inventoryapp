@@ -127,8 +127,12 @@ const Help = {
         <h5>Finding things</h5>
         <ul>
           <li>Type in the search box to filter the current tab. It matches serial, hostname, user, model, OS and site.</li>
-          <li>Extra filters (model, CPU, RAM, last check-in, MFA) appear once there is data to filter. <b>Clear</b> removes them all.</li>
-          <li>Click a column heading to sort. Click the <b>+</b> at the start of a row to see its full details.</li>
+          <li><b>Site</b> and <b>warranty</b> filters work on every tab. On <b>In use</b> there are also model, CPU, RAM, last check-in and MFA filters. <b>Clear filters</b> removes them all. The line at the right shows how many rows match.</li>
+          <li>Click a column heading to sort. Click anywhere on a row (or its <b>+</b>) to see its full details.</li>
+          <li><b>Copy list</b> copies the rows you see (after search and filters) so you can paste them into Excel or a message.</li>
+          <li>Warranty dates show <span style="color:var(--red)">red</span> when expired and <span style="color:var(--amber)">amber</span> when they end within 90 days.</li>
+          <li>On <b>In use</b>, click a user's name to see everything installed for that person on the Software page.</li>
+          <li><b>More</b> holds <b>Master sync</b> and <b>Populate MFA</b>, which are heavier and rarely needed.</li>
         </ul>
         <h5>Adding machines</h5>
         <p>Click <b>Add new machine</b>: choose the maker, paste or scan up to 10 serial numbers, then review what the maker's service lookup found and click <b>Add</b>. See the notes inside that window.</p>

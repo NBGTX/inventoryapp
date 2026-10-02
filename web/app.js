@@ -585,8 +585,15 @@ const App = {
     Settings.refreshAccess();
     await Tz.load();
     document.getElementById("tableWrap").addEventListener("click", e => {
+      const ua = e.target.closest("a.sw-user");
+      if (ua) { App.userSoftware(ua.dataset.user); return; }
       const b = e.target.closest("button[data-action]");
-      if (!b) return;
+      if (!b) {                                   // a click on the row itself opens / closes its details
+        if (e.target.closest("button,select,a,input,label,textarea,.detailcell")) return;
+        const eb = e.target.closest("tr") && e.target.closest("tr").querySelector('button[data-action="expand"]');
+        if (eb) App.toggleExpand(eb.dataset.serial);
+        return;
+      }
       if (b.dataset.action === "remove") DeleteView.open(b.dataset.serial);
       else if (b.dataset.action === "expand") App.toggleExpand(b.dataset.serial);
       else if (b.dataset.action === "upgrade") Upgrade.addPrompt(b.dataset.serial);
@@ -839,10 +846,48 @@ const App = {
     fill("fModel", "All models", this.state.use.map(r => r.model));
     fill("fCpu", "All CPUs", this.state.use.map(r => r.cpu));
     fill("fRam", "All RAM", this.state.use.map(r => r.ram));
+    fill("fSite", "All sites", [].concat(this.state.siteTags || [], this.state.stock.map(r => r.site_tag), this.state.use.map(r => r.site_tag), (this.state.boneyard || []).map(r => r.site_tag)));
   },
   clearFilters() {
-    ["fModel", "fCpu", "fRam", "fCheckin", "fMfa"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+    ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fSite", "fWarr"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+    const s = document.getElementById("search"); if (s) s.value = "";
     this.render();
+  },
+  /* the "More" menu keeps the heavy, rarely used tools out of the way */
+  toggleMore(ev) {
+    if (ev) ev.stopPropagation();
+    const m = document.getElementById("devMore"); if (!m) return;
+    m.classList.toggle("hidden");
+    if (!this._moreBound) { this._moreBound = true; document.addEventListener("click", () => this.closeMore()); }
+  },
+  closeMore() { const m = document.getElementById("devMore"); if (m) m.classList.add("hidden"); },
+  /* from a device row: everything the assigned person has installed (Software page, people search) */
+  userSoftware(user) {
+    if (!user) return;
+    const el = document.getElementById("swSearch"); if (el) el.value = user;
+    Software._mode = "people";
+    Nav.go("software");
+  },
+  _count(rows, total) {
+    this._shown = rows;
+    const el = document.getElementById("devCount");
+    if (el) el.textContent = rows.length === total ? `${total} ${total === 1 ? "device" : "devices"}` : `Showing ${rows.length} of ${total}`;
+    const q = (document.getElementById("search") || {}).value;
+    const any = !!(q && q.trim()) || ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fSite", "fWarr"].some(id => { const e = document.getElementById(id); return e && e.value && !e.classList.contains("hidden"); });
+    const c = document.getElementById("fClear"); if (c) c.classList.toggle("hidden", !any);
+  },
+  copyList() {
+    const rows = this._shown || [], tab = this.state.tab, day = v => (v || "").slice(0, 10);
+    const cols = {
+      stock: [["Serial", r => r.serial], ["Manufacturer", r => r.manufacturer], ["Model", r => r.model], ["CPU", r => r.cpu], ["RAM", r => r.ram], ["Storage", r => r.storage], ["Site", r => r.site_tag], ["Warranty", r => day(r.warranty)], ["Added", r => day(r.date_added)]],
+      use: [["Serial", r => r.serial], ["Device", r => r.device_name], ["User", r => r.user], ["Manufacturer", r => r.manufacturer], ["Model", r => r.model], ["CPU", r => r.cpu], ["RAM", r => r.ram], ["Storage", r => r.storage], ["MFA", r => r.mfa], ["Site", r => r.site_tag], ["Warranty", r => day(r.warranty)], ["Last check-in", r => day(r.last_checkin)], ["OS", r => winOsLabel(r.os_version)]],
+      boneyard: [["Serial", r => r.serial], ["Former hostname", r => r.device_name], ["Model", r => r.model], ["Last user", r => r.user], ["Retired", r => day(r.moved_at)], ["Reason", r => r.reason]],
+    }[tab] || [];
+    const cell = v => String(v == null ? "" : v).replace(/[\t\r\n]+/g, " ");
+    const txt = [cols.map(c => c[0]).join("\t")].concat(rows.map(r => cols.map(c => cell(c[1](r))).join("\t"))).join("\n");
+    const done = () => this.toast(`Copied ${rows.length} row${rows.length === 1 ? "" : "s"}. Paste into Excel or a message.`);
+    const fallback = () => { const t = document.createElement("textarea"); t.value = txt; document.body.appendChild(t); t.select(); try { document.execCommand("copy"); done(); } catch (e) { this.toast("Could not copy.", true); } t.remove(); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, fallback); else fallback();
   },
 
   sortBy(key) {
@@ -911,13 +956,25 @@ const App = {
   render() {
     const q = (document.getElementById("search").value || "").trim().toLowerCase();
     const isUse = this.state.tab === "use";
-    ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fClear"].forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle("hidden", !isUse); });
+    ["fModel", "fCpu", "fRam", "fCheckin", "fMfa"].forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle("hidden", !isUse); });
     const val = id => { const el = document.getElementById(id); return el ? (el.value || "") : ""; };
     const fm = isUse ? val("fModel") : "";
     const fc = isUse ? val("fCpu") : "";
     const fr = isUse ? val("fRam") : "";
     const fk = isUse ? val("fCheckin") : "";
     const fmfa = isUse ? val("fMfa") : "";
+    const fsite = val("fSite"), fwarr = val("fWarr");
+    const warrState = v => {                     // expired / soon (90 days) / active / unknown
+      const s = (v || "").slice(0, 10); if (!s) return "unknown";
+      const t = Date.parse(s); if (isNaN(t)) return "unknown";
+      const d = Math.floor((t - Date.now()) / 86400000);
+      return d < 0 ? "expired" : d <= 90 ? "soon" : "active";
+    };
+    const warrCell = v => {
+      const st = warrState(v), t = (v || "").slice(0, 10);
+      if (!t) return '<span class="muted">—</span>';
+      return st === "expired" ? `<span class="w-exp" title="Warranty ended">${esc(t)}</span>` : st === "soon" ? `<span class="w-soon" title="Warranty ends within 90 days">${esc(t)}</span>` : esc(t);
+    };
     const daysSince = v => {
       const s = (v || "").slice(0, 10); if (!s) return null;
       const t = Date.parse(s); if (isNaN(t)) return null;
@@ -953,7 +1010,8 @@ const App = {
       r.last_checkin, r.os_install, r.date_added,
     ].map(v => (v == null ? "" : String(v)).toLowerCase()).join(" ");
     const match = r => (!q || hay(r).includes(q))
-      && (!fm || (r.model || "") === fm) && (!fc || (r.cpu || "") === fc) && (!fr || (r.ram || "") === fr) && checkinOk(r) && mfaOk(r);
+      && (!fm || (r.model || "") === fm) && (!fc || (r.cpu || "") === fc) && (!fr || (r.ram || "") === fr) && checkinOk(r) && mfaOk(r)
+      && (!fsite || (r.site_tag || "") === fsite) && (!fwarr || warrState(r.warranty) === fwarr);
     const wrap = document.getElementById("tableWrap");
     const dcol = "white-space:nowrap";  // keep dates on one line
     const day = v => (v || "").slice(0, 10);  // ISO datetime -> YYYY-MM-DD
@@ -980,14 +1038,14 @@ const App = {
     };
 
     if (this.state.tab === "stock") {
-      const rows = sortRows(this.state.stock.filter(match));
+      const rows = sortRows(this.state.stock.filter(match)); this._count(rows, this.state.stock.length);
       if (!rows.length) return void (wrap.innerHTML = `<div class="empty">No machines in stock. Click “Add new machine”.</div>`);
       const exp = this.state.expanded;
       const detail = r => `<tr><td></td><td colspan="8" class="detailcell" style="padding:0 18px 14px;">
         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 24px;background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:14px 16px;">
           ${dl("Serial number", r.serial)}${dl("Manufacturer", r.manufacturer)}${dl("Model", r.model)}
           ${dl("CPU", r.cpu)}${dl("RAM", r.ram)}${dl("Storage", r.storage)}
-          ${dl("Warranty", r.warranty)}${dl("Date added", r.date_added)}
+          ${dl("Warranty", day(r.warranty))}${dl("Date added", day(r.date_added))}
           <div><span style="color:var(--muted);font-size:11px;display:block">Site assignment</span>
             <select onchange="App.setSite('${attr(r.serial)}', this.value)" style="background:var(--darker);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:13px;margin-top:2px;">${siteOpts(r)}</select></div>
         </div></td></tr>`;
@@ -1004,13 +1062,13 @@ const App = {
           <td><button class="rowbtn" data-action="expand" data-serial="${attr(r.serial)}" style="padding:2px 8px;line-height:1" title="Show all specs / assign site">${open ? "−" : "+"}</button></td>
           <td class="mono" title="${attr(r.serial)}">${esc(r.serial)}</td><td title="${attr(r.manufacturer)}">${esc(r.manufacturer)}</td><td title="${attr(r.model)}">${esc(r.model)}</td>
           <td title="${attr([r.cpu, r.ram, r.storage].filter(Boolean).join(" · "))}">${esc([r.cpu, r.ram, r.storage].filter(Boolean).join(" · "))}</td>
-          <td>${esc(r.site_tag)}</td><td>${esc(r.warranty)}</td><td>${esc(r.date_added)}</td>
+          <td>${esc(r.site_tag)}</td><td>${warrCell(r.warranty)}</td><td>${esc(day(r.date_added))}</td>
           <td style="text-align:right;white-space:nowrap">${act("✎", "editstock", r.serial, false, "Edit device")} ${act("✕", "remove", r.serial, true, "Remove")}</td></tr>` +
           (open ? detail(r) : "");
         }).join("") +
         `</tbody></table>`;
     } else if (this.state.tab === "boneyard") {
-      const rows = sortRows((this.state.boneyard || []).filter(match));
+      const rows = sortRows((this.state.boneyard || []).filter(match)); this._count(rows, (this.state.boneyard || []).length);
       if (!rows.length) return void (wrap.innerHTML = `<div class="empty">Boneyard is empty. Devices gone from AD, Entra &amp; Intune are auto-retired here on sync.</div>`);
       const exp = this.state.expanded;
       const detail = r => `<tr><td></td><td colspan="6" class="detailcell" style="padding:0 18px 14px;">
@@ -1038,7 +1096,7 @@ const App = {
         }).join("") +
         `</tbody></table>`;
     } else {
-      const rows = sortRows(this.state.use.filter(match));
+      const rows = sortRows(this.state.use.filter(match)); this._count(rows, this.state.use.length);
       if (!rows.length) return void (wrap.innerHTML = `<div class="empty">No machines in use.</div>`);
       const exp = this.state.expanded;
       const mfaCell = v => v === "Yes"
@@ -1071,7 +1129,7 @@ const App = {
           return `<tr>
             <td><button class="rowbtn" data-action="expand" data-serial="${attr(r.serial)}" style="padding:2px 8px;line-height:1" title="Show all specs">${open ? "−" : "+"}</button></td>
             <td class="mono" title="${attr(r.serial)}">${esc(r.serial)}</td><td class="cell-mfr" title="${attr(r.manufacturer)}">${esc(r.manufacturer)}</td><td title="${attr(r.model)}">${esc(r.model)}</td>
-            <td class="cell-user" title="${attr(r.user)}">${esc(r.user)}</td><td>${mfaCell(r.mfa)}</td><td>${esc(r.site_tag)}</td><td>${esc(r.warranty)}</td>
+            <td class="cell-user">${r.user ? `<a class="sw-user" data-user="${attr(r.user)}" title="See everything ${attr(r.user)} has installed">${esc(r.user)}</a>` : "—"}</td><td>${mfaCell(r.mfa)}</td><td>${esc(r.site_tag)}</td><td>${warrCell(r.warranty)}</td>
             <td>${esc(day(r.last_checkin))}${checkinBadge(r.last_checkin)}</td>
             <td style="text-align:right;white-space:nowrap">${act("✎", "editspecs", r.serial, false, "Edit CPU, RAM, storage and warranty")} ${act("⬆", "upgrade", r.serial, false, "Add to upgrade list")} ${act("✕", "remove", r.serial, true, "Remove")}</td></tr>` +
             (open ? detail(r) : "");
