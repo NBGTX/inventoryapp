@@ -92,3 +92,13 @@ DEFAULT_COLS = {"title": "Title", "division": "Division", "manufacturer": "Manuf
                 "sharepoint host": "SharePointHost", "site path": "SitePath", "ad domain": "AdDomain",
                 "sql server": "SqlServer", "sites json": "SitesJson", "access json": "AccessJson", "enabled": "Enabled",
                 "value": "Value", "secret": "Secret", "description": "Description"}
+
+
+# Admin actions are recorded in the shared change feed. Most tests inspect the exact writes an action makes, so the extra
+# audit write is switched off here; tests/test_activity.py turns it back on (Api._audit_real).
+try:
+    import app as _app
+    _app.Api._audit_real = _app.Api._audit
+    _app.Api._audit = lambda self, *a, **k: None
+except Exception:
+    pass

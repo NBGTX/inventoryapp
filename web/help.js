@@ -97,6 +97,17 @@ const Help = {
         <p>These edits only change <b>this division's</b> checklists. A super admin editing the template (you will see a banner) changes what <i>new</i> divisions start with.</p>`
     },
     /* ------------------------------------------------------------------ Issues */
+    activity: {
+      title: "How the Activity page works",
+      html: `
+        <p>One list of what people and syncs did, newest first. It is for division admins and super admins.</p>
+        <ul>
+          <li>It merges three records: <b>Devices</b> (adds, removals, deploys, syncs, specs), <b>Division</b> changes (upgrade list, hot spares, checklists, division settings) and <b>Platform</b> changes (NBT Sites, roles, super admins, master settings, issues, sign-ins). The <b>Where</b> column says which.</li>
+          <li>Pick a period (Today, 7 days, 30 days, All), then narrow by <b>area</b> or by <b>who</b> (both lists are searchable), or search for a name, serial number or word. <b>Copy list</b> copies what you see for Excel.</li>
+          <li>Secret values are never recorded: a changed master setting shows only its name.</li>
+          <li>A change appears here from the version that added it. Older changes that were never recorded cannot be shown.</li>
+        </ul>`
+    },
     issues: {
       title: "How to use Issues",
       html: `

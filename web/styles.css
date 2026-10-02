@@ -1064,3 +1064,8 @@ tr.sw-ver td{background:rgba(255,255,255,.025);font-size:12.5px;}
 td.sw-vname{padding-left:34px!important;color:var(--muted);}
 .drill-tools select.filt{max-width:200px;}
 .drill-tools .fsel-in{width:170px;}
+
+/* ---- Activity ---- */
+#appview-activity .iss-seg{margin:0;}
+.md-tag.act-access{border-color:var(--red);color:var(--red);}.md-tag.act-settings{border-color:var(--amber);color:var(--amber);}
+.md-tag.act-sync{color:var(--light);}.md-tag.act-devices{border-color:#3ecf8e;color:#3ecf8e;}

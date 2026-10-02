@@ -1757,6 +1757,76 @@ const LogView = {
    ========================================================================== */
 
 /* ---- left-nav ------------------------------------------------------------ */
+/* ---- Activity: one feed of everything recorded (devices, syncs, settings, access) ---- */
+const Activity = {
+  all: [], days: 7, f: { q: "", area: "", who: "" }, shown: 200, _t: null, meta: {},
+  async load() {
+    const host = document.getElementById("actHost");
+    if (host && !this.all.length) host.innerHTML = `<div class="empty">Loading…</div>`;
+    const r = await Backend.call("activity_get", this.days);
+    if (!r || !r.ok) { this.all = []; if (host) host.innerHTML = `<div class="empty">${esc((r && r.error) || "Could not load the activity log.")}</div>`; return; }
+    this.all = r.entries || []; this.meta = { total: r.total || 0, truncated: !!r.truncated };
+    this.shown = 200;
+    this._fill();
+    this.render();
+  },
+  async refresh(btn) { await Ui.refreshing(btn, () => this.load(), "Activity"); },
+  setDays(d) { this.days = d; document.querySelectorAll("#actRange label").forEach(l => l.classList.toggle("on", +l.querySelector("input").value === d)); this.load(); },
+  typed(v) { this.f.q = v; clearTimeout(this._t); this._t = setTimeout(() => { this.shown = 200; this.render(); }, 150); },
+  setF(k, v) { this.f[k] = v; this.shown = 200; this.render(); },
+  clearF() { this.f = { q: "", area: "", who: "" }; ["actQ"].forEach(id => { const e = document.getElementById(id); if (e) e.value = ""; }); ["actArea", "actWho"].forEach(id => { const e = document.getElementById(id); if (e) e.value = ""; }); Filt.syncAll(); this.shown = 200; this.render(); },
+  _fill() {                                           // the Area and Who lists come from what is in the feed
+    const fill = (id, label, vals) => {
+      const sel = document.getElementById(id); if (!sel) return; const cur = sel.value;
+      const opts = [...new Set(vals.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+      sel.innerHTML = `<option value="">${label}</option>` + opts.map(v => `<option>${esc(v)}</option>`).join("");
+      if (cur && opts.includes(cur)) sel.value = cur;
+    };
+    fill("actArea", "All areas", this.all.map(e => e.area));
+    fill("actWho", "Everyone", this.all.map(e => e.who));
+    Filt.enhanceAll(); Filt.syncAll();
+  },
+  rows() {
+    const q = this.f.q.trim().toLowerCase(), f = this.f;
+    return this.all.filter(e => (!f.area || e.area === f.area) && (!f.who || e.who === f.who)
+      && (!q || [e.who, e.action, e.target, e.detail, e.area, e.model, e.machine].some(v => (v || "").toLowerCase().includes(q))));
+  },
+  render() {
+    const host = document.getElementById("actHost"); if (!host) return;
+    const rows = this.rows(), all = this.all;
+    const people = new Set(all.map(e => e.who).filter(Boolean)).size;
+    const byArea = {}; all.forEach(e => { byArea[e.area] = (byArea[e.area] || 0) + 1; });
+    const top = Object.entries(byArea).sort((a, b) => b[1] - a[1])[0];
+    const card = (n, l) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`;
+    const st = document.getElementById("actStats");
+    if (st) st.innerHTML = card(all.length.toLocaleString(), "Events in this period") + card(people, "People or syncs involved") +
+      card(top ? `<span style="font-size:22px">${esc(top[0])}</span>` : "—", "Busiest area") + card(all.length ? `<span style="font-size:20px">${esc(Tz.dt(all[0].when))}</span>` : "—", "Latest event");
+    const cnt = document.getElementById("actCount");
+    if (cnt) cnt.textContent = rows.length === all.length ? `${all.length} events` : `Showing ${rows.length} of ${all.length}`;
+    const any = !!(this.f.q.trim() || this.f.area || this.f.who);
+    const clr = document.getElementById("actClear"); if (clr) clr.classList.toggle("hidden", !any);
+    if (!rows.length) { host.innerHTML = `<div class="empty">${all.length ? "Nothing matches these filters." : "Nothing was recorded in this period."}</div>`; return; }
+    const tag = a => `<span class="md-tag act-${esc(String(a).toLowerCase().replace(/[^a-z]+/g, ""))}">${esc(a)}</span>`;
+    const shown = rows.slice(0, this.shown);
+    host.innerHTML = `<table class="fit"><colgroup><col style="width:150px"><col style="width:110px"><col style="width:22%"><col><col style="width:20%"><col style="width:84px"></colgroup>
+      <thead><tr><th>When</th><th>Area</th><th>What</th><th>Details</th><th>Who</th><th>Where</th></tr></thead><tbody>` +
+      shown.map(e => `<tr><td style="white-space:nowrap">${esc(Tz.dt(e.when))}</td><td>${tag(e.area)}</td>
+        <td><b>${esc(e.action)}</b>${e.target ? ` <span class="mono muted">${esc(e.target)}</span>` : ""}${e.model ? `<div class="muted" style="font-size:12px">${esc(e.model)}</div>` : ""}</td>
+        <td>${esc(e.detail)}</td><td>${esc(e.who || "—")}${e.machine ? `<div class="muted" style="font-size:12px">${esc(e.machine)}</div>` : ""}</td><td class="muted">${esc(e.scope)}</td></tr>`).join("") +
+      `</tbody></table>` +
+      (rows.length > shown.length ? `<div style="padding:12px 18px"><button class="ghost" onclick="Activity.more()">Show ${Math.min(200, rows.length - shown.length)} more (${rows.length - shown.length} left)</button></div>` : "") +
+      (this.meta.truncated ? `<div class="sub-note" style="margin:8px 18px 14px">Only the newest events are loaded. Choose a shorter period to see older detail.</div>` : "");
+  },
+  more() { this.shown += 200; this.render(); },
+  copy() {
+    const rows = this.rows(), cell = v => String(v == null ? "" : v).replace(/[\t\r\n]+/g, " ");
+    const txt = ["When\tArea\tWhat\tTarget\tDetails\tWho\tWhere"].concat(rows.map(e => [Tz.dt(e.when), e.area, e.action, e.target, e.detail, e.who, e.scope].map(cell).join("\t"))).join("\n");
+    const done = () => App.toast(`Copied ${rows.length} event${rows.length === 1 ? "" : "s"}.`);
+    const fb = () => { const t = document.createElement("textarea"); t.value = txt; document.body.appendChild(t); t.select(); try { document.execCommand("copy"); done(); } catch (e) { App.toast("Could not copy.", true); } t.remove(); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, fb); else fb();
+  },
+};
+
 /* ---- Teammates: one row per person with MFA (MFA is the person's, not the device's) ---- */
 const People = {
   doc: null, f: { q: "", mfa: "all" }, sort: { key: "user", dir: 1 }, sel: new Set(),
@@ -1985,6 +2055,7 @@ const Nav = {
     if (view === "bgtools") BGTools.load();
     if (view === "settings") Settings.load();
     if (view === "issues") { Issues.load(); Badges.seenIssues(); }
+    if (view === "activity") Activity.load();
     if (view === "dashboard") SyncLine.refresh();
   },
 };
@@ -6338,6 +6409,17 @@ Object.assign(Mock, {
     return { ok: true, data: this._mfaPeople };
   },
   async bulk_audit() { return { ok: true }; },
+  async activity_get(days) {
+    const t = Date.now(), iso = m => new Date(t - m * 60000).toISOString();
+    const all = [
+      { when: iso(5), area: "Devices", action: "Deployed", target: "PF3AB99KK", detail: "moved to In use", who: "Demo User", scope: "Devices", model: "ThinkPad T14" },
+      { when: iso(40), area: "Sync", action: "Sync", target: "", detail: "Intune: 3 added, 12 updated", who: "Demo User", scope: "Devices" },
+      { when: iso(180), area: "Upgrades", action: "Upgrade list", target: "", detail: "Bulk: 4 set to P5", who: "Demo User", scope: "Division", machine: "DEMO-PC" },
+      { when: iso(60 * 30), area: "Settings", action: "Master setting changed", target: "", detail: "notify_webhook_url (value not logged)", who: "Demo User", scope: "Platform" },
+      { when: iso(60 * 24 * 9), area: "Access", action: "Signed in", target: "", detail: "demo.user@nucor.com", who: "Demo User", scope: "Platform" },
+    ].filter(e => !days || (t - Date.parse(e.when)) <= days * 86400000);
+    return { ok: true, entries: all, total: all.length, truncated: false };
+  },
   _deviceDates: {},
   async device_dates_get() { return { ok: true, data: this._deviceDates }; },
   async device_dates_set(serials, deploy, mfg) {

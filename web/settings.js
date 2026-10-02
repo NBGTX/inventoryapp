@@ -185,6 +185,7 @@ const Settings = {
     this.su = !!(r && r.ok && r.super_admin);
     this.role = (ro && ro.ok && ro.role) || "user";
     this.allowed = (ro && ro.ok && ro.sections) || [];          // sections beyond General this role may use (Platform > Role access)
+    const nav = document.getElementById("navActivity"); if (nav) nav.classList.toggle("hidden", !(this.su || this.role === "super" || this.role === "admin"));   // the Activity page is for admins
   },
   can(min) { return (this.RANK[this.role] || 0) >= this.RANK[min]; },
   open(tab) { if (tab) this.tab = tab; Nav.go("settings"); },

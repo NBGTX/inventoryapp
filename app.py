@@ -1032,6 +1032,41 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    # ---- Activity: one place to see what people did ----
+    def _audit(self, target: str, detail: str, scope: str = "division") -> None:
+        """Record who did what in the shared change feed (best effort; never raises, never holds secrets)."""
+        try:
+            from hub import platform_hub_for
+            gc = self._client()
+            h = platform_hub_for(gc) if scope == "platform" else self._hubc()
+            h._change(target, detail, actor=self._actor() or None)
+        except Exception:
+            pass
+
+    def activity_get(self, days: int = 0) -> dict:
+        """Everything recorded in the last `days` days (0 = all): device events, division changes, platform changes. Admins only."""
+        try:
+            import activity
+            from hub import platform_hub_for
+            gc = self._client()
+            if gc.division_role() not in ("super", "admin"):
+                return {"ok": False, "error": "The activity log is for admins."}
+            try:
+                inv = gc.get_log(top=1500)
+            except Exception:
+                inv = []
+            try:
+                div = self._hubc().get_changes()
+            except Exception:
+                div = []
+            try:
+                plat = platform_hub_for(gc).get_changes()
+            except Exception:
+                plat = []
+            return {"ok": True, **activity.build(inv, div, plat, int(days or 0))}
+        except Exception as e:
+            return self._fail(e)
+
     # ---- deploy / manufacture dates: one small hub document per division, keyed by serial ----
     def device_dates_get(self) -> dict:
         try:
@@ -3023,6 +3058,52 @@ def _long_op(fn):
 
 for _n in ("run_sync", "enrich_inventory", "master_sync", "populate_mfa", "boneyard_sweep", "sync_all_divisions", "software_refresh", "mfa_people_refresh"):
     setattr(Api, _n, _long_op(getattr(Api, _n)))
+
+
+def _arg(a, k, i, name, default=None):
+    return a[i] if len(a) > i else k.get(name, default)
+
+
+# Admin and settings changes that were not recorded anywhere. Each entry: (what happened, "platform" | "division", detail text).
+# Details never include secret values: only names / counts.
+_AUDIT = {
+    "save_super_admins": ("Super admins changed", "platform", lambda a, k, r: f"{len(_arg(a, k, 0, 'admins') or [])} super admin(s) now"),
+    "save_division": ("Division saved", "platform", lambda a, k, r: str((_arg(a, k, 0, "division") or {}).get("id") or (_arg(a, k, 0, "division") or {}).get("name") or "")),
+    "set_master_setting": ("Master setting changed", "platform", lambda a, k, r: f"{_arg(a, k, 0, 'key')} (value not logged)"),
+    "save_issue_subscribers": ("Issue notification list changed", "platform", lambda a, k, r: f"{len(_arg(a, k, 0, 'subscribers') or [])} subscriber(s)"),
+    "save_search_scopes": ("People-search scopes changed", "platform", lambda a, k, r: ""),
+    "save_role_access": ("Role access changed", "platform", lambda a, k, r: ""),
+    "save_own_division": ("Division settings changed", "division", lambda a, k, r: "fields: " + ", ".join(sorted((_arg(a, k, 0, "data") or {}).keys()))),
+    "set_data_mode": ("Data mode changed", "platform", lambda a, k, r: f"to {_arg(a, k, 0, 'mode')}"),
+    "hub_save_template_config": ("Template checklists changed", "platform", lambda a, k, r: ""),
+    "hub_save_config": ("Checklists changed", "division", lambda a, k, r: ""),
+    "hub_save_departments": ("Model departments changed", "division", lambda a, k, r: ""),
+    "issue_create": ("Issue filed", "platform", lambda a, k, r: f"{_arg(a, k, 0, 'kind')}: {str(_arg(a, k, 1, 'title') or '')[:80]}"),
+    "issue_update": ("Issue changed", "platform", lambda a, k, r: f"{_arg(a, k, 0, 'issue_id')}: " + ", ".join(f"{x}={str(v)[:30]}" for x, v in (_arg(a, k, 1, 'fields') or {}).items() if x in ("status", "assignee", "type"))),
+    "issue_delete": ("Issue deleted", "platform", lambda a, k, r: str(_arg(a, k, 0, "issue_id"))),
+    "issues_import_legacy": ("Issues imported", "platform", lambda a, k, r: ""),
+    "pull_prod_snapshot": ("Snapshot copied to Local mode", "platform", lambda a, k, r: ""),
+    "sign_in": ("Signed in", "platform", lambda a, k, r: str(r.get("account") or "")),
+}
+
+
+def _audited(fn, target, scope, describe):
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(self, *a, **k):
+        res = fn(self, *a, **k)
+        try:
+            if isinstance(res, dict) and res.get("ok"):
+                self._audit(target, str(describe(a, k, res) or ""), scope)
+        except Exception:
+            pass
+        return res
+    return wrapper
+
+
+for _n, (_t, _s, _d) in _AUDIT.items():
+    setattr(Api, _n, _audited(getattr(Api, _n), _t, _s, _d))
 
 
 _BACK_JS = r"""

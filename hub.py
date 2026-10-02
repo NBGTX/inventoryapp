@@ -449,9 +449,9 @@ class Hub:
         except Exception:
             pass
 
-    def _change(self, target: str, detail: str) -> None:
-        """Write one shared program-change event (best-effort)."""
-        change = {"when": _now_iso(), "user": _user(), "machine": _machine(),
+    def _change(self, target: str, detail: str, actor: str | None = None) -> None:
+        """Write one shared program-change event (best-effort). `actor` = the signed-in person when known."""
+        change = {"when": _now_iso(), "user": actor or _user(), "machine": _machine(),
                   "action": "save", "target": target, "detail": detail}
         cn = f"{_stamp()}-{self._safe(_user())}-{uuid.uuid4().hex[:6]}.json"
         try:
