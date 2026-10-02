@@ -3402,7 +3402,7 @@ const Software = {
     // everything installed on those people/devices ("what does this person have?"). When both match, chips let you pick.
     const q = (document.getElementById("swSearch").value || "").trim();
     const ql = q.toLowerCase();
-    const mandOnly = document.getElementById("swMandOnly").checked;
+    const mandOnly = (document.querySelector("input[name=swMand]:checked") || {}).value === "mand";
     const hitsApp = a => (a.name || "").toLowerCase().includes(ql) || (a.publisher || "").toLowerCase().includes(ql);
     const hitsPerson = i => [i.user, i.device, i.serial].some(v => (v || "").toLowerCase().includes(ql));
     let appHits = 0, personHits = 0;
@@ -3420,7 +3420,13 @@ const Software = {
       if (a.scoped.length === 0 && (mode === "people" || scope !== "all")) return false;   // nothing of it on that person / in that department
       return true;
     });
-    if (mandOnly && scope !== "all") apps = apps.filter(a => this.isMandatory(a.name, scope));
+    if (mandOnly) {
+      // one department: that department's mandatory apps. All departments: mandatory in at least one department.
+      const scopes = scope === "all" ? [...new Set((this.data.users || []).map(u => this.deptKeyOf(u)))] : [scope];
+      const mand = new Set();
+      scopes.forEach(sc => SWLogic.mandatoryApps(this.data.apps, this.data.users, this.rules, sc).forEach(n => mand.add(n)));
+      apps = apps.filter(a => mand.has(a.name));
+    }
     apps.sort((a, b) => b.scoped.length - a.scoped.length || a.name.localeCompare(b.name));
     this._view = apps;
     const noteBits = [];
@@ -3434,6 +3440,7 @@ const Software = {
       html += `<div class="ak-chips" style="margin:0 0 12px"><span class="muted" style="font-size:12.5px;align-self:center">Show:</span>
         <button type="button" class="ak-chip${mode === "apps" ? " on" : ""}" onclick="Software.setMode('apps')">Software matching it (${appHits})</button>
         <button type="button" class="ak-chip${mode === "people" ? " on" : ""}" onclick="Software.setMode('people')">What people or devices matching it have (${personHits})</button></div>`;
+    if (mandOnly) html += `<p class="sub-note" style="margin:0 0 12px">${scope === "all" ? "Apps that are mandatory in at least one department." : "Apps mandatory for <b>" + esc(scope) + "</b>."} Pick a department to see or change its list.</p>`;
     if (ql && !apps.length) html += `<div class="empty">Nothing matches <b>${esc(q)}</b>${scope !== "all" ? " in this department" : ""}. Try a shorter word, a user name, or a device name.</div>`;
     if (scope !== "all") html += this._complianceHtml(scope, deptUsers);
     html += `<table class="fit sw-tbl"><colgroup><col style="width:34%"><col style="width:14%"><col style="width:20%"><col style="width:9%">${scope !== "all" ? '<col style="width:9%">' : ""}<col style="width:110px"></colgroup>` +
@@ -3448,6 +3455,7 @@ const Software = {
   },
   _mode: "", _t: null,
   typed() { this._mode = ""; clearTimeout(this._t); this._t = setTimeout(() => this.render(), 120); },
+  setMand(el) { document.querySelectorAll("input[name=swMand]").forEach(i => i.parentElement.classList.toggle("on", i.checked)); this.render(); },
   setMode(m) { this._mode = m; this.render(); },
   /* from the Who-has-it window: jump to everything this person has */
   byPerson(who) { Drill.close(); const el = document.getElementById("swSearch"); if (el) el.value = who; this._mode = "people"; this.render(); window.scrollTo(0, 0); },

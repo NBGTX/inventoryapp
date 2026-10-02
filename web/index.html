@@ -299,7 +299,10 @@
       <div class="sw-tools">
         <div class="sw-search"><input id="swSearch" type="search" placeholder="Search software, publisher, person or device…" autocomplete="off" oninput="Software.typed()"></div>
         <select id="swDept" onchange="Software.render()"><option value="all">All departments</option></select>
-        <label class="sw-chk"><input type="checkbox" id="swMandOnly" onchange="Software.render()"> Mandatory only</label>
+        <div class="iss-seg" role="radiogroup" aria-label="Which apps">
+          <label class="on"><input type="radio" name="swMand" value="all" checked onchange="Software.setMand(this)">All apps</label>
+          <label><input type="radio" name="swMand" value="mand" onchange="Software.setMand(this)">Mandatory only</label>
+        </div>
       </div>
       <div id="swHost"><div class="empty">Loading…</div></div>
     </section>
