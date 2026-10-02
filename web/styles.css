@@ -1055,3 +1055,12 @@ select.filt.hidden + .fsel{display:none;}
 .ip-ic:hover{border-color:var(--amber);background:rgba(224,165,65,.12);}
 .ip-up{margin-top:18px;padding-top:12px;border-top:1px solid var(--border);font-size:13px;}
 .swm-ic .site-img{width:24px;height:24px;}
+
+/* ---- Software: app rows with versions underneath ---- */
+.sw-tog{display:inline-block;width:20px;color:var(--amber);cursor:pointer;font-size:12px;}
+.sw-tog.sw-off{cursor:default;}
+a.sw-vers{color:var(--amber);cursor:pointer;border-bottom:1px dotted var(--amber);}
+tr.sw-ver td{background:rgba(255,255,255,.025);font-size:12.5px;}
+td.sw-vname{padding-left:34px!important;color:var(--muted);}
+.drill-tools select.filt{max-width:200px;}
+.drill-tools .fsel-in{width:170px;}

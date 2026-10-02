@@ -3737,8 +3737,14 @@ const Drill = {
   _render() {
     const rows = this._rows, opts = this._opts;
     this._q = "";
-    const tools = (rows.length > 8 || opts.search)
-      ? `<div class="drill-tools"><input id="drillQ" type="search" placeholder="Filter these rows…" autocomplete="off" oninput="Drill.filter(this.value)">
+    this._facets = (opts.facets || []).map(f => ({ ...f }));
+    this._fv = {}; this._facets.forEach((f, n) => { if (f.value) this._fv[n] = f.value; });
+    const facetSel = this._facets.map((f, n) => {
+      const vals = [...new Set(rows.map(r => String(f.get(r) == null ? "" : f.get(r))))].sort(f.sort || ((a, b) => a.localeCompare(b, undefined, { numeric: true })));
+      return `<select class="filt" id="drillF${n}" onchange="Drill.facet(${n}, this.value)"><option value="">All ${esc(f.label.toLowerCase())}s</option>${vals.map(v => `<option${v === (f.value || "") ? " selected" : ""}>${esc(v)}</option>`).join("")}</select>`;
+    }).join("");
+    const tools = (rows.length > 8 || opts.search || this._facets.length)
+      ? `<div class="drill-tools"><input id="drillQ" type="search" placeholder="Filter these rows…" autocomplete="off" oninput="Drill.filter(this.value)">${facetSel}
            <span class="muted" id="drillCount"></span><button class="ghost" style="margin-left:auto" onclick="Drill.copy()" title="Copy the rows shown, ready to paste into Excel">Copy list</button></div>` : "";
     document.getElementById("modalRoot").innerHTML =
       `<div class="overlay"><div class="modal" style="width:${opts.width || "880px"};max-width:96vw;">
@@ -3748,19 +3754,22 @@ const Drill = {
         ${opts.footerHtml ? `<div class="modal-foot" style="justify-content:space-between;gap:12px">${opts.footerHtml}</div>` : ""}
       </div></div>`;
     this._draw();
+    this._facets.forEach((f, n) => Filt.enhance(document.getElementById("drillF" + n)));
     const q = document.getElementById("drillQ"); if (q) q.focus();
   },
   filter(v) { this._q = String(v || "").trim().toLowerCase(); this._draw(); },
+  facet(n, v) { if (v) this._fv[n] = v; else delete this._fv[n]; this._draw(); },
   _shownRows() {
-    const q = this._q;
-    return q ? this._rows.filter(r => this._cols.some(c => this._plain(c, r).toLowerCase().includes(q))) : this._rows;
+    const q = this._q, fv = this._fv || {}, fs = this._facets || [];
+    const facetOk = r => Object.keys(fv).every(n => String(fs[n].get(r) == null ? "" : fs[n].get(r)) === fv[n]);
+    return this._rows.filter(r => facetOk(r) && (!q || this._cols.some(c => this._plain(c, r).toLowerCase().includes(q))));
   },
   _draw() {
     const cols = this._cols, act = this._action, opts = this._opts;
     const body = document.getElementById("drillBody"); if (!body) return;
     const rows = this._shown = this._shownRows();
     const cnt = document.getElementById("drillCount");
-    if (cnt) cnt.textContent = this._q ? `${rows.length} of ${this._rows.length} shown` : "";
+    if (cnt) cnt.textContent = (this._q || Object.keys(this._fv || {}).length) ? `${rows.length} of ${this._rows.length} shown` : "";
     const chips = opts.chips && Object.keys(opts.chips).length
       ? `<div class="office-chips">${Object.entries(opts.chips).sort((a, b) => b[1] - a[1])
           .map(([k, v]) => `<span class="office-chip">${esc(k)}&nbsp;<b>${v}</b></span>`).join("")}</div>` : "";
@@ -4103,7 +4112,8 @@ const Software = {
   render() {
     const host = document.getElementById("swHost"); if (!host) return;
     const meta = document.getElementById("swMeta");
-    if (meta) meta.textContent = this.generatedAt ? `Synced ${this.generatedAt.slice(0, 16).replace("T", " ")} · ${this.data.apps.length} apps` : "Not synced yet";
+    const appNames = new Set(this.data.apps.map(a => a.name)).size;
+    if (meta) meta.textContent = this.generatedAt ? `Synced ${this.generatedAt.slice(0, 16).replace("T", " ")} · ${appNames.toLocaleString()} apps` : "Not synced yet";
     if (!this.data.apps.length) {
       host.innerHTML = `<div class="empty">No software inventory yet. Click <b>Refresh from Intune</b> to build it — this pulls detected apps for every device, so it can take a few minutes.</div>`;
       return;
@@ -4139,9 +4149,24 @@ const Software = {
       scopes.forEach(sc => SWLogic.mandatoryApps(this.data.apps, this.data.users, this.rules, sc).forEach(n => mand.add(n)));
       apps = apps.filter(a => mand.has(a.name));
     }
+    // One row per APP (every version together); the versions sit underneath it.
+    const byName = new Map();
+    apps.forEach(a => {
+      let g = byName.get(a.name);
+      if (!g) { g = { name: a.name, publisher: "", versions: [], scoped: [], rows: [], _seen: new Set() }; byName.set(a.name, g); }
+      g.versions.push({ version: a.version || "", publisher: a.publisher || "", n: new Set(a.scoped.map(i => (i.serial || "") + "|" + (i.device || "") + "|" + (i.user || ""))).size });
+      a.scoped.forEach(i => {
+        const tagged = Object.assign({}, i, { version: a.version || "" });
+        g.rows.push(tagged);
+        const k = (i.serial || "") + "|" + (i.device || "") + "|" + (i.user || "");
+        if (!g._seen.has(k)) { g._seen.add(k); g.scoped.push(tagged); }                       // a device counts once per app, however many versions
+      });
+    });
+    apps = [...byName.values()];
+    apps.forEach(g => { g.versions.sort((x, y) => SWLogic.cmpVer(y.version, x.version)); g.publisher = (g.versions.find(v => v.publisher) || {}).publisher || ""; g.latest = g.versions[0].version; });
     apps.sort((a, b) => b.scoped.length - a.scoped.length || a.name.localeCompare(b.name));
     this._view = apps;
-    const total = this.data.apps.length, cnt = document.getElementById("swCount");
+    const total = appNames, cnt = document.getElementById("swCount");
     if (cnt) cnt.textContent = apps.length === total ? `${total} apps` : `Showing ${apps.length} of ${total}`;
     const st = document.getElementById("swStats");
     if (st) {
@@ -4164,19 +4189,30 @@ const Software = {
     if (mandOnly) html += `<p class="sub-note" style="margin:0 0 12px">${scope === "all" ? "Apps that are mandatory in at least one department." : "Apps mandatory for <b>" + esc(scope) + "</b>."} Pick a department to see or change its list.</p>`;
     if (ql && !apps.length) html += `<div class="empty">Nothing matches <b>${esc(q)}</b>${scope !== "all" ? " in this department" : ""}. Try a shorter word, a user name, or a device name.</div>`;
     if (scope !== "all") html += this._complianceHtml(scope, deptUsers);
-    html += `<table class="fit sw-tbl"><colgroup><col style="width:34%"><col style="width:14%"><col style="width:20%"><col style="width:9%">${scope !== "all" ? '<col style="width:9%">' : ""}<col style="width:110px"></colgroup>` +
-      `<thead><tr><th>App</th><th>Version</th><th>Publisher</th><th>${scope === "all" ? "Installs" : "In scope"}</th>${scope !== "all" ? "<th>Mandatory</th>" : ""}<th></th></tr></thead><tbody>` +
-      apps.map((a, i) => `<tr class="sw-row" onclick="Software.drill(${i})" title="Click to see who has it">
-        <td title="${attr(a.name)}">${esc(a.name)}</td><td>${esc(a.version || "—")}</td><td class="muted" title="${attr(a.publisher || "")}">${esc(a.publisher || "—")}</td>
-        <td>${a.scoped.length}</td>
-        ${scope !== "all" ? `<td onclick="event.stopPropagation()"><input type="checkbox" ${this.isMandatory(a.name, scope) ? "checked" : ""} onchange="Software.toggleMandatory('${attr(a.name)}','${attr(scope)}',this.checked)"></td>` : ""}
-        <td style="text-align:right;white-space:nowrap"><button class="rowbtn">Who has it ›</button></td></tr>`).join("") +
+    const mandCell = a => scope !== "all" ? `<td onclick="event.stopPropagation()"><input type="checkbox" ${this.isMandatory(a.name, scope) ? "checked" : ""} onchange="Software.toggleMandatory('${attr(a.name)}','${attr(scope)}',this.checked)"></td>` : "";
+    const open = this._open, forceOpen = ql && mode === "apps" && apps.length <= 3;       // a narrow search shows its versions right away
+    html += `<table class="fit sw-tbl"><colgroup><col style="width:36%"><col style="width:16%"><col style="width:18%"><col style="width:9%">${scope !== "all" ? '<col style="width:9%">' : ""}<col style="width:110px"></colgroup>` +
+      `<thead><tr><th>App</th><th>Versions</th><th>Publisher</th><th>${scope === "all" ? "Installs" : "In scope"}</th>${scope !== "all" ? "<th>Mandatory</th>" : ""}<th></th></tr></thead><tbody>` +
+      apps.map((a, i) => {
+        const many = a.versions.length > 1, isOpen = many && (open.has(a.name) || forceOpen);
+        let h = `<tr class="sw-row sw-grp" onclick="Software.drill(${i})" title="Click to see who has it, across every version">
+          <td title="${attr(a.name)}">${many ? `<span class="sw-tog" title="${isOpen ? "Hide" : "Show"} the versions" onclick="event.stopPropagation();Software.toggleVers(${i})">${isOpen ? "▾" : "▸"}</span>` : '<span class="sw-tog sw-off"></span>'}${esc(a.name)}</td>
+          <td>${many ? `<a class="sw-vers" onclick="event.stopPropagation();Software.toggleVers(${i})">${a.versions.length} versions</a> <span class="muted">· latest ${esc(a.latest || "—")}</span>` : esc(a.latest || "—")}</td>
+          <td class="muted" title="${attr(a.publisher || "")}">${esc(a.publisher || "—")}</td><td>${a.scoped.length}</td>${mandCell(a)}
+          <td style="text-align:right;white-space:nowrap"><button class="rowbtn">Who has it ›</button></td></tr>`;
+        if (isOpen) h += a.versions.map((v, k) => `<tr class="sw-row sw-ver" onclick="Software.drill(${i}, ${k})" title="Click to see who has this version">
+            <td class="sw-vname">↳ version <b>${esc(v.version || "—")}</b>${k === 0 ? ' <span class="md-tag you">Latest</span>' : ""}</td><td></td><td></td><td>${v.n}</td>${scope !== "all" ? "<td></td>" : ""}
+            <td style="text-align:right;white-space:nowrap"><button class="rowbtn">Who has it ›</button></td></tr>`).join("");
+        return h;
+      }).join("") +
       `</tbody></table>`;
     host.innerHTML = html;
   },
+  _open: new Set(),
+  toggleVers(i) { const g = (this._view || [])[i]; if (!g) return; if (this._open.has(g.name)) this._open.delete(g.name); else this._open.add(g.name); this.render(); },
   copy() {
     const rows = this._view || [], cell = v => String(v == null ? "" : v).replace(/[\t\r\n]+/g, " ");
-    const txt = ["App\tVersion\tPublisher\tInstalls"].concat(rows.map(a => [a.name, a.version, a.publisher, (a.scoped || []).length].map(cell).join("\t"))).join("\n");
+    const txt = ["App\tVersions (installs)\tPublisher\tInstalls"].concat(rows.map(a => [a.name, a.versions.map(v => `${v.version || "?"} (${v.n})`).join(", "), a.publisher, (a.scoped || []).length].map(cell).join("\t"))).join("\n");
     const done = () => App.toast(`Copied ${rows.length} app${rows.length === 1 ? "" : "s"}.`);
     const fb = () => { const t = document.createElement("textarea"); t.value = txt; document.body.appendChild(t); t.select(); try { document.execCommand("copy"); done(); } catch (e) { App.toast("Could not copy.", true); } t.remove(); };
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, fb); else fb();
@@ -4205,14 +4241,17 @@ const Software = {
     return `<div class="sw-compliance"><div class="sw-comp-h">Mandatory app compliance — ${esc(scope)}</div>` +
       `<div class="sw-comp-note">${SWLogic.autoText()} here are mandatory automatically (<span class="auto-tag">auto</span>); missing is checked against the latest version. Tick/untick below to adjust.</div>${body}</div>`;
   },
-  drill(i) {
+  /* everyone who has the app, with the version each one has; click a version row to start with just that version */
+  drill(i, k) {
     const a = (this._view || [])[i]; if (!a) return;
-    const rows = a.scoped || this._installsInScope(a, this._scope());
-    Drill.open(`${a.name}${a.version ? ` · ${a.version}` : ""}`, rows, [
-      { label: "User", w: "34%", html: true, text: r => r.user || "", get: r => r.user ? `<a class="sw-user" title="See everything ${attr(r.user)} has" onclick="Software.byPerson('${attr(r.user)}')">${esc(r.user)}</a>` : "—" },
-      { label: "Device", w: "22%", get: r => r.device || "—", mono: 1 },
-      { label: "Site", w: "8%", get: r => r.site || "—" }, { label: "Department", w: "36%", get: r => r.dept || "—" }],
-      { empty: "No installs in this scope.", width: "1000px", countLabel: "installs", search: true });
+    const want = k == null ? "" : ((a.versions[k] || {}).version || "—");
+    Drill.open(a.name, a.rows, [
+      { label: "User", w: "29%", html: true, text: r => r.user || "", get: r => r.user ? `<a class="sw-user" title="See everything ${attr(r.user)} has" onclick="Software.byPerson('${attr(r.user)}')">${esc(r.user)}</a>` : "—" },
+      { label: "Device", w: "18%", get: r => r.device || "—", mono: 1 },
+      { label: "Version", w: "14%", get: r => r.version || "—", mono: 1, sortGet: r => r.version || "" },
+      { label: "Site", w: "7%", get: r => r.site || "—" }, { label: "Department", w: "32%", get: r => r.dept || "—" }],
+      { empty: "No installs in this scope.", width: "1060px", countLabel: "installs", search: true,
+        facets: [{ key: "version", label: "Version", get: r => r.version || "—", value: want, sort: (x, y) => SWLogic.cmpVer(y, x) }] });
   },
   async refresh() {
     const btn = document.getElementById("swRefreshBtn"); const old = btn ? btn.innerHTML : "";
