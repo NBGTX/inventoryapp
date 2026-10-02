@@ -82,6 +82,7 @@ def run_sync(gc: GraphClient, commit: bool = False) -> dict:
     stock = index(gc._items_raw("new_stock"))
 
     streak = 0                      # consecutive write failures: stop early instead of hammering SharePoint
+    deployed_now = []               # serials that just moved from New Stock / Boneyard into In Use
     for dev in devices:
         if streak >= _MAX_FAIL_STREAK:
             errors.append(f"Stopped after {_MAX_FAIL_STREAK} consecutive write failures (see the first error above).")
@@ -124,6 +125,7 @@ def run_sync(gc: GraphClient, commit: bool = False) -> dict:
                     gc.add_in_use(dev)
                     if sl in stock:
                         gc.delete_item("new_stock", stock[sl]["id"])
+                        deployed_now.append(serial)
                     added.append({"serial": serial, "manufacturer": dev.get("manufacturer", ""),
                                   "model": dev.get("model", ""), "user": dev.get("user", "")})
                 except GraphError as e:
@@ -138,10 +140,50 @@ def run_sync(gc: GraphClient, commit: bool = False) -> dict:
         gc.add_log("Sync", "", "", actor=getattr(gc, "account_name", "") or "",
                    details=f"Intune ({gc.division['intune_category']} device category): {len(added)} added, {len(updated)} updated")
 
+    if commit and deployed_now:
+        record_deploy_dates(gc, deployed_now)
     queued = queue_upgrades(gc) if (commit and not errors) else 0
     return {"moved": added, "added": len(added), "updated": len(updated),
             "refreshed": len(updated), "count": len(devices), "skipped": 0,
             "deduped": dedupe["removed"], "queued_upgrades": queued, "errors": errors}
+
+
+def record_deploy_dates(gc: GraphClient, serials, hub=None, today: str | None = None) -> int:
+    """A device that was in New Stock or the Boneyard and now shows up with a user is "deployed": stamp today's date as its
+    deploy date, unless a date is already there (a person's entry is never overwritten). Never raises; returns how many were set."""
+    try:
+        import datetime
+        if hub is None:
+            from hub import hub_for
+            hub = hub_for(gc)
+        day = today or datetime.date.today().isoformat()
+        for attempt in range(3):
+            try:
+                doc = hub.get_named("device-dates") or {}
+                dates = dict(doc.get("dates") or {})
+                n = 0
+                for s in serials:
+                    k = (s or "").strip().lower()
+                    if not k:
+                        continue
+                    cur = dict(dates.get(k) or {})
+                    if not cur.get("deploy"):
+                        cur["deploy"] = day
+                        dates[k] = cur
+                        n += 1
+                if n:
+                    hub.put_named("device-dates", {"dates": dates})
+                    try:
+                        hub._change("Device dates", f"Sync: deploy date {day} set on {n} device(s) that moved to In use")
+                    except Exception:
+                        pass
+                return n
+            except Exception as e:
+                if e.__class__.__name__ != "HubConflict" or attempt == 2:
+                    raise
+        return 0
+    except Exception:
+        return 0
 
 
 def queue_upgrades(gc: GraphClient, hub=None) -> int:
