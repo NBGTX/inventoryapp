@@ -1032,6 +1032,14 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    def bulk_audit(self, action: str, ok: int = 0, failed: int = 0, detail: str = "") -> dict:
+        """One audit entry for a whole bulk run on the Devices page (each device is also logged by its own action)."""
+        try:
+            self._hubc()._change("Bulk " + str(action)[:40], f"{self._actor() or 'NBG Hub'}: {int(ok)} done, {int(failed)} failed. {str(detail)[:300]}")
+            return {"ok": True}
+        except Exception as e:
+            return self._fail(e)
+
     def return_to_stock(self, serial: str, reason: str = "") -> dict:
         """Move a device from In Use back to New Stock (unassign it) instead of deleting."""
         try:

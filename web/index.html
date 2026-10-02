@@ -27,7 +27,7 @@
         Devices</button>
       <button class="navitem" data-view="people" onclick="Nav.go('people')">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        People &amp; MFA</button>
+        Teammates</button>
       <button class="navitem" data-view="upgrades" onclick="Nav.go('upgrades')">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
         Upgrades</button>
@@ -215,7 +215,7 @@
           <div class="menu-wrap">
             <button class="ghost" id="moreBtn" onclick="App.toggleMore(event)" title="Less-used tools">⋯ More</button>
             <div class="menu hidden" id="devMore">
-              <button id="mfaBtn" onclick="App.closeMore();Nav.go('people')" title="MFA is kept per person on the People &amp; MFA page">🔒 People &amp; MFA…</button>
+              <button id="mfaBtn" onclick="App.closeMore();Nav.go('people')" title="MFA is kept per person on the Teammates page">🔒 Teammates &amp; MFA…</button>
               <button id="masterSyncBtn" onclick="App.masterSync()" title="Force-refresh every device's primary user, specs, MFA, last check-in and OS from Intune/Entra (overwrites stored values; can take a few minutes)">⟳ Master sync</button>
             </div>
           </div>
@@ -239,6 +239,13 @@
         <div class="tools">
           <input id="search" placeholder="Search serial, hostname, user, model, OS, site…" oninput="App.render()">
           <select id="fSite" class="filt" onchange="App.render()"><option value="">All sites</option></select>
+          <select id="fAge" class="filt hidden" onchange="App.render()">
+            <option value="">Any time in stock</option>
+            <option value="30">In stock 30+ days</option>
+            <option value="60">In stock 60+ days</option>
+            <option value="90">In stock 90+ days</option>
+            <option value="180">In stock 180+ days</option>
+          </select>
           <select id="fWarr" class="filt" onchange="App.render()">
             <option value="">All warranties</option>
             <option value="expired">Warranty expired</option>
@@ -264,6 +271,7 @@
           <button id="fClear" class="rowbtn hidden" onclick="App.clearFilters()">Clear filters</button>
           <span class="dev-tools-r"><span class="muted" id="devCount"></span><button class="rowbtn" onclick="App.copyList()" title="Copy the rows shown, ready to paste into Excel">Copy list</button></span>
         </div>
+        <div id="bulkBar" class="bulk-bar hidden"></div>
         <div id="tableWrap"><div class="empty">Loading…</div></div>
       </div>
     </section>
@@ -306,7 +314,7 @@
     <!-- ---------- PEOPLE & MFA ---------- -->
     <section class="appview" id="appview-people">
       <div class="pagehead">
-        <div><h2>People &amp; MFA</h2><p>Everyone assigned a machine in <span class="div-label"></span>, and whether they have multi-factor sign-in set up.</p></div>
+        <div><h2>Teammates</h2><p>Everyone assigned a machine in <span class="div-label"></span>, and whether they have multi-factor sign-in (MFA) set up.</p></div>
         <div class="actions">
           <span id="pplMeta" class="sub-note" style="margin:0 12px 0 0"></span>
           <button class="ghost" id="pplRefresh" onclick="People.refresh(this)">↻ Refresh from Entra</button>

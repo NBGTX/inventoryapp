@@ -11,7 +11,7 @@ const attr = s => (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/"
    must NOT lock the screen, so they are excluded. */
 const Busy = {
   n: 0, timer: null,
-  WRITE: /^(save_|set_|add_|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|switch_|register_|reserve_|complete_|start_|issue_(create|comment|update|delete|vote|watch|notify)|issues_import)/,
+  WRITE: /^(bulk_|save_|set_|add_|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|switch_|register_|reserve_|complete_|start_|issue_(create|comment|update|delete|vote|watch|notify)|issues_import)/,
   LONG: /^(run_sync|enrich_inventory|sync_all_divisions|master_sync|populate_mfa|boneyard_sweep|software_refresh|mfa_people_refresh|pull_prod_snapshot|set_data_mode)$/,
   watches(method) { return this.WRITE.test(method) && !this.LONG.test(method); },
   /* Long jobs keep running when you move to another page (the work is in the backend); this shows them in the sidebar
@@ -575,6 +575,7 @@ const App = {
     tab: "stock", stock: [], use: [], boneyard: [], account: null, siteTags: ["LTR", "BRI"],
     sort: { stock: { key: "date_added", dir: -1 }, use: { key: "serial", dir: 1 }, boneyard: { key: "moved_at", dir: -1 } },
     expanded: new Set(),
+    sel: new Set(),                              // serials ticked for a bulk action (only ever the rows currently shown)
   },
 
   async init(real, st0) {
@@ -584,6 +585,11 @@ const App = {
     DataMode.refresh();
     Settings.refreshAccess();
     await Tz.load();
+    document.getElementById("tableWrap").addEventListener("change", e => {
+      const t = e.target;
+      if (t.id === "selAll") App.selAll(t.checked);
+      else if (t.classList && t.classList.contains("rowsel")) App.selToggle(t.dataset.serial, t.checked);
+    });
     document.getElementById("tableWrap").addEventListener("click", e => {
       const ua = e.target.closest("a.sw-user");
       if (ua) { App.userSoftware(ua.dataset.user); return; }
@@ -828,6 +834,7 @@ const App = {
   },
 
   showTab(t) {
+    if (this.state.tab !== t) this.state.sel.clear();
     this.state.tab = t;
     document.querySelectorAll(".tab").forEach(el => el.classList.toggle("active", el.dataset.tab === t));
     if (t === "use") this.populateFilters();
@@ -847,10 +854,11 @@ const App = {
     fill("fModel", "All models", this.state.use.map(r => r.model));
     fill("fCpu", "All CPUs", this.state.use.map(r => r.cpu));
     fill("fRam", "All RAM", this.state.use.map(r => r.ram));
+    setTimeout(() => this._applyPendingFilters(true), 0);   // saved dropdown choices can be applied now that the options exist
     fill("fSite", "All sites", [].concat(this.state.siteTags || [], this.state.stock.map(r => r.site_tag), this.state.use.map(r => r.site_tag), (this.state.boneyard || []).map(r => r.site_tag)));
   },
   clearFilters() {
-    ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fSite", "fWarr"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+    ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fSite", "fWarr", "fAge"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
     const s = document.getElementById("search"); if (s) s.value = "";
     this.render();
   },
@@ -874,9 +882,76 @@ const App = {
     const el = document.getElementById("devCount");
     if (el) el.textContent = rows.length === total ? `${total} ${total === 1 ? "device" : "devices"}` : `Showing ${rows.length} of ${total}`;
     const q = (document.getElementById("search") || {}).value;
-    const any = !!(q && q.trim()) || ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fSite", "fWarr"].some(id => { const e = document.getElementById(id); return e && e.value && !e.classList.contains("hidden"); });
+    const any = !!(q && q.trim()) || ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fSite", "fWarr", "fAge"].some(id => { const e = document.getElementById(id); return e && e.value && !e.classList.contains("hidden"); });
     const c = document.getElementById("fClear"); if (c) c.classList.toggle("hidden", !any);
   },
+  /* ---- bulk select ---- */
+  _decorateSel() {
+    const shown = new Set((this._shown || []).map(r => r.serial));
+    [...this.state.sel].forEach(s => { if (!shown.has(s)) this.state.sel.delete(s); });      // never act on rows that are filtered out
+    const t = document.querySelector("#tableWrap table");
+    if (t) {
+      const col = t.querySelector("colgroup col"); if (col) col.style.width = "78px";
+      const hth = t.querySelector("thead th");
+      if (hth) hth.innerHTML = `<input type="checkbox" id="selAll" title="Select every row shown" ${shown.size && this.state.sel.size === shown.size ? "checked" : ""}>`;
+      t.querySelectorAll("tbody tr").forEach(tr => {
+        const eb = tr.querySelector('button[data-action="expand"]'); if (!eb) return;
+        const cb = document.createElement("input");
+        cb.type = "checkbox"; cb.className = "rowsel"; cb.dataset.serial = eb.dataset.serial; cb.checked = this.state.sel.has(eb.dataset.serial);
+        eb.parentElement.style.whiteSpace = "nowrap"; eb.parentElement.insertBefore(cb, eb);
+      });
+    }
+    this.updateBulk();
+  },
+  selToggle(serial, on) { if (on) this.state.sel.add(serial); else this.state.sel.delete(serial); this._syncSelAll(); this.updateBulk(); },
+  selAll(on) {
+    this.state.sel.clear();
+    if (on) (this._shown || []).forEach(r => this.state.sel.add(r.serial));
+    document.querySelectorAll("#tableWrap .rowsel").forEach(cb => { cb.checked = on; });
+    this.updateBulk();
+  },
+  _syncSelAll() { const a = document.getElementById("selAll"); if (a) a.checked = !!(this._shown || []).length && this.state.sel.size === this._shown.length; },
+  updateBulk() {
+    const bar = document.getElementById("bulkBar"); if (!bar) return;
+    const n = this.state.sel.size, tab = this.state.tab;
+    if (!n) { bar.classList.add("hidden"); bar.innerHTML = ""; return; }
+    const b = (kind, label, cls) => `<button class="rowbtn${cls ? " " + cls : ""}" onclick="Bulk.open('${kind}')">${label}</button>`;
+    const actions = tab === "stock" ? b("site", "Set site…") + b("remove", "Remove…", "danger")
+      : tab === "use" ? b("upgrade", "⬆ Add to upgrade list…") + b("tostock", "📦 Move to In Stock…") + b("remove", "Remove…", "danger")
+      : b("restore", "↩ Restore to Stock…");
+    bar.classList.remove("hidden");
+    bar.innerHTML = `<b>${n} selected</b><span class="bulk-actions">${actions}</span><a class="bulk-clear" onclick="App.selAll(false)">Clear selection</a>`;
+  },
+
+  /* ---- remember the Devices view (tab, search, filters, sort) for each division ---- */
+  _viewKey() { return "nbg_dev_view_" + (Divisions.current || "x"); },
+  _FILTER_IDS: ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fSite", "fWarr", "fAge"],
+  _restoreView() {
+    const key = this._viewKey();
+    if (this._restored === key) return;
+    this._restored = key;
+    let v = null; try { v = JSON.parse(localStorage.getItem(key) || "null"); } catch (e) { v = null; }
+    if (!v) return;
+    if (["stock", "use", "boneyard"].includes(v.tab)) {
+      this.state.tab = v.tab;
+      document.querySelectorAll(".tab").forEach(el => el.classList.toggle("active", el.dataset.tab === v.tab));
+    }
+    const s = document.getElementById("search"); if (s && typeof v.q === "string") s.value = v.q;
+    if (v.sort) ["stock", "use", "boneyard"].forEach(t => { const x = v.sort[t]; if (x && typeof x.key === "string" && (x.dir === 1 || x.dir === -1)) this.state.sort[t] = { key: x.key, dir: x.dir }; });
+    this._pendingF = v.f || null;                // dropdown options may not exist yet; applied by populateFilters
+    this._applyPendingFilters();
+  },
+  _applyPendingFilters(final) {
+    const f = this._pendingF; if (!f) return;
+    this._FILTER_IDS.forEach(id => { const el = document.getElementById(id); if (el && f[id] && [...el.options].some(o => o.value === f[id])) el.value = f[id]; });
+    if (final) this._pendingF = null;
+  },
+  _saveView() {
+    if (this._pendingF) return;                  // do not overwrite the saved view before it has been applied
+    const f = {}; this._FILTER_IDS.forEach(id => { const el = document.getElementById(id); if (el && el.value) f[id] = el.value; });
+    try { localStorage.setItem(this._viewKey(), JSON.stringify({ tab: this.state.tab, q: (document.getElementById("search") || {}).value || "", f, sort: this.state.sort })); } catch (e) { /* private window */ }
+  },
+
   copyList() {
     const rows = this._shown || [], tab = this.state.tab, day = v => (v || "").slice(0, 10);
     const cols = {
@@ -955,8 +1030,17 @@ const App = {
   },
 
   render() {
+    this._restoreView();
+    this._renderCore();
+    this._decorateSel();
+    this._saveView();
+  },
+
+  _renderCore() {
     const q = (document.getElementById("search").value || "").trim().toLowerCase();
     const isUse = this.state.tab === "use";
+    const isStock = this.state.tab === "stock";
+    const fa = document.getElementById("fAge"); if (fa) fa.classList.toggle("hidden", !isStock);
     ["fModel", "fCpu", "fRam", "fCheckin", "fMfa"].forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle("hidden", !isUse); });
     const val = id => { const el = document.getElementById(id); return el ? (el.value || "") : ""; };
     const fm = isUse ? val("fModel") : "";
@@ -964,7 +1048,12 @@ const App = {
     const fr = isUse ? val("fRam") : "";
     const fk = isUse ? val("fCheckin") : "";
     const fmfa = isUse ? val("fMfa") : "";
-    const fsite = val("fSite"), fwarr = val("fWarr");
+    const fsite = val("fSite"), fwarr = val("fWarr"), fage = isStock ? val("fAge") : "";
+    const ageOk = r => {                         // how long a machine has sat in stock (days since it was added)
+      if (!fage) return true;
+      const d = daysSince(r.date_added);
+      return d !== null && d >= Number(fage);
+    };
     const warrState = v => {                     // expired / soon (90 days) / active / unknown
       const s = (v || "").slice(0, 10); if (!s) return "unknown";
       const t = Date.parse(s); if (isNaN(t)) return "unknown";
@@ -1012,7 +1101,7 @@ const App = {
     ].map(v => (v == null ? "" : String(v)).toLowerCase()).join(" ");
     const match = r => (!q || hay(r).includes(q))
       && (!fm || (r.model || "") === fm) && (!fc || (r.cpu || "") === fc) && (!fr || (r.ram || "") === fr) && checkinOk(r) && mfaOk(r)
-      && (!fsite || (r.site_tag || "") === fsite) && (!fwarr || warrState(r.warranty) === fwarr);
+      && (!fsite || (r.site_tag || "") === fsite) && (!fwarr || warrState(r.warranty) === fwarr) && ageOk(r);
     const wrap = document.getElementById("tableWrap");
     const dcol = "white-space:nowrap";  // keep dates on one line
     const day = v => (v || "").slice(0, 10);  // ISO datetime -> YYYY-MM-DD
@@ -1416,6 +1505,70 @@ const DeleteView = {
   },
 };
 
+/* ---- bulk actions on the Devices page: one confirmation, then the same single-device calls one by one ---- */
+const Bulk = {
+  kind: "", serials: [], pri: 3,
+  TITLE: { site: "Set site", remove: "Remove devices", tostock: "Move to In Stock", upgrade: "Add to upgrade list", restore: "Restore to Stock" },
+  open(kind) {
+    this.kind = kind; this.serials = [...App.state.sel]; this.pri = 3;
+    const n = this.serials.length; if (!n) return;
+    const list = `<div class="bulk-list">${this.serials.slice(0, 8).map(s => `<span class="md-tag">${esc(s)}</span>`).join(" ")}${n > 8 ? ` <span class="muted">+ ${n - 8} more</span>` : ""}</div>`;
+    let body = "", btn = "Run", danger = false;
+    if (kind === "site") {
+      body = `<div class="field"><label>New site</label><select id="bkSite">${App.state.siteTags.map(t => `<option>${esc(t)}</option>`).join("")}</select></div>`; btn = `Set site on ${n}`;
+    } else if (kind === "remove") {
+      danger = true; btn = `Remove ${n}`;
+      body = `<p class="sub-note" style="margin:0 0 10px">Each device is removed from inventory and recorded in the activity log with your reason.</p>
+        <div class="field"><label>Reason (optional)</label><input id="bkReason" placeholder="e.g. Decommissioned" autocomplete="off"></div>` +
+        (n > 5 ? `<div class="field"><label>To confirm, type the number of devices (${n})</label><input id="bkConfirm" autocomplete="off" style="max-width:140px"></div>` : "");
+    } else if (kind === "tostock") {
+      btn = `Move ${n} to In Stock`;
+      body = `<p class="sub-note" style="margin:0 0 10px">Clears each device's assigned user and puts it back in stock.</p><div class="field"><label>Reason (optional)</label><input id="bkReason" placeholder="e.g. Reassigning" autocomplete="off"></div>`;
+    } else if (kind === "upgrade") {
+      btn = `Add ${n} to the list`;
+      body = `<label class="up-lbl">Priority <span class="muted">(5 = highest)</span></label><div class="up-pri" id="bkPri">${[1, 2, 3, 4, 5].map(k => `<button type="button" class="up-pri-opt p${k}${k === 3 ? " sel" : ""}" data-p="${k}" onclick="Bulk.pick(${k})">${k}</button>`).join("")}</div>
+        <label class="up-lbl">Notes</label><textarea id="bkNotes" class="up-notes" rows="3" placeholder="Why / what to upgrade"></textarea>`;
+    } else if (kind === "restore") {
+      btn = `Restore ${n}`; body = `<p class="sub-note" style="margin:0">Each device goes back to <b>In Stock</b>. The next sync moves it to In Use if it has a user.</p>`;
+    }
+    document.getElementById("modalRoot").innerHTML =
+      `<div class="overlay"><div class="modal" style="width:540px;max-width:94vw">
+        <div class="modal-head"><h3>${this.TITLE[kind]} <span class="drill-n">${n}</span></h3><button onclick="Bulk.close()">&times;</button></div>
+        <div class="modal-body">${list}<div style="margin-top:12px">${body}</div><div id="bkProg" class="sub-note" style="margin-top:10px"></div></div>
+        <div class="modal-foot"><button class="ghost" id="bkCancel" onclick="Bulk.close()">Cancel</button>
+          <button class="primary" id="bkGo" ${danger ? 'style="background:var(--red)"' : ""} onclick="Bulk.run()">${btn}</button></div>
+      </div></div>`;
+  },
+  pick(k) { this.pri = k; document.querySelectorAll("#bkPri .up-pri-opt").forEach(b => b.classList.toggle("sel", +b.dataset.p === k)); },
+  close() { document.getElementById("modalRoot").innerHTML = ""; },
+  async run() {
+    const kind = this.kind, serials = this.serials.slice(), v = id => ((document.getElementById(id) || {}).value || "").trim();
+    if (kind === "remove" && serials.length > 5 && v("bkConfirm") !== String(serials.length)) return App.toast(`Type ${serials.length} to confirm.`, true);
+    const reason = v("bkReason"), site = v("bkSite"), notes = v("bkNotes"), pri = this.pri;
+    const call = {
+      site: s => Backend.call("set_site", s, site),
+      remove: s => Backend.call("delete_machine", s, reason || "Bulk remove"),
+      tostock: s => Backend.call("return_to_stock", s, reason || "Moved to stock (bulk)"),
+      upgrade: s => Backend.call("hub_add_upgrade", Upgrade.resolveDevice(s), pri, notes),
+      restore: s => Backend.call("restore_boneyard", s),
+    }[kind];
+    const go = document.getElementById("bkGo"), cancel = document.getElementById("bkCancel"), prog = document.getElementById("bkProg");
+    go.disabled = true; cancel.disabled = true;
+    let ok = 0; const fails = [];
+    for (let i = 0; i < serials.length; i++) {
+      prog.innerHTML = `<span class="busy-spin"></span> Working… ${i + 1} of ${serials.length}`;
+      let r; try { r = await call(serials[i]); } catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
+      if (r && r.ok) ok++; else fails.push(`${serials[i]}: ${(r && r.error) || "failed"}`);
+    }
+    Backend.call("bulk_audit", this.TITLE[kind], ok, fails.length, kind === "site" ? "Site " + site : reason || notes || "");
+    App.state.sel.clear();
+    await App.reload();
+    if (!fails.length) { this.close(); App.toast(`${this.TITLE[kind]}: ${ok} done.`); return; }
+    prog.innerHTML = `<b style="color:var(--red)">${ok} done, ${fails.length} failed.</b><div class="bulk-fails">${fails.map(f => `<div>${esc(f)}</div>`).join("")}</div>`;
+    go.classList.add("hidden"); cancel.disabled = false; cancel.textContent = "Close";
+  },
+};
+
 /* ---- log view ------------------------------------------------------------ */
 const LogView = {
   async open() {
@@ -1449,7 +1602,7 @@ const LogView = {
    ========================================================================== */
 
 /* ---- left-nav ------------------------------------------------------------ */
-/* ---- People & MFA: one row per person (MFA is the person's, not the device's) ---- */
+/* ---- Teammates: one row per person with MFA (MFA is the person's, not the device's) ---- */
 const People = {
   doc: null, f: { q: "", mfa: "all" }, sort: { key: "user", dir: 1 },
   METHODS: { microsoftAuthenticatorPush: "Authenticator app", microsoftAuthenticatorPasswordless: "Authenticator (passwordless)", mobilePhone: "Phone", alternateMobilePhone: "Alt phone",
@@ -5519,6 +5672,7 @@ Object.assign(Mock, {
     this._mfaPeople = { people, source: "report", yes: people.filter(p => p.mfa === "Yes").length, no: people.filter(p => p.mfa === "No").length, unknown: 0, generated_at: new Date().toISOString(), by: "Demo User" };
     return { ok: true, data: this._mfaPeople };
   },
+  async bulk_audit() { return { ok: true }; },
   async issue_counts() { return { ok: true, new: this._issues.filter(d => d.status === "new").length, updates: 1, triage: true }; },
   async get_update_info() { return { ok: true, current: "2026.10.01", latest: "", min: "", update_available: false, update_required: false }; },
   async get_my_role() { return { ok: true, role: "super", sections: ["models", "links", "access", "sites", "sql", "perms", "storage"] }; },

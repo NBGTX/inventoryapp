@@ -132,10 +132,17 @@ const Help = {
           <li><b>Copy list</b> copies the rows you see (after search and filters) so you can paste them into Excel or a message.</li>
           <li>Warranty dates show <span style="color:var(--red)">red</span> when expired and <span style="color:var(--amber)">amber</span> when they end within 90 days.</li>
           <li>On <b>In use</b>, click a user's name to see everything installed for that person on the Software page.</li>
-          <li><b>More</b> holds <b>Master sync</b> and <b>Populate MFA</b>, which are heavier and rarely needed.</li>
+          <li><b>More</b> holds <b>Master sync</b> (heavier, rarely needed) and a link to the <b>Teammates</b> page, where MFA now lives.</li>
         </ul>
         <h5>Adding machines</h5>
         <p>Click <b>Add new machine</b>: choose the maker, paste or scan up to 10 serial numbers, then review what the maker's service lookup found and click <b>Add</b>. See the notes inside that window.</p>
+        <h5>Several machines at once</h5>
+        <ul>
+          <li>Tick the boxes at the start of rows (the box in the heading ticks every row shown). A bar appears with what you can do to the ticked rows: <b>Set site</b> and <b>Remove</b> on In stock; <b>Add to upgrade list</b>, <b>Move to In Stock</b> and <b>Remove</b> on In use; <b>Restore</b> on the Boneyard.</li>
+          <li>Only rows you can see are ever acted on: filtering or searching unticks anything it hides. You confirm once, then each machine is processed in turn; failures are listed and every machine is still logged as usual. Removing more than 5 machines asks you to type the number.</li>
+        </ul>
+        <h5>Remembered for you</h5>
+        <p>The tab, search, filters and sort order are remembered for each division, even after you close the app. <b>Clear filters</b> resets them. On <b>In stock</b>, <b>Any time in stock</b> finds machines that have sat unused for 30, 60, 90 or 180+ days.</p>
         <h5>Row buttons</h5>
         <ul>
           <li><b>Edit</b> (stock): correct a machine's details.</li>
@@ -207,7 +214,7 @@ const Help = {
 
     /* ------------------------------------------------------------------ Software */
     people: {
-      title: "How People & MFA works",
+      title: "How Teammates works",
       html: `
         <p>MFA (multi-factor sign-in) belongs to a <b>person</b>, not a machine. This page lists everyone who has an in-use machine in this division, once each, with the sign-in methods they have registered in Entra and the devices they hold.</p>
         <ul>
