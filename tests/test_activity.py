@@ -95,10 +95,24 @@ class Audit(unittest.TestCase):
         r = self.api.activity_get(0)
         self.assertTrue(r["ok"], r)
         self.assertEqual({e["scope"] for e in r["entries"]}, {"Devices", "Division", "Platform"})
+        self.assertTrue(r["platform"])
         self.gc.account_upn = "tech@nucor.com"
         r = self.api.activity_get(0)
         self.assertFalse(r["ok"])
         self.assertIn("admins", r["error"])
+
+    def test_division_admins_never_get_platform_rows(self):
+        self.api._audit("Role access changed", "x", "platform")
+        self.api._audit("Upgrade list", "y", "division")
+        self.gc.get_log = lambda top=300: []
+        self.gc.account_upn = "lead@nucor.com"
+        self.gc.division_role = lambda: "admin"
+        self.gc.is_super_admin = lambda: False
+        r = self.api.activity_get(0)
+        self.assertTrue(r["ok"], r)
+        self.assertFalse(r["platform"])
+        self.assertEqual({e["scope"] for e in r["entries"]}, {"Division"})
+        self.assertNotIn("Role access changed", str(r["entries"]))
 
 
 if __name__ == "__main__":

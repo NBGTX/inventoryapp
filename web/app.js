@@ -1765,7 +1765,7 @@ const Activity = {
     if (host && !this.all.length) host.innerHTML = `<div class="empty">Loading…</div>`;
     const r = await Backend.call("activity_get", this.days);
     if (!r || !r.ok) { this.all = []; if (host) host.innerHTML = `<div class="empty">${esc((r && r.error) || "Could not load the activity log.")}</div>`; return; }
-    this.all = r.entries || []; this.meta = { total: r.total || 0, truncated: !!r.truncated };
+    this.all = r.entries || []; this.meta = { total: r.total || 0, truncated: !!r.truncated, platform: !!r.platform };
     this.shown = 200;
     this._fill();
     this.render();
@@ -1815,6 +1815,7 @@ const Activity = {
         <td>${esc(e.detail)}</td><td>${esc(e.who || "—")}${e.machine ? `<div class="muted" style="font-size:12px">${esc(e.machine)}</div>` : ""}</td><td class="muted">${esc(e.scope)}</td></tr>`).join("") +
       `</tbody></table>` +
       (rows.length > shown.length ? `<div style="padding:12px 18px"><button class="ghost" onclick="Activity.more()">Show ${Math.min(200, rows.length - shown.length)} more (${rows.length - shown.length} left)</button></div>` : "") +
+      (!this.meta.platform ? `<div class="sub-note" style="margin:8px 18px 14px">Platform changes (roles, super admins, master settings, sign-ins) are visible to super admins only.</div>` : "") +
       (this.meta.truncated ? `<div class="sub-note" style="margin:8px 18px 14px">Only the newest events are loaded. Choose a shorter period to see older detail.</div>` : "");
   },
   more() { this.shown += 200; this.render(); },
@@ -6418,7 +6419,7 @@ Object.assign(Mock, {
       { when: iso(60 * 30), area: "Settings", action: "Master setting changed", target: "", detail: "notify_webhook_url (value not logged)", who: "Demo User", scope: "Platform" },
       { when: iso(60 * 24 * 9), area: "Access", action: "Signed in", target: "", detail: "demo.user@nucor.com", who: "Demo User", scope: "Platform" },
     ].filter(e => !days || (t - Date.parse(e.when)) <= days * 86400000);
-    return { ok: true, entries: all, total: all.length, truncated: false };
+    return { ok: true, platform: true, entries: all, total: all.length, truncated: false };
   },
   _deviceDates: {},
   async device_dates_get() { return { ok: true, data: this._deviceDates }; },

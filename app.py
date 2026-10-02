@@ -1059,11 +1059,14 @@ class Api:
                 div = self._hubc().get_changes()
             except Exception:
                 div = []
-            try:
-                plat = platform_hub_for(gc).get_changes()
-            except Exception:
-                plat = []
-            return {"ok": True, **activity.build(inv, div, plat, int(days or 0))}
+            sa = gc.is_super_admin()
+            plat = []
+            if sa:                                    # platform changes (roles, super admins, settings, sign-ins) are for super admins only
+                try:
+                    plat = platform_hub_for(gc).get_changes()
+                except Exception:
+                    plat = []
+            return {"ok": True, "platform": sa, **activity.build(inv, div, plat, int(days or 0))}
         except Exception as e:
             return self._fail(e)
 
