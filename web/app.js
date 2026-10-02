@@ -1895,7 +1895,7 @@ const People = {
         <div id="pplBar" class="bulk-bar${this.sel.size ? "" : " hidden"}">${this._barHtml()}</div>
         ${rows.length ? `<table class="fit"><colgroup><col style="width:40px"><col style="width:28%"><col style="width:8%"><col style="width:28%"><col style="width:22%"><col style="width:8%"></colgroup>
           <thead><tr><th><input type="checkbox" id="pplAll" title="Select everyone shown" ${rows.length && this.sel.size === rows.length ? "checked" : ""} onchange="People.pickAll(this.checked)"></th>${th("Person", "user")}${th("MFA", "mfa")}<th>Sign-in methods</th>${th("Devices", "devices")}${th("Updated", "updated")}</tr></thead><tbody>` +
-        rows.map(p => `<tr>
+        rows.map(p => `<tr class="ppl-row" data-u="${attr((p.user || "").toLowerCase())}" onclick="if(!event.target.closest('input,a,button'))People.openOne(this.dataset.u)" title="Click for details">
           <td><input type="checkbox" class="rowsel" data-u="${attr((p.user || "").toLowerCase())}" ${this.sel.has((p.user || "").toLowerCase()) ? "checked" : ""} onchange="People.pick(this.dataset.u,this.checked)"></td>
           <td><b>${esc(p.name || p.user)}</b>${p.name ? `<div class="muted" style="font-size:12px">${esc(p.user)}</div>` : ""}</td>
           <td>${mfaCell(p.mfa)}</td>
@@ -1904,6 +1904,90 @@ const People = {
           <td>${esc(p.updated || "—")}</td></tr>`).join("") + `</tbody></table>` : `<div class="empty">Nobody matches.</div>`}</div>`;
     const q = document.getElementById("pplQ");
     if (q && this._focusQ) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+  },
+  /* ---- one person: devices, software, actions ---- */
+  _one: null,
+  _byUser(u) { return (this.doc && this.doc.people || []).find(x => (x.user || "").toLowerCase() === String(u || "").toLowerCase()); },
+  openOne(u) {
+    const p = this._byUser(u); if (!p) return;
+    this._one = { p, tab: "devices", q: "", sw: null };
+    this._oneRender();
+  },
+  _devsOf(p) { return (App.state.use || []).filter(r => (r.user || "").toLowerCase() === (p.user || "").toLowerCase()); },
+  async _oneSoftware(p) {
+    // what is installed on this person's machines, from the cached software inventory (no Intune call)
+    let d = Software.data && Software.data.apps && Software.data.apps.length ? Software.data : null;
+    if (!d) { const r = await Backend.call("software_get"); d = (r && r.ok && r.data) || { apps: [], users: [] }; }
+    const me = (p.user || "").toLowerCase(), by = {};
+    (d.apps || []).forEach(a => (a.installs || []).forEach(i => {
+      if ((i.user || "").toLowerCase() === me) (by[a.name] = by[a.name] || []).push({ version: a.version || "", device: i.device || "", publisher: a.publisher || "" });
+    }));
+    const dept = ((d.users || []).find(u => (u.user || "").toLowerCase() === me) || {}).dept || "";
+    return { apps: Object.entries(by).map(([name, v]) => ({ name, rows: v })).sort((a, b) => a.name.localeCompare(b.name)), dept, have: !!(d.apps || []).length };
+  },
+  async _oneTab(t) {
+    this._one.tab = t;
+    if (t === "software" && !this._one.sw) { this._one.sw = "loading"; this._oneRender(); this._one.sw = await this._oneSoftware(this._one.p); }
+    this._oneRender();
+  },
+  _oneRender() {
+    const o = this._one; if (!o) return;
+    const p = o.p, devs = this._devsOf(p), sw = o.sw && o.sw !== "loading" ? o.sw : null;
+    const mfa = p.mfa === "Yes" ? '<span class="md-tag" style="border-color:#3ecf8e;color:#3ecf8e">MFA registered</span>' : p.mfa === "No" ? '<span class="md-tag act-access">No MFA</span>' : '<span class="md-tag">MFA unknown</span>';
+    const tab = (id, label) => `<button type="button" class="md-tab${o.tab === id ? " on" : ""}" onclick="People._oneTab('${id}')">${label}</button>`;
+    const warr = r => { const w = (r.warranty || "").slice(0, 10); if (!w) return "—"; const d = Math.floor((Date.parse(w) - Date.now()) / 86400000); return `<span class="${d < 0 ? "w-exp" : d <= 90 ? "w-soon" : ""}">${esc(w)}</span>`; };
+    let body = "";
+    if (o.tab === "devices") {
+      body = devs.length ? `<table class="fit"><thead><tr><th>Device</th><th>Model</th><th>Site</th><th>Last check-in</th><th>Warranty</th><th>Deployed</th><th></th></tr></thead><tbody>` +
+        devs.map(r => `<tr><td><b>${esc(r.device_name || "—")}</b><div class="mono muted" style="font-size:12px">${esc(r.serial)}</div></td><td>${esc(r.model || "—")}</td><td>${esc(r.site_tag || "—")}</td>
+          <td>${esc((r.last_checkin || "").slice(0, 10) || "—")}</td><td>${warr(r)}</td><td>${esc(r.deploy_date || "—")}</td>
+          <td style="text-align:right;white-space:nowrap"><button class="rowbtn" title="Add to the upgrade list" onclick="Upgrade.addPrompt('${attr(r.serial)}')">⬆ Upgrade</button></td></tr>`).join("") + `</tbody></table>`
+        : `<div class="empty">No in-use device is assigned to ${esc(p.name || p.user)} right now.</div>`;
+    } else if (o.tab === "software") {
+      if (!sw) body = `<div class="empty"><span class="busy-spin"></span> Reading the software inventory…</div>`;
+      else if (!sw.have) body = `<div class="empty">No software inventory yet. Open the Software page and click <b>Refresh from Intune</b>.</div>`;
+      else {
+        const q = (o.q || "").toLowerCase(), apps = sw.apps.filter(a => !q || a.name.toLowerCase().includes(q));
+        body = `<div class="drill-tools"><input id="pplOneQ" type="search" placeholder="Filter this person's software…" value="${attr(o.q || "")}" oninput="People._oneQ(this.value)" autocomplete="off">
+            <span class="muted">${apps.length === sw.apps.length ? sw.apps.length + " apps" : apps.length + " of " + sw.apps.length}</span>
+            <button class="ghost" style="margin-left:auto" onclick="People._oneClose();App.userSoftware('${attr(p.user)}')">Open on the Software page</button></div>` +
+          (apps.length ? `<table class="fit"><thead><tr><th>App</th><th style="width:160px">Version</th><th style="width:170px">On</th></tr></thead><tbody>` +
+            apps.map(a => `<tr><td>${esc(a.name)}</td><td class="mono">${esc(a.rows.map(r => r.version || "—").filter((v, i, x) => x.indexOf(v) === i).join(", "))}</td><td class="muted">${esc(a.rows.map(r => r.device).filter((v, i, x) => v && x.indexOf(v) === i).join(", "))}</td></tr>`).join("") + `</tbody></table>`
+            : `<div class="empty">${sw.apps.length ? "Nothing matches that." : "Nothing was found for this person in the software inventory."}</div>`);
+      }
+    } else {
+      body = `<div class="one-grid">
+        <div><span class="muted">Email</span><b>${esc(p.user)}</b></div><div><span class="muted">Department</span><b>${esc((sw && sw.dept) || "—")}</b></div>
+        <div><span class="muted">MFA</span><b>${esc(p.mfa || "Unknown")}</b></div><div><span class="muted">Registration updated</span><b>${esc(p.updated || "—")}</b></div>
+        <div style="grid-column:1/-1"><span class="muted">Sign-in methods</span><div style="margin-top:4px">${(p.methods || []).length ? (p.methods || []).map(m => `<span class="md-tag${m === p.default ? " you" : ""}" title="${m === p.default ? "Default method" : ""}">${esc(this.label(m))}</span>`).join(" ") : '<span class="muted">None registered</span>'}</div></div></div>`;
+    }
+    document.getElementById("modalRoot").innerHTML =
+      `<div class="overlay"><div class="modal" style="width:900px;max-width:96vw">
+        <div class="modal-head"><div><h3 style="margin:0">${esc(p.name || p.user)} ${mfa}</h3><div class="muted" style="font-size:12.5px;margin-top:3px">${esc(p.user)} · ${devs.length} device${devs.length === 1 ? "" : "s"}</div></div><button onclick="People._oneClose()">&times;</button></div>
+        <div class="one-actions">
+          <button class="rowbtn" onclick="People._oneMail()">✉ E-mail${p.mfa === "No" ? " (MFA reminder)" : ""}</button>
+          <button class="rowbtn" onclick="People._oneTeams()">💬 Teams chat</button>
+          <button class="rowbtn" onclick="People._oneClose();People.toDevices('${attr(p.user)}')">🖥 Show on Devices</button>
+          <button class="rowbtn" onclick="People._oneCopy()">📋 Copy details</button>
+        </div>
+        <div class="md-tabs">${tab("devices", "Devices (" + devs.length + ")")}${tab("software", "Software" + (sw ? " (" + sw.apps.length + ")" : ""))}${tab("info", "Sign-in details")}</div>
+        <div class="modal-body" style="max-height:60vh;overflow:auto">${body}</div>
+        <div class="modal-foot"><button class="primary" onclick="People._oneClose()">Close</button></div>
+      </div></div>`;
+    if (o.tab === "software" && o.q) { const e = document.getElementById("pplOneQ"); if (e) { e.focus(); e.setSelectionRange(e.value.length, e.value.length); } }
+  },
+  _oneQ(v) { this._one.q = v; this._oneRender(); },
+  _oneClose() { document.getElementById("modalRoot").innerHTML = ""; this._one = null; },
+  _oneMail() { const p = this._one && this._one.p; if (p) this.email([p]); },
+  _oneTeams() { const p = this._one && this._one.p; if (!p) return; Backend.call("open_external", "https://teams.microsoft.com/l/chat/0/0?users=" + encodeURIComponent(p.user)).then(r => { if (!r || !r.ok) App.toast((r && r.error) || "Could not open Teams.", true); }); },
+  _oneCopy() {
+    const p = this._one && this._one.p; if (!p) return;
+    const devs = this._devsOf(p);
+    const txt = [`${p.name || p.user} <${p.user}>`, `MFA: ${p.mfa || "Unknown"}`, `Sign-in methods: ${(p.methods || []).map(m => this.label(m)).join(", ") || "none"}`,
+      `Devices: ${devs.map(r => `${r.device_name || r.serial} (${r.model || "?"}, ${r.serial})`).join("; ") || "none"}`].join("\n");
+    const done = () => App.toast("Details copied.");
+    const fb = () => { const t = document.createElement("textarea"); t.value = txt; document.body.appendChild(t); t.select(); try { document.execCommand("copy"); done(); } catch (e) { App.toast("Could not copy.", true); } t.remove(); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, fb); else fb();
   },
   _barHtml() {
     const n = this.sel.size;
@@ -1934,8 +2018,8 @@ const People = {
     Nav.go("inventory"); App.showTab("use");
   },
   /* A draft in the PC's default mail app (classic or new Outlook). Nothing is sent from here. */
-  email() {
-    const ppl = this.picked(); if (!ppl.length) return;
+  email(list) {
+    const ppl = list || this.picked(); if (!ppl.length) return;
     const noMfa = ppl.every(p => p.mfa === "No");
     this._mail = { to: ppl.map(p => p.user), subject: noMfa ? "Please set up multi-factor sign-in (MFA)" : "" };
     const body = noMfa ? "Hi,\n\nOur records show you have not set up a second sign-in method (MFA) for your Nucor account. Please register one at https://aka.ms/mysecurityinfo. It takes about five minutes.\n\nThank you,\nSystems / IT" : "";

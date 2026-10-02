@@ -1098,3 +1098,10 @@ td.sw-vname{padding-left:34px!important;color:var(--muted);}
 .cp-col .cp-list{flex:1;min-height:260px;max-height:420px;background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:4px 10px;}
 .cp-col .cp-g{padding:6px 0;border-top:1px solid rgba(255,255,255,.05);}
 .cp-col .cp-g:first-child{border-top:none;}
+
+/* ---- Teammate window ---- */
+.ppl-row{cursor:pointer;}.ppl-row:hover td{background:rgba(255,255,255,.04);}
+.one-actions{display:flex;gap:8px;flex-wrap:wrap;padding:12px 22px 0;}
+.one-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 24px;}
+.one-grid span.muted{display:block;font-size:11.5px;margin-bottom:2px;}
+.modal-head .md-tag{vertical-align:middle;margin-left:8px;}
