@@ -939,3 +939,10 @@ a.sw-user{color:var(--amber);cursor:pointer;}a.sw-user:hover{text-decoration:und
 .drill-tools input{flex:1;max-width:360px;background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-size:13px;}
 .drill-n{margin-left:8px;font-size:12px;font-weight:600;padding:2px 10px;border-radius:12px;background:rgba(224,165,65,.18);color:var(--amber);vertical-align:middle;}
 .drill-tbl td{vertical-align:top;}
+
+/* ---- mandatory list editor ---- */
+.sw-ed-h{font-weight:600;font-size:13px;margin:0 0 4px;color:var(--light);}
+.sw-ed-row{display:grid;grid-template-columns:1fr auto auto auto;gap:12px;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:13px;}
+.sw-ed-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+#swEdQ{background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;margin-bottom:6px;}
+.modal-body .field input[type=number]{max-width:160px;}

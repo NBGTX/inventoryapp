@@ -727,10 +727,17 @@ class Hub:
         return None
 
     def save_software_rules(self, data: dict, actor: str = "") -> dict:
-        self._write(self.software_rules_path,
-                    json.dumps({"rules": (data or {}).get("rules") or []}, indent=2, ensure_ascii=False))
-        self._change("Software rules", f"{len((data or {}).get('rules') or [])} mandatory rule(s)")
-        return {"rules": (data or {}).get("rules") or []}
+        """Per-department mandatory-app overrides (`rules`) and the automatic-rule settings (`auto`).
+        A save that carries only `rules` keeps the stored `auto`."""
+        data = data or {}
+        rules = data.get("rules") or []
+        doc = {"rules": rules}
+        auto = data["auto"] if "auto" in data else ((self.get_software_rules() or {}).get("auto"))
+        if auto:
+            doc["auto"] = auto
+        self._write(self.software_rules_path, json.dumps(doc, indent=2, ensure_ascii=False))
+        self._change("Software rules", f"{len(rules)} mandatory rule(s)" + (f" · auto: {auto}" if "auto" in data else ""))
+        return doc
 
     # ---- setups -----------------------------------------------------------
     def get_setups(self) -> list:

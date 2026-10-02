@@ -1302,9 +1302,31 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    @staticmethod
+    def _clean_sw_auto(a) -> dict:
+        """The automatic mandatory-app rule: top N apps per department, held by at least min_pct % of it, in departments
+        with at least min_people people. Defaults keep the original behaviour (top 10, no minimum)."""
+        a = a if isinstance(a, dict) else {}
+
+        def num(k, default, lo, hi):
+            try:
+                v = int(float(a.get(k, default)))
+            except (TypeError, ValueError):
+                v = default
+            return max(lo, min(hi, v))
+        return {"top": num("top", 10, 0, 50), "min_pct": num("min_pct", 0, 0, 100), "min_people": num("min_people", 1, 1, 50)}
+
     def software_save_rules(self, rules: dict) -> dict:
         try:
-            return {"ok": True, **self._hubc().save_software_rules(rules or {}, self._actor())}
+            rules = dict(rules or {})
+            h = self._hubc()
+            if "auto" in rules:
+                new = self._clean_sw_auto(rules["auto"])
+                cur = self._clean_sw_auto((h.get_software_rules() or {}).get("auto"))
+                if new != cur and self._client().division_role() not in ("super", "admin"):
+                    return {"ok": False, "error": "Only division admins can change the automatic mandatory-app rules."}
+                rules["auto"] = new
+            return {"ok": True, **h.save_software_rules(rules, self._actor())}
         except Exception as e:
             return self._fail(e)
 

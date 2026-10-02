@@ -1851,6 +1851,7 @@ const Dashboard = {
     catch (e) { this._upgrades = []; }
     try {
       const sr = await Backend.call("software_get");
+      SWLogic.setCfg(sr && sr.ok && sr.rules ? sr.rules.auto : null);
       this._software = { apps: (sr && sr.ok && sr.data && sr.data.apps) || [],
                          users: (sr && sr.ok && sr.data && sr.data.users) || [],
                          rules: (sr && sr.ok && sr.rules && sr.rules.rules) || [] };
@@ -3244,7 +3245,13 @@ const Drill = {
    app NAME. Kept as pure functions so the page and the dashboard agree exactly. */
 const AUTO_MANDATORY_TOP = 10;
 const SWLogic = {
-  _topCache: new WeakMap(),   // apps array (identity) -> { "scope|n": [names] }
+  _topCache: new WeakMap(),   // apps array (identity) -> { "scope|n|pct|people": [names] }
+  cfg: { top: AUTO_MANDATORY_TOP, minPct: 0, minPeople: 1 },   // the automatic rule; stored per division beside the manual overrides
+  setCfg(a) {
+    a = a || {};
+    const n = (v, d, lo, hi) => { v = parseInt(v, 10); return isNaN(v) ? d : Math.max(lo, Math.min(hi, v)); };
+    this.cfg = { top: n(a.top, AUTO_MANDATORY_TOP, 0, 50), minPct: n(a.min_pct, 0, 0, 100), minPeople: n(a.min_people, 1, 1, 50) };
+  },
 
   deptKey(u) {
     const d = (u.dept || "").trim(), s = (u.site || "").trim() || "—";
@@ -3275,22 +3282,38 @@ const SWLogic = {
   top(apps, users, scope, n) {
     let m = this._topCache.get(apps);
     if (!m) { m = {}; this._topCache.set(apps, m); }
-    const ck = scope + "|" + n;
+    const ck = scope + "|" + n + "|" + this.cfg.minPct + "|" + this.cfg.minPeople;
     if (m[ck]) return m[ck];
     const inScope = new Set((users || []).filter(u => this.deptKey(u) === scope).map(u => (u.user || "").toLowerCase()));
     let out = [];
-    if (inScope.size) {
+    if (n > 0 && inScope.size >= this.cfg.minPeople) {
       const byName = {};
       (apps || []).forEach(a => (a.installs || []).forEach(i => {
         const uk = (i.user || "").toLowerCase();
         if (inScope.has(uk)) (byName[a.name] = byName[a.name] || new Set()).add(uk);
       }));
-      out = Object.keys(byName).sort((x, y) => byName[y].size - byName[x].size || x.localeCompare(y)).slice(0, n);
+      out = Object.keys(byName).filter(nm => byName[nm].size * 100 >= this.cfg.minPct * inScope.size)
+        .sort((x, y) => byName[y].size - byName[x].size || x.localeCompare(y)).slice(0, n);
     }
     m[ck] = out;
     return out;
   },
-  autoTop(apps, users, scope) { return this.top(apps, users, scope, AUTO_MANDATORY_TOP); },
+  autoText() {
+    const c = this.cfg;
+    if (!c.top) return "Nothing is automatic (the automatic rule is off)";
+    return `The ${c.top} most-installed app${c.top === 1 ? "" : "s"}` + (c.minPct ? `, each on at least ${c.minPct}% of the department` : "") + (c.minPeople > 1 ? `, in departments of ${c.minPeople}+ people` : "");
+  },
+  autoTop(apps, users, scope) { return this.top(apps, users, scope, this.cfg.top); },
+  // Every app name in a department with how many of its people have it (any version), most first. People = all users in the department.
+  counts(apps, users, scope) {
+    const inScope = new Set((users || []).filter(u => this.deptKey(u) === scope).map(u => (u.user || "").toLowerCase()));
+    const byName = {};
+    (apps || []).forEach(a => (a.installs || []).forEach(i => {
+      const uk = (i.user || "").toLowerCase();
+      if (inScope.has(uk)) (byName[a.name] = byName[a.name] || new Set()).add(uk);
+    }));
+    return { people: inScope.size, rows: Object.keys(byName).map(nm => ({ name: nm, n: byName[nm].size })).sort((x, y) => y.n - x.n || x.name.localeCompare(y.name)) };
+  },
   isAuto(apps, users, scope, name) { return this.autoTop(apps, users, scope).includes(name); },
 
   isMandatory(apps, users, rules, name, scope) {
@@ -3356,6 +3379,7 @@ const Software = {
       this.hasDept = !!d.has_dept;
       this.generatedAt = d.generated_at || "";
       this.rules = (r && r.ok && r.rules && Array.isArray(r.rules.rules)) ? r.rules.rules : [];
+      SWLogic.setCfg(r && r.ok && r.rules ? r.rules.auto : null);
     } catch (e) { this.data = { apps: [], users: [] }; this.rules = []; }
     this.buildDeptOptions();
     this.render();
@@ -3374,6 +3398,106 @@ const Software = {
   },
   isMandatory(appName, scope) {
     return SWLogic.isMandatory(this.data.apps, this.data.users, this.rules, appName, scope);
+  },
+  /* Set one app's mandatory state for a department. Only an override of the automatic result is stored. */
+  _applyRule(appName, scope, on) {
+    const auto = SWLogic.isAuto(this.data.apps, this.data.users, scope, appName);
+    this.rules = this.rules.filter(r => !(r.scope === scope && r.app === appName));
+    if (on !== auto) this.rules.push({ app: appName, scope, required: on, set_by: App.state.account || "", set_at: new Date().toISOString() });
+  },
+  async _saveRules() {
+    const r = await Backend.call("software_save_rules", { rules: this.rules });
+    if (!r || !r.ok) App.toast((r && r.error) || "Could not save.", true);
+    return !!(r && r.ok);
+  },
+  /* ---- editor for one department's mandatory list ---- */
+  _ed: { scope: "", q: "" },
+  editList() {
+    const scope = this._scope();
+    if (scope === "all") return App.toast("Pick a department first.", true);
+    this._ed = { scope, q: "" };
+    this._edRender();
+  },
+  _edRender() {
+    const { scope, q } = this._ed, A = this.data.apps, U = this.data.users;
+    const cn = SWLogic.counts(A, U, scope), cnt = Object.fromEntries(cn.rows.map(r => [r.name, r.n]));
+    const mand = SWLogic.mandatoryApps(A, U, this.rules, scope).sort((x, y) => (cnt[y] || 0) - (cnt[x] || 0) || x.localeCompare(y));
+    const autoSet = new Set(SWLogic.autoTop(A, U, scope));
+    const removed = [...autoSet].filter(n => !mand.includes(n));
+    const pct = n => cn.people ? Math.round(100 * (cnt[n] || 0) / cn.people) + "%" : "";
+    const row = (n, tag, btn) => `<div class="sw-ed-row"><span class="sw-ed-name" title="${attr(n)}">${esc(n)}</span><span class="muted">${cnt[n] || 0} of ${cn.people} · ${pct(n)}</span>${tag}${btn}</div>`;
+    const ql = q.toLowerCase();
+    const cands = ql ? cn.rows.filter(r => !mand.includes(r.name) && r.name.toLowerCase().includes(ql)).slice(0, 12) : [];
+    const others = [...new Set((U || []).map(u => SWLogic.deptKey(u)))].filter(k => k !== scope).sort();
+    document.getElementById("modalRoot").innerHTML =
+      `<div class="overlay"><div class="modal" style="width:760px;max-width:96vw">
+        <div class="modal-head"><h3>Mandatory apps <span class="drill-n">${esc(scope)}</span></h3><button onclick="Software.edClose()">&times;</button></div>
+        <div class="modal-body" style="max-height:72vh;overflow-y:auto">
+          <p class="sub-note" style="margin:0 0 10px">${cn.people} ${cn.people === 1 ? "person" : "people"} in this department. Automatic rule: ${esc(SWLogic.autoText())}. Your changes below are saved straight away.</p>
+          <div class="sw-ed-h">Mandatory now (${mand.length})</div>
+          ${mand.length ? mand.map(n => row(n, autoSet.has(n) ? `<span class="auto-tag">auto</span>` : `<span class="auto-tag" style="color:var(--amber)">added</span>`,
+              `<button class="rowbtn" onclick="Software.edSet('${attr(n)}',false)">Remove</button>`)).join("") : `<div class="muted" style="padding:6px 0">Nothing is mandatory yet.</div>`}
+          ${removed.length ? `<div class="sw-ed-h" style="margin-top:14px">Removed from the automatic list (${removed.length})</div>` +
+            removed.map(n => row(n, `<span class="auto-tag" style="color:var(--red)">removed</span>`, `<button class="rowbtn" onclick="Software.edSet('${attr(n)}',true)">Restore</button>`)).join("") : ""}
+          <div class="sw-ed-h" style="margin-top:14px">Add an app</div>
+          <input id="swEdQ" type="search" placeholder="Type part of an app name… (apps installed in this department)" value="${attr(q)}" oninput="Software.edSearch(this.value)" autocomplete="off" style="width:100%">
+          ${ql ? (cands.length ? cands.map(r => row(r.name, "", `<button class="rowbtn" onclick="Software.edSet('${attr(r.name)}',true)">Add</button>`)).join("") : `<div class="muted" style="padding:6px 0">No other app here matches.</div>`) : ""}
+          <div class="sw-ed-h" style="margin-top:14px">Shortcuts</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <select id="swEdCopy" style="max-width:300px"><option value="">Copy the list from another department…</option>${others.map(k => `<option>${esc(k)}</option>`).join("")}</select>
+            <button class="ghost" onclick="Software.edCopy()">Copy</button>
+            <button class="ghost" style="margin-left:auto" onclick="Software.edReset()">Reset to automatic</button>
+          </div>
+        </div>
+        <div class="modal-foot"><button class="primary" onclick="Software.edClose()">Done</button></div>
+      </div></div>`;
+    const el = document.getElementById("swEdQ"); if (el && q) { el.focus(); el.setSelectionRange(q.length, q.length); }
+  },
+  edSearch(v) { this._ed.q = v; this._edRender(); },
+  async edSet(name, on) { this._applyRule(name, this._ed.scope, on); await this._saveRules(); this._edRender(); },
+  async edReset() {
+    if (!confirm(`Reset ${this._ed.scope} to the automatic list? Your additions and removals for this department are cleared.`)) return;
+    this.rules = this.rules.filter(r => r.scope !== this._ed.scope);
+    await this._saveRules(); this._edRender();
+  },
+  async edCopy() {
+    const from = (document.getElementById("swEdCopy") || {}).value, scope = this._ed.scope;
+    if (!from) return App.toast("Choose the department to copy from.", true);
+    if (!confirm(`Make ${scope} use the same mandatory list as ${from}? This replaces your changes for ${scope}.`)) return;
+    const A = this.data.apps, U = this.data.users;
+    const want = new Set(SWLogic.mandatoryApps(A, U, this.rules, from)), auto = new Set(SWLogic.autoTop(A, U, scope));
+    const keep = this.rules.filter(r => r.scope !== scope), now = new Date().toISOString(), by = App.state.account || "";
+    want.forEach(n => { if (!auto.has(n)) keep.push({ app: n, scope, required: true, set_by: by, set_at: now }); });
+    auto.forEach(n => { if (!want.has(n)) keep.push({ app: n, scope, required: false, set_by: by, set_at: now }); });
+    this.rules = keep;
+    await this._saveRules(); this._edRender();
+  },
+  edClose() { document.getElementById("modalRoot").innerHTML = ""; this.render(); },
+  /* ---- the automatic rule ---- */
+  autoRules() {
+    const c = SWLogic.cfg;
+    document.getElementById("modalRoot").innerHTML =
+      `<div class="overlay"><div class="modal" style="width:560px;max-width:96vw">
+        <div class="modal-head"><h3>Automatic mandatory rule</h3><button onclick="Software.arClose()">&times;</button></div>
+        <div class="modal-body">
+          <p class="sub-note" style="margin:0 0 12px">For each department, the most widely installed apps are mandatory automatically. Manual additions and removals per department always win over this rule. Division admins can change it.</p>
+          <div class="field"><label>Number of apps per department <span class="muted">(0 = no automatic apps)</span></label><input id="arTop" type="number" min="0" max="50" value="${c.top}"></div>
+          <div class="field"><label>Only apps installed for at least this % of the department <span class="muted">(0 = no minimum)</span></label><input id="arPct" type="number" min="0" max="100" value="${c.minPct}"></div>
+          <div class="field"><label>Skip departments with fewer people than <span class="muted">(1 = every department)</span></label><input id="arPpl" type="number" min="1" max="50" value="${c.minPeople}"></div>
+          <p class="sub-note" style="margin:12px 0 0">Tip: a minimum of 50-60% keeps one-off apps out of small departments.</p>
+        </div>
+        <div class="modal-foot"><button class="ghost" onclick="Software.arClose()">Cancel</button><button class="primary" onclick="Software.arSave(this)">Save</button></div>
+      </div></div>`;
+  },
+  arClose() { document.getElementById("modalRoot").innerHTML = ""; },
+  async arSave(btn) {
+    const v = id => parseInt(document.getElementById(id).value, 10);
+    const auto = { top: v("arTop"), min_pct: v("arPct"), min_people: v("arPpl") };
+    let r; await Ui.working(btn, "Saving…", async () => { r = await Backend.call("software_save_rules", { rules: this.rules, auto }); return false; });
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+    SWLogic.setCfg(r.auto || auto);
+    this.arClose(); this.render();
+    App.toast("Automatic rule saved.");
   },
   async toggleMandatory(appName, scope, on) {
     if (scope === "all") return;
@@ -3397,6 +3521,7 @@ const Software = {
       return;
     }
     const scope = this._scope();
+    const eb = document.getElementById("swEditBtn"); if (eb) eb.disabled = scope === "all";
     // ONE search box. It matches software (name / publisher) and people (user / device / serial).
     // If it matches software, the list is those apps ("who has it?"). If it only matches people, the list is
     // everything installed on those people/devices ("what does this person have?"). When both match, chips let you pick.
@@ -3475,7 +3600,7 @@ const Software = {
       `<div class="sw-miss-row"><div><b>${esc(r.name)}</b>${r.ver ? ` <span class="muted">v${esc(r.ver)}</span>` : ""}${r.auto ? ` <span class="auto-tag">auto</span>` : ""} <span class="muted">— ${r.missing.length} of ${deptUsers.length} missing</span></div>` +
       (r.missing.length ? `<div class="sw-miss-users">${r.missing.map(u => esc(u.user)).join(", ")}</div>` : `<div class="muted">Everyone has it ✓</div>`) + `</div>`).join("");
     return `<div class="sw-compliance"><div class="sw-comp-h">Mandatory app compliance — ${esc(scope)}</div>` +
-      `<div class="sw-comp-note">Top ${AUTO_MANDATORY_TOP} apps here are mandatory automatically (<span class="auto-tag">auto</span>); missing is checked against the latest version. Tick/untick below to adjust.</div>${body}</div>`;
+      `<div class="sw-comp-note">${SWLogic.autoText()} here are mandatory automatically (<span class="auto-tag">auto</span>); missing is checked against the latest version. Tick/untick below to adjust.</div>${body}</div>`;
   },
   drill(i) {
     const a = (this._view || [])[i]; if (!a) return;
@@ -5434,7 +5559,11 @@ Object.assign(Mock, {
   _softwareRules: { rules: [{ app: "Tekla Structures 2023", scope: "Detailing", required: true, set_by: "Demo User", set_at: "2026-08-12T10:00:00Z" }] },
   async software_get() { return { ok: true, data: this._software, rules: this._softwareRules }; },
   async software_refresh() { await new Promise(r => setTimeout(r, 300)); this._software.generated_at = new Date().toISOString(); return { ok: true, apps: this._software.apps.length, devices: this._software.devices, generated_at: this._software.generated_at, has_dept: true }; },
-  async software_save_rules(rules) { this._softwareRules = { rules: (rules && rules.rules) || [] }; return { ok: true, rules: this._softwareRules.rules }; },
+  async software_save_rules(rules) {
+    const auto = rules && rules.auto ? { top: +rules.auto.top, min_pct: +rules.auto.min_pct, min_people: +rules.auto.min_people } : this._softwareRules.auto;
+    this._softwareRules = { rules: (rules && rules.rules) || [], ...(auto ? { auto } : {}) };
+    return { ok: true, rules: this._softwareRules.rules, auto };
+  },
   async hub_get_changes() { return { ok: true, changes: this._hubChanges }; },
   async hub_get_feedback() { return { ok: true, feedback: this._hubFeedback }; },
   async hub_add_feedback(item) { this._hubFeedback.unshift({ ...item, id: "fb-" + Date.now(), status: "open", by: "Demo User", at: new Date().toISOString() }); return { ok: true }; },
