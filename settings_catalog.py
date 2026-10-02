@@ -165,7 +165,7 @@ def number(gc, key: str) -> int:
 
 # ---- which Settings sections each division role may open (edited under Platform > Role access) ----
 # General is always visible to everyone (read-only for users). Super admins always see everything.
-SECTIONS = [("models", "Model departments"), ("links", "NBT Sites"), ("access", "Who has access"), ("sites", "Sites"),
+SECTIONS = [("models", "Model departments"), ("access", "Who has access"), ("sites", "Sites"),
             ("sql", "Directory & SQL"), ("perms", "Group baselines"), ("storage", "Storage")]
 ROLE_ACCESS_KEY = "role_access"
 

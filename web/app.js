@@ -1988,6 +1988,68 @@ const ProjectHub = {
    Each entry loads inside the app (an iframe in the content area). If a portal
    refuses to be framed (X-Frame-Options / CSP), "Open in window" spawns a native
    pywebview window instead — still inside the program, not the system browser. */
+/* Colour icons for NBT Sites: the emoji set built into Windows (Microsoft's colour "Fluent" emoji, free to use, nothing to download),
+   or your own picture (any image is shrunk to a small PNG). Saved as text on the site, so it is shared with everyone. */
+const IconPicker = {
+  SETS: [
+    ["IT & tools", [["💻", "laptop computer pc"], ["🖥️", "desktop monitor screen"], ["🖨️", "printer"], ["⌨️", "keyboard"], ["🖱️", "mouse"], ["📱", "phone mobile intune"], ["📲", "phone"], ["🔧", "wrench tool"], ["🛠️", "tools build"], ["⚙️", "gear settings"], ["🔩", "bolt"], ["🧰", "toolbox"], ["🔌", "plug power"], ["🔋", "battery"], ["💾", "disk save"], ["💿", "cd disc"], ["📡", "antenna satellite"], ["🧪", "lab test"], ["🤖", "robot bot automation"], ["📟", "pager"], ["🕹️", "joystick"], ["🧑‍💻", "developer technologist"]]],
+    ["Security", [["🔒", "lock"], ["🔓", "unlock"], ["🔐", "lock key secure"], ["🔑", "key"], ["🗝️", "old key"], ["🛡️", "shield defender security"], ["🚨", "alert siren"], ["⚠️", "warning"], ["🕵️", "spy investigate"], ["🧱", "firewall wall"], ["👁️", "eye watch monitor"], ["🪪", "id badge"], ["✅", "check ok"], ["⛔", "stop"], ["🚫", "blocked"]]],
+    ["Cloud & data", [["☁️", "cloud azure microsoft"], ["🌐", "globe web internet"], ["🌍", "world earth"], ["📶", "signal wifi"], ["🔗", "link"], ["🧭", "compass"], ["🗺️", "map"], ["📈", "chart graph monitor"], ["📉", "chart down"], ["📊", "bar chart report"], ["📋", "clipboard list"], ["🗄️", "file cabinet database"], ["🗃️", "card box"], ["💽", "storage"], ["🧮", "calculator"]]],
+    ["Business", [["🏢", "office building company"], ["🏭", "factory plant"], ["🏗️", "construction building"], ["🏠", "home"], ["🏬", "store"], ["🏦", "bank finance"], ["💼", "briefcase work"], ["💰", "money"], ["💳", "card payment"], ["🧾", "receipt invoice"], ["📦", "package box shipping"], ["🚚", "truck delivery"], ["📅", "calendar"], ["🗓️", "schedule"], ["⏱️", "timer time"], ["⏰", "alarm clock"], ["📞", "phone call"], ["✉️", "mail email"], ["📧", "email"], ["📝", "memo note"], ["📁", "folder"], ["📂", "open folder"], ["📚", "books library docs"], ["📖", "book manual"], ["🎓", "training learning"], ["👥", "people team"], ["👤", "person user"], ["🤝", "handshake partner"], ["🛒", "cart shop"], ["🏷️", "tag label"]]],
+    ["Symbols", [["⭐", "star favorite"], ["❤️", "heart"], ["🔥", "fire hot"], ["⚡", "lightning power"], ["💡", "idea light"], ["🚀", "rocket launch deploy"], ["🎯", "target goal"], ["🔔", "bell notify"], ["🔍", "search magnifier"], ["📌", "pin"], ["🎫", "ticket"], ["🆘", "help sos"], ["❓", "question help"], ["ℹ️", "info"], ["♻️", "recycle"], ["🧹", "clean broom"], ["🩺", "health"], ["🔬", "microscope research"], ["🌱", "grow"], ["🏁", "finish flag"], ["🚧", "construction"], ["🎨", "design art"], ["🧩", "puzzle"], ["🎛️", "controls"]]],
+  ],
+  _cb: null, _cur: "🌐",
+  isImg(v) { return /^data:image\/png;base64,/.test(v || ""); },
+  /* HTML for an icon value: the picture, or the emoji */
+  html(v, cls) { return this.isImg(v) ? `<img class="${cls || "site-img"}" src="${attr(v)}" alt="">` : esc(v || "🌐"); },
+  open(current, cb) {
+    this._cb = cb; this._cur = current || "🌐";
+    let root = document.getElementById("iconPickRoot");
+    if (!root) { root = document.createElement("div"); root.id = "iconPickRoot"; document.body.appendChild(root); }
+    root.innerHTML = `<div class="overlay" style="z-index:3000"><div class="modal" style="width:560px;max-width:94vw">
+      <div class="modal-head"><h3>Choose an icon</h3><button onclick="IconPicker.close()">&times;</button></div>
+      <div class="modal-body" style="max-height:68vh;overflow:auto">
+        <div class="ip-now">Now: <span class="ip-cur" id="ipCur">${this.html(this._cur, "ip-img")}</span></div>
+        <input id="ipQ" type="search" class="cfg-in" placeholder="Search icons… (lock, cloud, network)" autocomplete="off" oninput="IconPicker.draw(this.value)" style="width:100%;margin-bottom:10px">
+        <div id="ipGrid"></div>
+        <div class="ip-up"><b>Or use your own picture</b>
+          <div class="sub-note" style="margin:4px 0 8px">Any PNG, JPG, SVG or WebP. It is shrunk to a small square and saved with the site. Free colour logos: Microsoft Fluent Emoji (MIT) or Twemoji, or a tool's own logo.</div>
+          <input type="file" id="ipFile" accept="image/png,image/jpeg,image/svg+xml,image/webp" onchange="IconPicker.upload(this)"></div>
+      </div>
+      <div class="modal-foot"><button class="ghost" onclick="IconPicker.pick('🌐')">Reset to 🌐</button><button class="ghost" onclick="IconPicker.close()">Cancel</button></div>
+    </div></div>`;
+    this.draw("");
+    setTimeout(() => { const q = document.getElementById("ipQ"); if (q) q.focus(); }, 30);
+  },
+  draw(q) {
+    const words = String(q || "").toLowerCase().split(/\s+/).filter(Boolean);
+    const html = this.SETS.map(([title, items]) => {
+      const hit = items.filter(([e, k]) => words.every(w => (e + " " + k + " " + title).toLowerCase().includes(w)));
+      return hit.length ? `<div class="ip-h">${esc(title)}</div><div class="ip-grid">${hit.map(([e, k]) => `<button type="button" class="ip-ic" title="${attr(k)}" onclick="IconPicker.pick(this.textContent)">${e}</button>`).join("")}</div>` : "";
+    }).join("");
+    document.getElementById("ipGrid").innerHTML = html || `<div class="sub-note">No icon matches that. Try another word, or upload a picture.</div>`;
+  },
+  pick(v) { const cb = this._cb; this.close(); if (cb) cb(v); },
+  close() { const r = document.getElementById("iconPickRoot"); if (r) r.innerHTML = ""; },
+  /* shrink any picture to a 64x64 PNG so it stays small */
+  upload(inp) {
+    const f = inp.files && inp.files[0]; if (!f) return;
+    if (f.size > 2 * 1024 * 1024) return App.toast("That picture is over 2 MB. Choose a smaller one.", true);
+    const img = new Image(), url = URL.createObjectURL(f);
+    img.onload = () => {
+      const c = document.createElement("canvas"); c.width = c.height = 64;
+      const g = c.getContext("2d"), k = Math.min(64 / (img.width || 64), 64 / (img.height || 64)), w = (img.width || 64) * k, h = (img.height || 64) * k;
+      g.drawImage(img, (64 - w) / 2, (64 - h) / 2, w, h);
+      URL.revokeObjectURL(url);
+      let out = ""; try { out = c.toDataURL("image/png"); } catch (e) { out = ""; }
+      if (!out || out.length > 40000) return App.toast("Could not use that picture.", true);
+      this.pick(out);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); App.toast("That file is not a picture the app can read.", true); };
+    img.src = url;
+  },
+};
+
 const Sites = {
   // mode:"fullview" navigates the main window to the site (top-level, so sign-in
   // works — an iframe can't) with an injected "Back to Hub" button.
@@ -2043,7 +2105,7 @@ const Sites = {
     const rm = removable
       ? `<span class="site-del" title="Remove" onclick="event.stopPropagation();Sites.removeCustom('${attr(s.id)}')">&times;</span>` : "";
     return `<button class="site-card" onclick="Sites.open('${attr(s.id)}')">
-      ${rm}<div class="site-ic">${s.icon || "🌐"}</div>
+      ${rm}<div class="site-ic">${IconPicker.html(s.icon)}</div>
       <h3>${esc(s.name)}</h3><p>${esc(this._host(s.url))}</p></button>`;
   },
 
@@ -2087,12 +2149,14 @@ const Sites = {
 
   // ---- self-serve custom sites (no PIN) --------------------------------
   quickAdd() {
+    this._qaIcon = "🌐";
     document.getElementById("modalRoot").innerHTML =
       `<div class="overlay"><div class="modal" style="width:440px;max-width:94vw;">
         <div class="modal-head"><h3>Add a custom site</h3><button onclick="Sites.quickClose()">&times;</button></div>
         <div class="modal-body">
           <div class="field"><label>Name</label><input id="qaName" class="cfg-in" placeholder="e.g. My Tool" autocomplete="off"></div>
           <div class="field" style="margin-top:12px"><label>URL</label><input id="qaUrl" class="cfg-in" placeholder="https://…" autocomplete="off"></div>
+          <div class="field" style="margin-top:12px"><label>Icon</label><button type="button" class="ip-btn" id="qaIcon" title="Choose an icon" onclick="Sites.quickIcon()">🌐</button></div>
           <div class="field" style="margin-top:12px"><label>Opens as</label>
             <select id="qaMode" class="cfg-in">
               <option value="browser">Web browser (SSO)</option>
@@ -2106,6 +2170,8 @@ const Sites = {
     setTimeout(() => { const n = document.getElementById("qaName"); if (n) n.focus(); }, 40);
   },
 
+  _qaIcon: "🌐",
+  quickIcon() { IconPicker.open(this._qaIcon, v => { this._qaIcon = v; const b = document.getElementById("qaIcon"); if (b) b.innerHTML = IconPicker.html(v, "ip-img"); }); },
   quickClose() { document.getElementById("modalRoot").innerHTML = ""; },
 
   async quickAddSave() {
@@ -2118,7 +2184,7 @@ const Sites = {
     const cats = this.categories.slice();
     if (!cats.some(c => this._isCustom(c))) cats.push("Custom");
     const label = cats.find(c => this._isCustom(c)) || "Custom";
-    const site = { id: "site-" + Math.random().toString(36).slice(2, 8), name, url, icon: "🌐", mode, category: label };
+    const site = { id: "site-" + Math.random().toString(36).slice(2, 8), name, url, icon: this._qaIcon || "🌐", mode, category: label };
     const list = this.list.concat([site]);
     const data = { categories: cats, sites: list, pin: this.pin };
     const r = await Backend.call("hub_save_sites", data, { action: "add", target: "Custom site", detail: name });
@@ -2169,7 +2235,7 @@ const Sites = {
       if (reloadBtn) reloadBtn.style.display = "none";
       host.innerHTML =
         `<div class="site-window-msg">
-          <div class="swm-ic">${s.icon || "🌐"}</div>
+          <div class="swm-ic">${IconPicker.html(s.icon)}</div>
           <h3>Open ${esc(s.name)}</h3>
           <p>${esc(s.name)} needs a sign-in that can't run embedded, so it opens full-window right here. Use the green <b>← Back to NBG Hub</b> button (top-left) to come back.</p>
           <button class="primary" onclick="Sites.openFull()">Open ${esc(s.name)}</button>
@@ -5092,21 +5158,23 @@ const Depts = {
     const modeSel = m => [["browser", "Web browser (SSO)"], ["fullview", "In-app (full window)"], ["window", "Separate window"], ["embed", "Embedded"]]
       .map(([v, l]) => `<option value="${v}"${(m || "fullview") === v ? " selected" : ""}>${l}</option>`).join("");
     const rows = this._sList.length ? this._sList.map((s, i) => `<tr>
+        <td><button type="button" class="ip-btn" title="Choose an icon" onclick="Depts._sIcon(${i})">${IconPicker.html(s.icon, "ip-img")}</button></td>
         <td><input class="cfg-in" data-i="${i}" data-k="name" value="${attr(s.name || "")}" placeholder="Name" oninput="Depts._sEdit(this)"></td>
         <td><input class="cfg-in" data-i="${i}" data-k="url" value="${attr(s.url || "")}" placeholder="https://…" oninput="Depts._sEdit(this)"></td>
         <td><select data-i="${i}" data-k="category" onchange="Depts._sEdit(this)">${catSel(s.category)}</select></td>
         <td><select data-i="${i}" data-k="mode" onchange="Depts._sEdit(this)">${modeSel(s.mode)}</select></td>
         <td class="dept-cbcell"><button class="cfg-del" title="Remove site" onclick="Depts._sRemove(${i})">&times;</button></td>
       </tr>`).join("")
-      : `<tr><td colspan="5"><div class="empty" style="padding:16px">No sites yet — add one below.</div></td></tr>`;
+      : `<tr><td colspan="6"><div class="empty" style="padding:16px">No sites yet — add one below.</div></td></tr>`;
     return `
+      <p class="sub-note" style="margin:0 0 12px">This list is shared by <b>every division</b>. Changes appear for everyone.</p>
       <div class="dept-manage">
         <label>Categories</label>
         <div class="dept-chips" id="catChips"></div>
         <div class="dept-add"><input id="catNew" placeholder="Add a category…" onkeydown="if(event.key==='Enter'){event.preventDefault();Depts.addCat();}"><button class="ghost" onclick="Depts.addCat()">+ Add</button></div>
       </div>
       <table class="dept-table cfg-sites"><thead><tr>
-          <th>Name</th><th>URL</th><th>Category</th><th>Opens as</th><th></th></tr></thead>
+          <th style="width:56px">Icon</th><th>Name</th><th>URL</th><th>Category</th><th>Opens as</th><th></th></tr></thead>
         <tbody id="siteRows">${rows}</tbody></table>
       <button class="ghost" style="margin-top:12px" onclick="Depts.addSite()">+ Add site</button>
       `;
@@ -5123,6 +5191,7 @@ const Depts = {
       || `<span class="sub-note">No categories yet — add one below.</span>`;
   },
 
+  _sIcon(i) { IconPicker.open((this._sList[i] || {}).icon, v => { if (this._sList[i]) { this._sList[i].icon = v; Settings.markDirty && Settings.markDirty(); this._render(); } }); },
   _sEdit(el) { const i = +el.dataset.i; if (this._sList[i]) this._sList[i][el.dataset.k] = el.value; },
   _sPinEdit(el) { this._sPin = el.value; },
   _sRemove(i) { this._sList.splice(i, 1); this._render(); },

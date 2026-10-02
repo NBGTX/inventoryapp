@@ -2551,15 +2551,80 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    # ---- NBT Sites: ONE list for the whole platform (platform document `nbt-sites`) ----
+    _SITE_MODES = ("browser", "fullview", "window", "embed")
+
+    @staticmethod
+    def _clean_icon(icon) -> str:
+        """An emoji (short text) or a small PNG data URL made by the picker; anything else becomes the globe."""
+        import re
+        s = str(icon or "").strip()
+        if re.fullmatch(r"data:image/png;base64,[A-Za-z0-9+/=]{20,60000}", s):
+            return s
+        if s and len(s) <= 16 and not re.search(r"[<>\"'`]", s):
+            return s
+        return "\U0001F310"
+
+    @classmethod
+    def _clean_sites(cls, data) -> dict:
+        import re
+        d = data if isinstance(data, dict) else {}
+        cats, seen = [], set()
+        for c in d.get("categories") or []:
+            c = str(c or "").strip()[:60]
+            if c and c.lower() not in seen:
+                seen.add(c.lower())
+                cats.append(c)
+        sites = []
+        for s in (d.get("sites") or [])[:200]:
+            if not isinstance(s, dict):
+                continue
+            name, url = str(s.get("name") or "").strip()[:80], str(s.get("url") or "").strip()[:600]
+            if not name or not re.match(r"https?://", url, re.I):
+                continue
+            mode = s.get("mode") if s.get("mode") in cls._SITE_MODES else "fullview"
+            sites.append({"id": re.sub(r"[^a-z0-9\-]", "", str(s.get("id") or name).lower().replace(" ", "-"))[:40] or "site",
+                          "name": name, "url": url, "icon": cls._clean_icon(s.get("icon")), "mode": mode,
+                          "category": str(s.get("category") or "").strip()[:60]})
+        return {"categories": cats, "sites": sites, "pin": str(d.get("pin") or "")}
+
     def hub_get_sites(self) -> dict:
+        """The NBT Sites list. Shared by every division. Until a platform list is saved, the active division's old list
+        is shown so nothing disappears."""
         try:
-            return {"ok": True, "data": self._hubc().get_sites()}
+            from hub import platform_hub_for
+            gc = self._client()
+            doc = platform_hub_for(gc).get_named("nbt-sites")
+            if doc and isinstance(doc.get("sites"), list):
+                return {"ok": True, "data": doc, "platform": True}
+            return {"ok": True, "data": self._hubc().get_sites(), "platform": False}
         except Exception as e:
             return self._fail(e)
 
     def hub_save_sites(self, data: dict, meta: dict = None) -> dict:
+        """Save the platform-wide list. Super admins may change anything; everyone else may only add or remove sites in the
+        Custom category (the self-serve '+ Add site' tile)."""
         try:
-            self._hubc().save_sites(data or {}, meta or {})
+            import json
+            from hub import platform_hub_for
+            gc = self._client()
+            ph = platform_hub_for(gc)
+            new = self._clean_sites(data)
+            if not gc.is_super_admin():
+                cur = ph.get_named("nbt-sites") or self._hubc().get_sites() or {}
+                old = self._clean_sites(cur)
+
+                def locked(d):
+                    return json.dumps({"c": [c for c in d["categories"] if c.lower() != "custom"],
+                                       "s": sorted([s for s in d["sites"] if (s["category"] or "").lower() != "custom"], key=lambda s: s["id"])}, sort_keys=True)
+                if locked(new) != locked(old):
+                    return {"ok": False, "error": "Only a super admin can change the built-in sites and categories."}
+            ph.put_named("nbt-sites", new)
+            m = meta or {}
+            try:
+                ph._change(m.get("target", "NBT Sites"), f"{self._actor() or 'NBG Hub'}: {m.get('action', 'save')} {m.get('detail', '')}".strip())
+            except Exception:
+                pass
             return {"ok": True}
         except Exception as e:
             return self._fail(e)

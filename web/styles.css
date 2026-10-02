@@ -1042,3 +1042,16 @@ select.filt.hidden + .fsel{display:none;}
 .md-wait{display:inline-flex;align-items:center;gap:8px;margin-left:auto;margin-right:12px;padding:3px 12px;border:1px solid var(--amber);border-radius:14px;background:rgba(224,165,65,.15);color:var(--amber);font-size:12.5px;}
 .md-wait.hidden{display:none;}
 .modal-body.md-busy{opacity:.45;pointer-events:none;transition:opacity .15s;}
+
+/* ---- NBT Sites icon picker ---- */
+.site-img{width:30px;height:30px;object-fit:contain;display:block;}
+.ip-img{width:26px;height:26px;object-fit:contain;display:block;}
+.ip-btn{background:var(--darker);border:1px solid var(--border);border-radius:8px;width:44px;height:40px;font-size:22px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0;}
+.ip-btn:hover{border-color:var(--amber);}
+.ip-now{display:flex;align-items:center;gap:10px;margin-bottom:10px;color:var(--muted);font-size:13px;}.ip-cur{font-size:26px;display:inline-flex;}
+.ip-h{font-weight:600;font-size:12.5px;color:var(--light);margin:12px 0 6px;}
+.ip-grid{display:flex;flex-wrap:wrap;gap:6px;}
+.ip-ic{width:42px;height:42px;font-size:24px;background:var(--darker);border:1px solid var(--border);border-radius:8px;cursor:pointer;padding:0;}
+.ip-ic:hover{border-color:var(--amber);background:rgba(224,165,65,.12);}
+.ip-up{margin-top:18px;padding-top:12px;border-top:1px solid var(--border);font-size:13px;}
+.swm-ic .site-img{width:24px;height:24px;}

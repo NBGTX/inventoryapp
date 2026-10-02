@@ -189,12 +189,12 @@ const Settings = {
   can(min) { return (this.RANK[this.role] || 0) >= this.RANK[min]; },
   open(tab) { if (tab) this.tab = tab; Nav.go("settings"); },
   /* every division section; General is always shown, the rest depend on Platform > Role access */
-  SECTIONS: [["general", "General"], ["models", "Model departments"], ["links", "NBT Sites"], ["access", "Who has access"],
+  SECTIONS: [["general", "General"], ["models", "Model departments"], ["access", "Who has access"],
              ["sites", "Sites"], ["sql", "Directory & SQL"], ["perms", "Group baselines"], ["storage", "Storage"]],
   groups() {
     return [
       { title: Divisions.label(), items: this.SECTIONS.filter(x => x[0] === "general" || this.allowed.includes(x[0])) },
-      ...(this.su ? [{ title: "Platform (super admin)", items: [["divisions", "Divisions"], ["admins", "Super admins"], ["sync", "Sync all divisions"], ["issuenotify", "Issue notifications"], ["scopes", "People-search scopes"], ["template", "Template checklists"], ["roles", "Role access"], ["integrations", "Integrations & options"]] }] : []),
+      ...(this.su ? [{ title: "Platform (super admin)", items: [["divisions", "Divisions"], ["admins", "Super admins"], ["sync", "Sync all divisions"], ["issuenotify", "Issue notifications"], ["scopes", "People-search scopes"], ["links", "NBT Sites"], ["template", "Template checklists"], ["roles", "Role access"], ["integrations", "Integrations & options"]] }] : []),
     ];
   },
   async load() {

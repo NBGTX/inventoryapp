@@ -265,8 +265,8 @@ const Help = {
         <ul>
           <li>How a tool opens is set per tool: in your <b>default browser</b> (best for sign-in portals), <b>full window</b> inside this app with a green <b>← Back to NBG Hub</b> button, a <b>separate window</b>, or <b>embedded</b> in the page (only works for sites that allow it).</li>
           <li>While a tool is open inside the app, <b>Reload</b>, <b>Open in window</b> and <b>All sites</b> appear at the top right.</li>
-          <li><b>+ Add site</b> at the end of the list adds your own shortcut (name and address) under <b>Custom</b>. <b>Custom sites are shared with everyone in the division</b>, and removing one removes it for everyone.</li>
-          <li>Division admins manage the categories and the built-in tools in Settings → NBT Sites.</li>
+          <li><b>+ Add site</b> at the end of the list adds your own shortcut (name and address) under <b>Custom</b>. <b>Custom sites are shared with everyone on the platform</b>, and removing one removes it for everyone. You can pick an icon for it.</li>
+          <li>Super admins manage the categories, icons and built-in tools in Settings → Platform → NBT Sites.</li>
         </ul>`
     },
     projecthub: {
@@ -387,6 +387,8 @@ const Help = {
       title: "How NBT Sites settings work",
       html: `
         <ul>
+          <li>This list is <b>platform-wide</b>: every division sees the same sites, and only super admins edit it here.</li>
+          <li>Click the <b>Icon</b> button on a row to choose a colour icon from the built-in set (search by word) or upload your own picture, such as a tool's logo.</li>
           <li><b>Categories</b> group the tiles on the NBT Sites page. Add one with the box; ✕ removes it (its sites become Uncategorized).</li>
           <li>Each row is a tool: a <b>name</b>, its <b>web address</b> (https://…), a <b>category</b> and <b>Opens as</b>:
             <ul>
