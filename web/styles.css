@@ -1105,3 +1105,19 @@ td.sw-vname{padding-left:34px!important;color:var(--muted);}
 .one-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 24px;}
 .one-grid span.muted{display:block;font-size:11.5px;margin-bottom:2px;}
 .modal-head .md-tag{vertical-align:middle;margin-left:8px;}
+
+/* ---- BG Tools: tool list on the left, the open tool on the right ---- */
+.bgt-layout{display:grid;grid-template-columns:290px minmax(0,1fr);gap:22px;align-items:start;}
+.bgt-rail{display:flex;flex-direction:column;gap:6px;position:sticky;top:16px;}
+.bgt-rail-h{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin:12px 4px 2px;}
+.bgt-rail-h:first-child{margin-top:0;}
+.bgt-rail .bgt-tool{min-width:0;width:100%;padding:11px 13px;border-radius:10px;align-items:flex-start;border-color:transparent;background:transparent;}
+.bgt-rail .bgt-tool:hover{background:var(--rowh);border-color:var(--border);}
+.bgt-rail .bgt-tool.active{background:var(--med);border-color:var(--med);color:#fff;}
+.bgt-rail .bgt-tool.active .bgt-tool-txt span{color:rgba(255,255,255,.8);}
+.bgt-rail .bgt-tool-ic{width:28px;text-align:center;flex:none;margin-top:1px;}
+.bgt-rail .bgt-tool-txt span{line-height:1.35;}
+.bgt-panel{min-width:0;}
+.bgt-panel > .chart-card{margin-bottom:0;}
+.cp-ro{padding-left:2px;}
+@media(max-width:1000px){.bgt-layout{grid-template-columns:1fr;}.bgt-rail{position:static;flex-direction:row;flex-wrap:wrap;}.bgt-rail-h{width:100%;}.bgt-rail .bgt-tool{width:auto;min-width:230px;}}

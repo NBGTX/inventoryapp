@@ -290,7 +290,7 @@ const Help = {
     /* ------------------------------------------------------------------ BG Tools */
     bgt: {
       title: "About BG Tools",
-      html: `<p>BG Tools are small admin utilities. Pick a tile: <b>Timesheet Fix</b> (unlock a timesheet week), <b>Coil Cards</b> (delete a coil card with a backup, or restore one), <b>Permissions Finder</b> (every group a person is in) and <b>Missing Groups</b> (what a person or department lacks compared with its peers). They read and write live in SQL / Entra as <b>you</b>, so you need the matching access. Searches start as you type.</p>`
+      html: `<p>BG Tools are small admin utilities. The list on the left is grouped: <b>Accounts &amp; access</b> (<b>Permissions Finder</b>: every group a person is in; <b>Missing Groups</b>: what a person or department lacks compared with peers; <b>Copy Permissions</b>: compare two people's AD groups and copy groups across) and <b>Data fixes</b> (<b>Timesheet Fix</b>: unlock a timesheet week; <b>Coil Cards</b>: delete a coil card with a backup, or restore one). Click a tool and it opens on the right. The page remembers your last tool, and keeps what you typed when you switch to another page and back. Each tool has its own help box.</p>`
     },
     "bgt-timesheet": {
       title: "How Timesheet Fix works",

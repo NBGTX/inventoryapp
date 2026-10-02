@@ -3424,8 +3424,9 @@ const CopyPerms = {
   },
   grp(g, sel) {
     const tag = (g.privileged ? ` <span class="cp-tag red">privileged</span>` : "") + (g.security === false ? ` <span class="cp-tag">distribution</span>` : "");
-    return `<label class="cp-g"><input type="checkbox" ${sel ? `${this.s.picked[g.dn] ? "checked" : ""} onchange="CopyPerms.tick(this,'${attr(g.dn)}')"` : "disabled"}>
-      <span><b>${esc(g.name)}</b>${tag}<small>${esc(g.desc || "")}</small></span></label>`;
+    const text = `<span><b>${esc(g.name)}</b>${tag}<small>${esc(g.desc || "")}</small></span>`;
+    if (!sel) return `<div class="cp-g cp-ro">${text}</div>`;                       // only the copy column has boxes
+    return `<label class="cp-g"><input type="checkbox" ${this.s.picked[g.dn] ? "checked" : ""} onchange="CopyPerms.tick(this,'${attr(g.dn)}')">${text}</label>`;
   },
   tick(el, dn) { if (el.checked) this.s.picked[dn] = true; else delete this.s.picked[dn]; this.draw(); },
   tickAll(on) { this.s.cmp.only_src.forEach(g => { if (on === "safe" ? !g.privileged : on) this.s.picked[g.dn] = true; else delete this.s.picked[g.dn]; }); this.draw(); },
@@ -3475,23 +3476,29 @@ const BGTools = {
     { id: "missing", name: "Missing Groups", icon: "🧩", desc: "Find groups a teammate or department is missing vs. peers" },
   ],
   _miss: { mode: "user", user: null, found: [], depts: [], company: "" },
+  GROUPS: [["Accounts & access", ["perms", "missing", "copyperms"]], ["Data fixes", ["timesheet", "coilcard"]]],
+  _built: false,
   load() {
     const host = document.getElementById("bgtHost"); if (!host) return;
-    this._tool = null;   // start on a clean launcher; a tool's panel shows only once clicked
-    host.innerHTML =
-      `<div class="bgt-launch">` + this.TOOLS.map(t => `<button class="bgt-tool" data-tool="${attr(t.id)}" onclick="BGTools.openTool('${attr(t.id)}')">
-        <span class="bgt-tool-ic">${t.icon}</span><span class="bgt-tool-txt"><b>${esc(t.name)}</b><span>${esc(t.desc)}</span></span></button>`).join("") + `</div>
-      <div id="bgtPanel" class="bgt-panel"><div class="empty">Pick a tool above to get started.</div></div>`;
+    if (!this._built || !document.getElementById("bgtPanel")) {
+      const byId = Object.fromEntries(this.TOOLS.map(t => [t.id, t]));
+      const placed = new Set(this.GROUPS.flatMap(g => g[1]));
+      const groups = this.GROUPS.concat(this.TOOLS.some(t => !placed.has(t.id)) ? [["More", this.TOOLS.filter(t => !placed.has(t.id)).map(t => t.id)]] : []);
+      host.innerHTML = `<div class="bgt-layout"><nav class="bgt-rail">` + groups.map(([title, ids]) =>
+        `<div class="bgt-rail-h">${esc(title)}</div>` + ids.filter(id => byId[id]).map(id => { const t = byId[id];
+          return `<button class="bgt-tool" data-tool="${attr(t.id)}" onclick="BGTools.openTool('${attr(t.id)}')"><span class="bgt-tool-ic">${t.icon}</span>
+            <span class="bgt-tool-txt"><b>${esc(t.name)}</b><span>${esc(t.desc)}</span></span></button>`; }).join("")).join("") +
+        `</nav><div id="bgtPanel" class="bgt-panel"></div></div>`;
+      this._built = true; this._tool = null;
+    }
+    let last = ""; try { last = localStorage.getItem("nbg_bgt_tool") || ""; } catch (e) { /* private window */ }
+    const id = this._tool || (this.TOOLS.some(t => t.id === last) ? last : this.GROUPS[0][1][0]);
+    if (this._tool !== id) this.openTool(id);              // coming back to the page keeps the tool (and what you typed) as it was
   },
   openTool(id) {
     const p = document.getElementById("bgtPanel"); if (!p) return;
-    if (this._tool === id) {   // clicking the open tool again hides it
-      this._tool = null;
-      document.querySelectorAll("#bgtHost .bgt-tool").forEach(el => el.classList.remove("active"));
-      p.innerHTML = `<div class="empty">Pick a tool above to get started.</div>`;
-      return;
-    }
     this._tool = id;
+    try { localStorage.setItem("nbg_bgt_tool", id); } catch (e) { /* private window */ }
     document.querySelectorAll("#bgtHost .bgt-tool").forEach(el => el.classList.toggle("active", el.dataset.tool === id));
     if (id === "timesheet") this._renderTimesheet(p);
     else if (id === "perms") this._renderPerms(p);
