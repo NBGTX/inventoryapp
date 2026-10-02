@@ -3347,11 +3347,11 @@ const CopyPerms = {
   tickAll(on) { this.s.cmp.only_src.forEach(g => { if (on === "safe" ? !g.privileged : on) this.s.picked[g.dn] = true; else delete this.s.picked[g.dn]; }); this.draw(); },
   draw() {
     const c = this.s.cmp, n = Object.keys(this.s.picked).length, o = document.getElementById("cpOut");
-    const col = (title, list, sel, extra) => `<div class="cp-col"><h5>${title} <span>${list.length}</span></h5>${extra || ""}<div class="cp-list">${list.length ? list.map(g => this.grp(g, sel)).join("") : `<div class="sub-note">None</div>`}</div></div>`;
+    const col = (title, list, sel, extra, hint) => `<div class="cp-col"><h5>${title} <span>${list.length}</span></h5>${hint ? `<div class="cp-hint">${hint}</div>` : ""}${extra || ""}<div class="cp-list">${list.length ? list.map(g => this.grp(g, sel)).join("") : `<div class="sub-note">None</div>`}</div></div>`;
     o.innerHTML = `<div class="cp-cols">
-      ${col("Only " + esc(this.s.src.sam) + " has", c.only_src, true, `<div class="cp-bulk"><a onclick="CopyPerms.tickAll('safe')">Select all (not privileged)</a> · <a onclick="CopyPerms.tickAll(false)">None</a></div>`)}
-      ${col("Both have", c.both, false)}
-      ${col("Only " + esc(this.s.dst.sam) + " has", c.only_dst, false)}</div>
+      ${col("Destination is missing", c.only_src, true, `<div class="cp-bulk"><a onclick="CopyPerms.tickAll('safe')">Select all (not privileged)</a> · <a onclick="CopyPerms.tickAll(false)">None</a></div>`, `${esc(this.s.src.sam)} has these, ${esc(this.s.dst.sam)} does not. Tick the ones to copy.`)}
+      ${col("Both have", c.both, false, "", "Already the same on both.")}
+      ${col("Source is missing", c.only_dst, false, "", `${esc(this.s.dst.sam)} has these, ${esc(this.s.src.sam)} does not.`)}</div>
       <div class="cp-actions"><button class="ghost" id="cpPrev" ${n ? "" : "disabled"} onclick="CopyPerms.go(false)">Preview (${n})</button>
         <button class="primary" id="cpGo" ${n ? "" : "disabled"} onclick="CopyPerms.go(true)">Copy ${n} group${n === 1 ? "" : "s"} to ${esc(this.s.dst.sam)}…</button></div>
       <div id="cpRes">${this.s.res || ""}</div>`;

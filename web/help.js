@@ -334,7 +334,7 @@ const Help = {
       html: `
         <ol>
           <li>Search and pick the <b>source</b> person (whose access you want to copy) and the <b>destination</b> person. Search shows only people in the current division (plus admin accounts, which have no company); tick <b>Include people from other divisions</b> to widen it. Use their admin account if the access is on that account.</li>
-          <li><b>Compare</b> shows on-premises AD groups: only the source has, only the destination has, and both. Only direct memberships are compared.</li>
+          <li><b>Compare</b> shows on-premises AD groups in three lists: <b>Destination is missing</b> (the source has them, the destination does not: these are the ones you can copy), <b>Both have</b>, and <b>Source is missing</b> (the destination has them, the source does not). Only direct memberships are compared.</li>
           <li>Nothing is ticked for you: tick the groups to copy in the <b>Only source has</b> list (or use <i>Select all (not privileged)</i>). Groups marked <b>privileged</b> are protected admin groups.</li>
           <li><b>Preview</b> lists what would be added and changes nothing. <b>Copy now</b> asks you to confirm, then adds the destination to the groups.</li>
         </ol>
