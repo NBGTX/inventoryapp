@@ -208,8 +208,8 @@ const Help = {
         <p>This page lists the apps Intune detected on this division's machines and tells you who is <b>missing</b> software their department is expected to have.</p>
         <ol>
           <li>Click <b>Refresh from Intune</b> to pull the inventory. It reads every device, so it can take a few minutes; you can use other pages meanwhile. The result is cached and shared, so normal browsing never re-queries Intune. The time of the last pull is shown beside the button.</li>
-          <li>Filter by <b>user or device</b>, by <b>software name</b>, or by <b>department</b>. A department comes from each person's Entra profile.</li>
-          <li>Click an app to see <b>who has it</b> and who does not.</li>
+          <li>Use the <b>one search box</b> for software (name or publisher) <i>or</i> a person or device. A software name lists those apps; a person or device name lists everything installed on them. If a word matches both, chips let you choose. The <b>department</b> list narrows it further; a department comes from each person's Entra profile.</li>
+          <li>Click an app (anywhere on its row) to see <b>who has it</b>. In that window, filter the rows, click a column heading to sort, use <b>Copy list</b> to paste the rows into Excel, or click a user's name to see <b>everything that person has</b>.</li>
           <li><b>Mandatory</b> apps are worked out automatically as each department's <b>10 most-installed apps</b>. You can flag or unflag an app as mandatory for a department to override that. Tick <b>Mandatory only</b> to hide everything else.</li>
         </ol>
         <p>"Missing" is judged against the <b>newest version</b> of an app only: someone with an old release but not the latest still counts as missing. Versions of one app are grouped under its name. The Dashboard's compliance counts use exactly the same rules.</p>`

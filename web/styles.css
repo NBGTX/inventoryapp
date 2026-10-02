@@ -928,3 +928,14 @@ body.signed-out #signinBanner{display:none!important;}
 label.miss-row{cursor:pointer;}
 .miss-ad{margin:10px 0 14px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;}
 .miss-ad-h{font-weight:600;font-size:13px;}
+
+/* ---- Software page: one search box; Who-has-it window ---- */
+.sw-search{flex:1;min-width:280px;max-width:560px;}
+.sw-search input{width:100%;background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:14px;}
+.sw-search input:focus,.drill-tools input:focus{outline:none;border-color:var(--amber);}
+.sw-row{cursor:pointer;}.sw-row:hover td{background:rgba(255,255,255,.04);}
+a.sw-user{color:var(--amber);cursor:pointer;}a.sw-user:hover{text-decoration:underline;}
+.drill-tools{display:flex;gap:12px;align-items:center;margin-bottom:10px;}
+.drill-tools input{flex:1;max-width:360px;background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-size:13px;}
+.drill-n{margin-left:8px;font-size:12px;font-weight:600;padding:2px 10px;border-radius:12px;background:rgba(224,165,65,.18);color:var(--amber);vertical-align:middle;}
+.drill-tbl td{vertical-align:top;}

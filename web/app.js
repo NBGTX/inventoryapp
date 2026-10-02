@@ -3173,10 +3173,40 @@ const Drill = {
         : String(va == null ? "" : va).toLowerCase().localeCompare(String(vb == null ? "" : vb).toLowerCase());
       return cmp * dir;
     });
-    this._render();
+    this._draw();
   },
+  _plain(c, r) {
+    const raw = c.text ? c.text(r) : c.get(r);
+    return String(raw == null ? "" : raw).replace(/<[^>]*>/g, "");
+  },
+  /* the window shell is built once; typing in the filter or sorting only redraws the table, so focus and scroll are kept */
   _render() {
-    const cols = this._cols, act = this._action, rows = this._rows, opts = this._opts;
+    const rows = this._rows, opts = this._opts;
+    this._q = "";
+    const tools = (rows.length > 8 || opts.search)
+      ? `<div class="drill-tools"><input id="drillQ" type="search" placeholder="Filter these rows…" autocomplete="off" oninput="Drill.filter(this.value)">
+           <span class="muted" id="drillCount"></span><button class="ghost" style="margin-left:auto" onclick="Drill.copy()" title="Copy the rows shown, ready to paste into Excel">Copy list</button></div>` : "";
+    document.getElementById("modalRoot").innerHTML =
+      `<div class="overlay"><div class="modal" style="width:${opts.width || "880px"};max-width:96vw;">
+        <div class="modal-head"><h3>${esc(this._title)} <span class="drill-n">${rows.length}${opts.countLabel ? " " + esc(opts.countLabel) : ""}</span></h3><button onclick="Drill.close()">&times;</button></div>
+        ${tools ? `<div style="padding:12px 22px 0">${tools}</div>` : ""}
+        <div class="modal-body" id="drillBody" style="max-height:70vh;overflow-y:auto;overflow-x:hidden;"></div>
+        ${opts.footerHtml ? `<div class="modal-foot" style="justify-content:space-between;gap:12px">${opts.footerHtml}</div>` : ""}
+      </div></div>`;
+    this._draw();
+    const q = document.getElementById("drillQ"); if (q) q.focus();
+  },
+  filter(v) { this._q = String(v || "").trim().toLowerCase(); this._draw(); },
+  _shownRows() {
+    const q = this._q;
+    return q ? this._rows.filter(r => this._cols.some(c => this._plain(c, r).toLowerCase().includes(q))) : this._rows;
+  },
+  _draw() {
+    const cols = this._cols, act = this._action, opts = this._opts;
+    const body = document.getElementById("drillBody"); if (!body) return;
+    const rows = this._shown = this._shownRows();
+    const cnt = document.getElementById("drillCount");
+    if (cnt) cnt.textContent = this._q ? `${rows.length} of ${this._rows.length} shown` : "";
     const chips = opts.chips && Object.keys(opts.chips).length
       ? `<div class="office-chips">${Object.entries(opts.chips).sort((a, b) => b[1] - a[1])
           .map(([k, v]) => `<span class="office-chip">${esc(k)}&nbsp;<b>${v}</b></span>`).join("")}</div>` : "";
@@ -3186,21 +3216,23 @@ const Drill = {
       const arrow = this._sortIdx === idx ? (this._sortDir > 0 ? " ▲" : " ▼") : "";
       return `<th onclick="Drill.sort(${idx})" title="Sort by ${attr(c.label)}">${esc(c.label)}${arrow}</th>`;
     }).join("") + (act ? "<th></th>" : "");
-    const body = rows.length
+    body.innerHTML = rows.length
       ? chips + `<table class="drill-tbl">${colgroup}<thead><tr>${head}</tr></thead><tbody>` +
         rows.map((r, i) => `<tr>${cols.map(c => `<td class="${c.mono ? "mono" : ""}">${c.html ? c.get(r) : esc(c.get(r))}</td>`).join("")}` +
           (act ? `<td style="text-align:right;white-space:nowrap"><button class="rowbtn" onclick="Drill.act(${i})">${esc(act.label)}</button></td>` : "") +
           `</tr>`).join("") +
         `</tbody></table>`
-      : `<div class="empty">${esc(opts.empty || "Nothing to show here.")}</div>`;
-    document.getElementById("modalRoot").innerHTML =
-      `<div class="overlay"><div class="modal" style="width:${this._opts.width || "880px"};max-width:96vw;">
-        <div class="modal-head"><h3>${esc(this._title)} — ${rows.length}</h3><button onclick="Drill.close()">&times;</button></div>
-        <div class="modal-body" style="max-height:70vh;overflow-y:auto;overflow-x:hidden;">${body}</div>
-        ${this._opts.footerHtml ? `<div class="modal-foot" style="justify-content:space-between;gap:12px">${this._opts.footerHtml}</div>` : ""}
-      </div></div>`;
+      : `<div class="empty">${esc(this._q ? "No rows match that filter." : (opts.empty || "Nothing to show here."))}</div>`;
   },
-  act(i) { const r = this._rows[i]; if (this._action && r) this._action.fn(r); },
+  copy() {
+    const rows = this._shown || this._rows, cols = this._cols;
+    const cell = v => String(v == null ? "" : v).replace(/[\t\r\n]+/g, " ");
+    const txt = [cols.map(c => c.label).join("\t")].concat(rows.map(r => cols.map(c => cell(this._plain(c, r))).join("\t"))).join("\n");
+    const done = () => App.toast(`Copied ${rows.length} row${rows.length === 1 ? "" : "s"}. Paste into Excel or a message.`);
+    const fallback = () => { const t = document.createElement("textarea"); t.value = txt; document.body.appendChild(t); t.select(); try { document.execCommand("copy"); done(); } catch (e) { App.toast("Could not copy.", true); } t.remove(); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, fallback); else fallback();
+  },
+  act(i) { const r = (this._shown || this._rows)[i]; if (this._action && r) this._action.fn(r); },
   close() { document.getElementById("modalRoot").innerHTML = ""; this._rows = []; this._action = null; },
 };
 
@@ -3365,45 +3397,60 @@ const Software = {
       return;
     }
     const scope = this._scope();
-    const userRaw = (document.getElementById("swUser").value || "").trim();
-    const swRaw = (document.getElementById("swSoftware").value || "").trim();
-    const userQ = userRaw.toLowerCase();
-    const swQ = swRaw.toLowerCase();
+    // ONE search box. It matches software (name / publisher) and people (user / device / serial).
+    // If it matches software, the list is those apps ("who has it?"). If it only matches people, the list is
+    // everything installed on those people/devices ("what does this person have?"). When both match, chips let you pick.
+    const q = (document.getElementById("swSearch").value || "").trim();
+    const ql = q.toLowerCase();
     const mandOnly = document.getElementById("swMandOnly").checked;
-    // Two filters: User (all software for that user/device) and Software (all installs
-    // of that app). Both together -> that user's install of that specific software.
+    const hitsApp = a => (a.name || "").toLowerCase().includes(ql) || (a.publisher || "").toLowerCase().includes(ql);
+    const hitsPerson = i => [i.user, i.device, i.serial].some(v => (v || "").toLowerCase().includes(ql));
+    let appHits = 0, personHits = 0;
+    if (ql) this.data.apps.forEach(a => { if (hitsApp(a)) appHits++; if ((a.installs || []).some(hitsPerson)) personHits++; });
+    let mode = "none";
+    if (ql) {
+      mode = this._mode === "people" && personHits ? "people" : this._mode === "apps" && appHits ? "apps" : (appHits ? "apps" : "people");
+    }
     let apps = this.data.apps.map(a => {
       let scoped = this._installsInScope(a, scope);
-      if (userQ) scoped = scoped.filter(i => (i.user || "").toLowerCase().includes(userQ)
-        || (i.device || "").toLowerCase().includes(userQ) || (i.serial || "").toLowerCase().includes(userQ));
+      if (mode === "people") scoped = scoped.filter(hitsPerson);
       return { ...a, scoped };
     }).filter(a => {
-      if (swQ && !((a.name || "").toLowerCase().includes(swQ) || (a.publisher || "").toLowerCase().includes(swQ))) return false;
-      if (userQ && a.scoped.length === 0) return false;            // user has no install of this app
-      if (scope !== "all" && a.scoped.length === 0) return false;  // dept view needs installs in that dept
+      if (mode === "apps" && !hitsApp(a)) return false;
+      if (a.scoped.length === 0 && (mode === "people" || scope !== "all")) return false;   // nothing of it on that person / in that department
       return true;
     });
     if (mandOnly && scope !== "all") apps = apps.filter(a => this.isMandatory(a.name, scope));
     apps.sort((a, b) => b.scoped.length - a.scoped.length || a.name.localeCompare(b.name));
     this._view = apps;
     const noteBits = [];
-    if (userRaw) noteBits.push(`on <b>${esc(userRaw)}</b>`);
-    if (swRaw) noteBits.push(`matching <b>${esc(swRaw)}</b>`);
+    if (ql && mode === "apps") noteBits.push(`matching <b>${esc(q)}</b>`);
+    if (ql && mode === "people") noteBits.push(`installed on people or devices matching <b>${esc(q)}</b>`);
     const deptUsers = scope === "all" ? [] : (this.data.users || []).filter(u => this.deptKeyOf(u) === scope);
     let html = "";
     if (!this.hasDept) html += `<div class="cfg-warn" style="margin-bottom:12px">Department grouping is dormant — grant <code>User.Read.All</code> and Refresh to group by department. For now apps group by site only.</div>`;
-    if (noteBits.length) html += `<p class="sub-note" style="margin:0 0 12px">${apps.length} app(s) ${noteBits.join(" · ")}.</p>`;
+    if (noteBits.length) html += `<p class="sub-note" style="margin:0 0 12px">${apps.length} app${apps.length === 1 ? "" : "s"} ${noteBits.join(" · ")}.</p>`;
+    if (ql && appHits && personHits)
+      html += `<div class="ak-chips" style="margin:0 0 12px"><span class="muted" style="font-size:12.5px;align-self:center">Show:</span>
+        <button type="button" class="ak-chip${mode === "apps" ? " on" : ""}" onclick="Software.setMode('apps')">Software matching it (${appHits})</button>
+        <button type="button" class="ak-chip${mode === "people" ? " on" : ""}" onclick="Software.setMode('people')">What people or devices matching it have (${personHits})</button></div>`;
+    if (ql && !apps.length) html += `<div class="empty">Nothing matches <b>${esc(q)}</b>${scope !== "all" ? " in this department" : ""}. Try a shorter word, a user name, or a device name.</div>`;
     if (scope !== "all") html += this._complianceHtml(scope, deptUsers);
     html += `<table class="fit sw-tbl"><colgroup><col style="width:34%"><col style="width:14%"><col style="width:20%"><col style="width:9%">${scope !== "all" ? '<col style="width:9%">' : ""}<col style="width:110px"></colgroup>` +
       `<thead><tr><th>App</th><th>Version</th><th>Publisher</th><th>${scope === "all" ? "Installs" : "In scope"}</th>${scope !== "all" ? "<th>Mandatory</th>" : ""}<th></th></tr></thead><tbody>` +
-      apps.map((a, i) => `<tr>
+      apps.map((a, i) => `<tr class="sw-row" onclick="Software.drill(${i})" title="Click to see who has it">
         <td title="${attr(a.name)}">${esc(a.name)}</td><td>${esc(a.version || "—")}</td><td class="muted" title="${attr(a.publisher || "")}">${esc(a.publisher || "—")}</td>
         <td>${a.scoped.length}</td>
-        ${scope !== "all" ? `<td><input type="checkbox" ${this.isMandatory(a.name, scope) ? "checked" : ""} onchange="Software.toggleMandatory('${attr(a.name)}','${attr(scope)}',this.checked)"></td>` : ""}
-        <td style="text-align:right;white-space:nowrap"><button class="rowbtn" onclick="Software.drill(${i})">Who has it ›</button></td></tr>`).join("") +
+        ${scope !== "all" ? `<td onclick="event.stopPropagation()"><input type="checkbox" ${this.isMandatory(a.name, scope) ? "checked" : ""} onchange="Software.toggleMandatory('${attr(a.name)}','${attr(scope)}',this.checked)"></td>` : ""}
+        <td style="text-align:right;white-space:nowrap"><button class="rowbtn">Who has it ›</button></td></tr>`).join("") +
       `</tbody></table>`;
     host.innerHTML = html;
   },
+  _mode: "", _t: null,
+  typed() { this._mode = ""; clearTimeout(this._t); this._t = setTimeout(() => this.render(), 120); },
+  setMode(m) { this._mode = m; this.render(); },
+  /* from the Who-has-it window: jump to everything this person has */
+  byPerson(who) { Drill.close(); const el = document.getElementById("swSearch"); if (el) el.value = who; this._mode = "people"; this.render(); window.scrollTo(0, 0); },
   _complianceHtml(scope, deptUsers) {
     const mand = SWLogic.mandatoryApps(this.data.apps, this.data.users, this.rules, scope);
     if (!mand.length) return `<div class="sw-compliance"><b>${esc(scope)}</b> — ${deptUsers.length} user(s). Tick apps below as <b>Mandatory</b> to see who's missing them.</div>`;
@@ -3425,16 +3472,17 @@ const Software = {
   drill(i) {
     const a = (this._view || [])[i]; if (!a) return;
     const rows = a.scoped || this._installsInScope(a, this._scope());
-    Drill.open(`${a.name}${a.version ? ` · ${a.version}` : ""} — installed on`, rows, [
-      { label: "User", get: r => r.user || "—" }, { label: "Device", get: r => r.device || "—", mono: 1 },
-      { label: "Site", get: r => r.site || "—" }, { label: "Department", get: r => r.dept || "—" }],
-      { empty: "No installs in this scope." });
+    Drill.open(`${a.name}${a.version ? ` · ${a.version}` : ""}`, rows, [
+      { label: "User", w: "34%", html: true, text: r => r.user || "", get: r => r.user ? `<a class="sw-user" title="See everything ${attr(r.user)} has" onclick="Software.byPerson('${attr(r.user)}')">${esc(r.user)}</a>` : "—" },
+      { label: "Device", w: "22%", get: r => r.device || "—", mono: 1 },
+      { label: "Site", w: "8%", get: r => r.site || "—" }, { label: "Department", w: "36%", get: r => r.dept || "—" }],
+      { empty: "No installs in this scope.", width: "1000px", countLabel: "installs", search: true });
   },
   async refresh() {
-    const btn = document.getElementById("swRefreshBtn"); const old = btn ? btn.textContent : "";
-    if (btn) { btn.disabled = true; btn.textContent = "Pulling from Intune…"; }
+    const btn = document.getElementById("swRefreshBtn"); const old = btn ? btn.innerHTML : "";
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="busy-spin"></span> Pulling from Intune…'; }
     const r = await Backend.call("software_refresh");
-    if (btn) { btn.disabled = false; btn.textContent = old; }
+    if (btn) { btn.disabled = false; btn.innerHTML = old; }
     if (!r || !r.ok) return App.error((r && r.error) || "Software refresh failed.");
     await this.load();
     App.toast(`Software inventory refreshed: ${r.apps} apps across ${r.devices} device(s)${r.has_dept ? "" : " — department dormant (grant User.Read.All)"}.`);

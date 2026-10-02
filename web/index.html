@@ -297,8 +297,7 @@
       </div>
       <div class="help-slot" data-help="software"></div>
       <div class="sw-tools">
-        <input id="swUser" placeholder="Filter by user or device…" oninput="Software.render()">
-        <input id="swSoftware" placeholder="Filter by software…" oninput="Software.render()">
+        <div class="sw-search"><input id="swSearch" type="search" placeholder="Search software, publisher, person or device…" autocomplete="off" oninput="Software.typed()"></div>
         <select id="swDept" onchange="Software.render()"><option value="all">All departments</option></select>
         <label class="sw-chk"><input type="checkbox" id="swMandOnly" onchange="Software.render()"> Mandatory only</label>
       </div>
