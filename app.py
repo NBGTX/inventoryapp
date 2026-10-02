@@ -1032,6 +1032,77 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    # ---- deploy / manufacture dates: one small hub document per division, keyed by serial ----
+    def device_dates_get(self) -> dict:
+        try:
+            doc = self._hubc().get_named("device-dates") or {}
+            return {"ok": True, "data": doc.get("dates") or {}}
+        except Exception as e:
+            return self._fail(e)
+
+    def device_dates_set(self, serials, deploy=None, mfg=None) -> dict:
+        """Record the deploy date and/or manufacture date (YYYY-MM-DD) for one or more devices.
+        None = leave as is, "" = clear. Dates cannot be in the future."""
+        try:
+            import datetime
+            sn = [str(s).strip() for s in ([serials] if isinstance(serials, str) else (serials or [])) if str(s).strip()]
+            if not sn:
+                return {"ok": False, "error": "No device selected."}
+            if len(sn) > 500:
+                return {"ok": False, "error": "At most 500 devices at a time."}
+
+            def clean(v, label):
+                if v is None:
+                    return None
+                v = str(v).strip()
+                if v == "":
+                    return ""
+                try:
+                    d = datetime.date.fromisoformat(v)
+                except ValueError:
+                    raise ValueError(f"{label} must be a date like 2026-09-30.")
+                if d > datetime.date.today():
+                    raise ValueError(f"{label} cannot be in the future.")
+                if d.year < 1990:
+                    raise ValueError(f"{label} looks wrong.")
+                return v
+            dep, mf = clean(deploy, "Deploy date"), clean(mfg, "Manufacture date")
+            if dep is None and mf is None:
+                return {"ok": False, "error": "Nothing to change."}
+            h = self._hubc()
+            for attempt in range(3):
+                try:
+                    doc = h.get_named("device-dates") or {}
+                    dates = dict(doc.get("dates") or {})
+                    for s in sn:
+                        cur = dict(dates.get(s.lower()) or {})
+                        for key, v in (("deploy", dep), ("mfg", mf)):
+                            if v is None:
+                                continue
+                            if v:
+                                cur[key] = v
+                            else:
+                                cur.pop(key, None)
+                        if cur:
+                            dates[s.lower()] = cur
+                        else:
+                            dates.pop(s.lower(), None)
+                    h.put_named("device-dates", {"dates": dates})
+                    break
+                except Exception as ce:
+                    if ce.__class__.__name__ != "HubConflict" or attempt == 2:      # someone saved first: reload and retry
+                        raise
+            try:
+                bits = (f"deploy date {dep or 'cleared'}" if dep is not None else "") + (", " if dep is not None and mf is not None else "") + (f"manufacture date {mf or 'cleared'}" if mf is not None else "")
+                h._change("Device dates", f"{self._actor() or 'NBG Hub'}: {bits} on {len(sn)} device(s)" + (f" ({', '.join(sn[:5])})" if len(sn) <= 5 else ""))
+            except Exception:
+                pass
+            return {"ok": True, "data": dates}
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
+            return self._fail(e)
+
     def bulk_audit(self, action: str, ok: int = 0, failed: int = 0, detail: str = "") -> dict:
         """One audit entry for a whole bulk run on the Devices page (each device is also logged by its own action)."""
         try:

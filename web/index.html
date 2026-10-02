@@ -246,6 +246,7 @@
             <option value="90">In stock 90+ days</option>
             <option value="180">In stock 180+ days</option>
           </select>
+          <select id="fMfr" class="filt" onchange="App.render()"><option value="">All manufacturers</option></select>
           <select id="fWarr" class="filt" onchange="App.render()">
             <option value="">All warranties</option>
             <option value="expired">Warranty expired</option>
@@ -339,7 +340,7 @@
       <div class="panel">
         <div class="tools sw-tools">
           <input id="swSearch" type="search" placeholder="Search software, publisher, person or device…" autocomplete="off" oninput="Software.typed()">
-          <select id="swDept" onchange="Software.render()"><option value="all">All departments</option></select>
+          <select id="swDept" class="filt" onchange="Software.render()"><option value="all">All departments</option></select>
           <button class="ghost" onclick="Software.mandatory()" title="Choose which apps each department must have, and how the automatic list is built">Mandatory apps…</button>
           <div class="iss-seg" role="radiogroup" aria-label="Which apps">
             <label class="on"><input type="radio" name="swMand" value="all" checked onchange="Software.setMand(this)">All apps</label>

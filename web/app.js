@@ -11,7 +11,7 @@ const attr = s => (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/"
    must NOT lock the screen, so they are excluded. */
 const Busy = {
   n: 0, timer: null,
-  WRITE: /^(bulk_|save_|set_|add_|hub_bulk|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|switch_|register_|reserve_|complete_|start_|issue_(create|comment|update|delete|vote|watch|notify)|issues_import)/,
+  WRITE: /^(bulk_|device_dates_set|save_|set_|add_|hub_bulk|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|switch_|register_|reserve_|complete_|start_|issue_(create|comment|update|delete|vote|watch|notify)|issues_import)/,
   LONG: /^(run_sync|enrich_inventory|sync_all_divisions|master_sync|populate_mfa|boneyard_sweep|software_refresh|mfa_people_refresh|pull_prod_snapshot|set_data_mode)$/,
   watches(method) { return this.WRITE.test(method) && !this.LONG.test(method); },
   /* Long jobs keep running when you move to another page (the work is in the backend); this shows them in the sidebar
@@ -539,6 +539,59 @@ const DirPicker = {
   },
 };
 
+/* Searchable filter dropdowns. The real <select class="filt"> stays (hidden) as the source of truth, so every existing
+   `select.value = ...` and onchange keeps working; a small type-to-filter box is shown in its place. */
+const Filt = {
+  enhance(sel) {
+    if (!sel || sel.dataset.enh) return;
+    sel.dataset.enh = "1"; sel.classList.add("enh");
+    const w = document.createElement("span"); w.className = "fsel";
+    w.innerHTML = `<input class="fsel-in" autocomplete="off" spellcheck="false"><span class="fsel-caret">▾</span><div class="fsel-list hidden"></div>`;
+    sel.after(w);
+    const inp = w.querySelector("input"), list = w.querySelector(".fsel-list");
+    let shown = [];
+    const label = () => (sel.options[sel.selectedIndex] || {}).text || "";
+    const sync = () => { inp.value = label(); w.classList.toggle("on", !!sel.value); };
+    sel._sync = sync;
+    const draw = q => {
+      const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+      shown = [...sel.options].filter(o => words.every(x => o.text.toLowerCase().includes(x)));
+      list.innerHTML = shown.length ? shown.map((o, n) => `<div class="fsel-item${o.value === sel.value ? " sel" : ""}" data-n="${n}">${esc(o.text)}</div>`).join("") : `<div class="fsel-none">No match</div>`;
+      list.classList.remove("hidden");
+    };
+    const close = () => { list.classList.add("hidden"); sync(); };
+    const pick = o => { sel.value = o.value; sel.dispatchEvent(new Event("change")); close(); inp.blur(); };
+    inp.addEventListener("focus", () => { inp.select(); draw(""); });
+    inp.addEventListener("input", () => draw(inp.value.trim()));
+    inp.addEventListener("keydown", e => {
+      if (e.key === "Enter" && shown.length && !list.classList.contains("hidden")) { e.preventDefault(); pick(shown[0]); }
+      else if (e.key === "Escape") { close(); inp.blur(); }
+    });
+    inp.addEventListener("blur", () => setTimeout(close, 160));
+    list.addEventListener("mousedown", e => { const el = e.target.closest(".fsel-item"); if (!el) return; e.preventDefault(); pick(shown[+el.dataset.n]); });
+    sync();
+  },
+  enhanceAll() { document.querySelectorAll("select.filt").forEach(s => this.enhance(s)); },
+  syncAll() { document.querySelectorAll("select.filt.enh").forEach(s => { if (s._sync) s._sync(); }); },
+};
+
+/* Deploy and manufacture dates (a small hub document per division, keyed by serial), shown as extra fields on every device row. */
+const DeviceDates = {
+  map: {},
+  apply(...lists) {
+    lists.forEach(l => (l || []).forEach(x => { const d = this.map[(x.serial || "").toLowerCase()] || {}; x.deploy_date = d.deploy || ""; x.mfg_date = d.mfg || ""; }));
+  },
+  async overlay(...lists) {
+    try { const r = await Backend.call("device_dates_get"); this.map = (r && r.ok && r.data) || {}; } catch (e) { this.map = {}; }
+    this.apply(...lists);
+  },
+  async set(serials, deploy, mfg) {
+    const r = await Backend.call("device_dates_set", serials, deploy, mfg);
+    if (r && r.ok) { this.map = r.data || {}; this.apply(App.state.stock, App.state.use, App.state.boneyard); }
+    return r;
+  },
+};
+
 /* Searchable pick list: type to filter (every word must appear somewhere in the option), click or Enter to pick.
    Keeps the chosen value in a hidden input with id `valueId`, so older code can read it like a <select>. */
 const Combo = {
@@ -586,6 +639,7 @@ const App = {
     DataMode.refresh();
     Settings.refreshAccess();
     await Tz.load();
+    Filt.enhanceAll();
     document.getElementById("tableWrap").addEventListener("change", e => {
       const t = e.target;
       if (t.id === "selAll") App.selAll(t.checked);
@@ -607,6 +661,7 @@ const App = {
       else if (b.dataset.action === "editspecs") Specs.open(b.dataset.serial);
       else if (b.dataset.action === "editstock") App.editStock(b.dataset.serial);
       else if (b.dataset.action === "restoreboneyard") App.restoreBoneyard(b.dataset.serial);
+      else if (b.dataset.action === "deploy") App.deployPrompt(b.dataset.serial);
     });
     const st = st0 || await Backend.call("get_status");
     if (st && st.signed_in) {
@@ -792,6 +847,7 @@ const App = {
     this.state.use = inv.in_use || [];
     this.state.boneyard = inv.boneyard || [];
     await People.overlay(this.state.use);
+    await DeviceDates.overlay(this.state.stock, this.state.use, this.state.boneyard);
     this.setCounts(inv.counts);
     try { localStorage.setItem(Divisions.invKey(), JSON.stringify(inv)); } catch (e) { /* quota */ }
     this.setBusy(false);
@@ -856,12 +912,53 @@ const App = {
     fill("fCpu", "All CPUs", this.state.use.map(r => r.cpu));
     fill("fRam", "All RAM", this.state.use.map(r => r.ram));
     setTimeout(() => this._applyPendingFilters(true), 0);   // saved dropdown choices can be applied now that the options exist
+    fill("fMfr", "All manufacturers", [].concat(this.state.stock, this.state.use, this.state.boneyard || []).map(r => this.mfrName(r.manufacturer)));
     fill("fSite", "All sites", [].concat(this.state.siteTags || [], this.state.stock.map(r => r.site_tag), this.state.use.map(r => r.site_tag), (this.state.boneyard || []).map(r => r.site_tag)));
+  },
+  /* "Dell Inc." and "Dell" are one manufacturer for filtering */
+  mfrName(m) {
+    const s = String(m || "").trim(); if (!s) return "";
+    const l = s.toLowerCase();
+    if (/^hewlett|^hp/.test(l)) return "HP";
+    if (/^dell/.test(l)) return "Dell";
+    if (/^lenovo/.test(l)) return "Lenovo";
+    if (/^microsoft/.test(l)) return "Microsoft";
+    if (/^apple/.test(l)) return "Apple";
+    const w = s.split(/[\s,]+/)[0].replace(/[.,]+$/, "");
+    return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  },
+  async setDate(serial, which, value) {
+    const r = await DeviceDates.set([serial], which === "deploy" ? value : null, which === "mfg" ? value : null);
+    if (!r || !r.ok) { this.toast((r && r.error) || "Could not save the date.", true); return this.render(); }
+    this.toast(value ? `${which === "deploy" ? "Deploy" : "Manufacture"} date saved for ${serial}.` : "Date cleared.");
+    this.render();
+  },
+  /* the quick "Deploy" button on the In stock list */
+  deployPrompt(serial) {
+    const r = (this.state.stock || []).find(x => x.serial === serial) || (this.state.use || []).find(x => x.serial === serial) || { serial };
+    const today = new Date().toISOString().slice(0, 10);
+    document.getElementById("modalRoot").innerHTML =
+      `<div class="overlay"><div class="modal" style="width:440px;max-width:94vw">
+        <div class="modal-head"><h3>Mark as deployed</h3><button onclick="App._closeModal()">&times;</button></div>
+        <div class="modal-body">
+          <p style="margin:0 0 10px"><span class="mono">${esc(r.serial)}</span> ${esc(r.model || "")}</p>
+          <div class="field"><label>Deploy date</label><input type="date" id="dpDate" value="${attr(r.deploy_date || today)}" max="${today}"></div>
+          <p class="sub-note" style="margin:8px 0 0">This records the date only. The machine moves to In use when it checks in with a user.</p>
+        </div>
+        <div class="modal-foot"><button class="ghost" onclick="App._closeModal()">Cancel</button><button class="primary" id="dpGo" onclick="App._doDeploy('${attr(r.serial)}', this)">Mark deployed</button></div>
+      </div></div>`;
+  },
+  async _doDeploy(serial, btn) {
+    const d = (document.getElementById("dpDate") || {}).value || "";
+    if (!d) return this.toast("Choose a date.", true);
+    let r; await Ui.working(btn, "Saving…", async () => { r = await DeviceDates.set([serial], d, null); return false; });
+    if (!r || !r.ok) return this.toast((r && r.error) || "Could not save.", true);
+    this._closeModal(); this.toast(`${serial} marked deployed on ${d}.`); this.render();
   },
   clearUserFilter() { this.state.userFilter = null; this.render(); },
   clearFilters() {
     this.state.userFilter = null;
-    ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fSite", "fWarr", "fAge"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+    ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fSite", "fMfr", "fWarr", "fAge"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
     const s = document.getElementById("search"); if (s) s.value = "";
     this.render();
   },
@@ -887,7 +984,7 @@ const App = {
     const q = (document.getElementById("search") || {}).value;
     const uf = this.state.userFilter, chip = document.getElementById("ufChip");
     if (chip) { chip.classList.toggle("hidden", !uf); chip.innerHTML = uf ? `Teammates: ${uf.size} <a onclick="App.clearUserFilter()" title="Show everyone again">&times;</a>` : ""; }
-    const any = !!uf || !!(q && q.trim()) || ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fSite", "fWarr", "fAge"].some(id => { const e = document.getElementById(id); return e && e.value && !e.classList.contains("hidden"); });
+    const any = !!uf || !!(q && q.trim()) || ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fSite", "fMfr", "fWarr", "fAge"].some(id => { const e = document.getElementById(id); return e && e.value && !e.classList.contains("hidden"); });
     const c = document.getElementById("fClear"); if (c) c.classList.toggle("hidden", !any);
   },
   /* ---- bulk select ---- */
@@ -921,8 +1018,8 @@ const App = {
     const n = this.state.sel.size, tab = this.state.tab;
     if (!n) { bar.classList.add("hidden"); bar.innerHTML = ""; return; }
     const b = (kind, label, cls) => `<button class="rowbtn${cls ? " " + cls : ""}" onclick="Bulk.open('${kind}')">${label}</button>`;
-    const actions = tab === "stock" ? b("site", "Set site…") + b("remove", "Remove…", "danger")
-      : tab === "use" ? b("upgrade", "⬆ Add to upgrade list…") + b("tostock", "📦 Move to In Stock…") + b("remove", "Remove…", "danger")
+    const actions = tab === "stock" ? b("deploy", "🚀 Mark deployed…") + b("mfgdate", "Set manufacture date…") + b("site", "Set site…") + b("remove", "Remove…", "danger")
+      : tab === "use" ? b("deploy", "🚀 Set deploy date…") + b("mfgdate", "Set manufacture date…") + b("upgrade", "⬆ Add to upgrade list…") + b("tostock", "📦 Move to In Stock…") + b("remove", "Remove…", "danger")
       : b("restore", "↩ Restore to Stock…");
     bar.classList.remove("hidden");
     bar.innerHTML = `<b>${n} selected</b><span class="bulk-actions">${actions}</span><a class="bulk-clear" onclick="App.selAll(false)">Clear selection</a>`;
@@ -930,7 +1027,7 @@ const App = {
 
   /* ---- remember the Devices view (tab, search, filters, sort) for each division ---- */
   _viewKey() { return "nbg_dev_view_" + (Divisions.current || "x"); },
-  _FILTER_IDS: ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fSite", "fWarr", "fAge"],
+  _FILTER_IDS: ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fSite", "fMfr", "fWarr", "fAge"],
   _restoreView() {
     const key = this._viewKey();
     if (this._restored === key) return;
@@ -960,8 +1057,8 @@ const App = {
   copyList() {
     const rows = this._shown || [], tab = this.state.tab, day = v => (v || "").slice(0, 10);
     const cols = {
-      stock: [["Serial", r => r.serial], ["Manufacturer", r => r.manufacturer], ["Model", r => r.model], ["CPU", r => r.cpu], ["RAM", r => r.ram], ["Storage", r => r.storage], ["Site", r => r.site_tag], ["Warranty", r => day(r.warranty)], ["Added", r => day(r.date_added)]],
-      use: [["Serial", r => r.serial], ["Device", r => r.device_name], ["User", r => r.user], ["Manufacturer", r => r.manufacturer], ["Model", r => r.model], ["CPU", r => r.cpu], ["RAM", r => r.ram], ["Storage", r => r.storage], ["MFA", r => r.mfa], ["Site", r => r.site_tag], ["Warranty", r => day(r.warranty)], ["Last check-in", r => day(r.last_checkin)], ["OS", r => winOsLabel(r.os_version)]],
+      stock: [["Serial", r => r.serial], ["Manufacturer", r => r.manufacturer], ["Model", r => r.model], ["CPU", r => r.cpu], ["RAM", r => r.ram], ["Storage", r => r.storage], ["Site", r => r.site_tag], ["Warranty", r => day(r.warranty)], ["Added", r => day(r.date_added)], ["Deployed", r => r.deploy_date], ["Manufactured", r => r.mfg_date]],
+      use: [["Serial", r => r.serial], ["Device", r => r.device_name], ["User", r => r.user], ["Manufacturer", r => r.manufacturer], ["Model", r => r.model], ["CPU", r => r.cpu], ["RAM", r => r.ram], ["Storage", r => r.storage], ["MFA", r => r.mfa], ["Site", r => r.site_tag], ["Warranty", r => day(r.warranty)], ["Deployed", r => r.deploy_date], ["Manufactured", r => r.mfg_date], ["Last check-in", r => day(r.last_checkin)], ["OS", r => winOsLabel(r.os_version)]],
       boneyard: [["Serial", r => r.serial], ["Former hostname", r => r.device_name], ["Model", r => r.model], ["Last user", r => r.user], ["Retired", r => day(r.moved_at)], ["Reason", r => r.reason]],
     }[tab] || [];
     const cell = v => String(v == null ? "" : v).replace(/[\t\r\n]+/g, " ");
@@ -1039,6 +1136,7 @@ const App = {
     this._renderCore();
     this._decorateSel();
     this._saveView();
+    Filt.syncAll();
   },
 
   _renderCore() {
@@ -1053,7 +1151,7 @@ const App = {
     const fr = isUse ? val("fRam") : "";
     const fk = isUse ? val("fCheckin") : "";
     const fmfa = isUse ? val("fMfa") : "";
-    const fsite = val("fSite"), fwarr = val("fWarr"), fage = isStock ? val("fAge") : "";
+    const fsite = val("fSite"), fmfr = val("fMfr"), fwarr = val("fWarr"), fage = isStock ? val("fAge") : "";
     const ageOk = r => {                         // how long a machine has sat in stock (days since it was added)
       if (!fage) return true;
       const d = daysSince(r.date_added);
@@ -1102,11 +1200,11 @@ const App = {
     const hay = r => [
       r.serial, r.device_name, r.manufacturer, r.model, r.user, r.site_tag,
       r.cpu, r.ram, r.storage, r.warranty, r.mfa, r.os_version, winOsLabel(r.os_version),
-      r.last_checkin, r.os_install, r.date_added,
+      r.last_checkin, r.os_install, r.date_added, r.deploy_date, r.mfg_date,
     ].map(v => (v == null ? "" : String(v)).toLowerCase()).join(" ");
     const match = r => (!q || hay(r).includes(q))
       && (!fm || (r.model || "") === fm) && (!fc || (r.cpu || "") === fc) && (!fr || (r.ram || "") === fr) && checkinOk(r) && mfaOk(r)
-      && (!fsite || (r.site_tag || "") === fsite) && (!fwarr || warrState(r.warranty) === fwarr) && ageOk(r)
+      && (!fsite || (r.site_tag || "") === fsite) && (!fmfr || this.mfrName(r.manufacturer) === fmfr) && (!fwarr || warrState(r.warranty) === fwarr) && ageOk(r)
       && (!this.state.userFilter || this.state.userFilter.has((r.user || "").toLowerCase()));
     const wrap = document.getElementById("tableWrap");
     const dcol = "white-space:nowrap";  // keep dates on one line
@@ -1127,6 +1225,9 @@ const App = {
       `<button class="rowbtn${danger ? " danger" : ""}" data-action="${action}" data-serial="${attr(serial)}"${title ? ` title="${attr(title)}"` : ""}>${label}</button>`;
 
     const dl = (k, v) => `<div><span style="color:var(--muted);font-size:11px;display:block">${esc(k)}</span><span>${esc(v) || "—"}</span></div>`;
+    const today = new Date().toISOString().slice(0, 10);
+    const dateEd = (r, which) => `<div><span style="color:var(--muted);font-size:11px;display:block">${which === "deploy" ? "Deploy date" : "Manufacture date"}</span>` +
+      `<input type="date" class="dt-in" value="${attr(which === "deploy" ? r.deploy_date || "" : r.mfg_date || "")}" max="${today}" title="Type or pick a date; clear the box to remove it" onchange="App.setDate('${attr(r.serial)}','${which}',this.value)"></div>`;
     const siteOpts = r => {
       const opts = App.state.siteTags.slice();
       if (r.site_tag && !opts.includes(r.site_tag)) opts.unshift(r.site_tag);
@@ -1141,12 +1242,12 @@ const App = {
         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 24px;background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:14px 16px;">
           ${dl("Serial number", r.serial)}${dl("Manufacturer", r.manufacturer)}${dl("Model", r.model)}
           ${dl("CPU", r.cpu)}${dl("RAM", r.ram)}${dl("Storage", r.storage)}
-          ${dl("Warranty", day(r.warranty))}${dl("Date added", day(r.date_added))}
+          ${dl("Warranty", day(r.warranty))}${dl("Date added", day(r.date_added))}${dateEd(r, "deploy")}${dateEd(r, "mfg")}
           <div><span style="color:var(--muted);font-size:11px;display:block">Site assignment</span>
             <select onchange="App.setSite('${attr(r.serial)}', this.value)" style="background:var(--darker);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:13px;margin-top:2px;">${siteOpts(r)}</select></div>
         </div></td></tr>`;
       wrap.innerHTML = `<table class="fit">` +
-        `<colgroup><col style="width:42px"><col style="width:12%"><col style="width:12%"><col style="width:16%"><col style="width:22%"><col style="width:8%"><col style="width:11%"><col style="width:11%"><col style="width:92px"></colgroup>` +
+        `<colgroup><col style="width:42px"><col style="width:12%"><col style="width:12%"><col style="width:16%"><col style="width:22%"><col style="width:8%"><col style="width:11%"><col style="width:11%"><col style="width:170px"></colgroup>` +
         `<thead><tr>` +
         `<th></th>` +
         th("Serial number", "serial") + th("Manufacturer", "manufacturer") + th("Model", "model") +
@@ -1159,7 +1260,7 @@ const App = {
           <td class="mono" title="${attr(r.serial)}">${esc(r.serial)}</td><td title="${attr(r.manufacturer)}">${esc(r.manufacturer)}</td><td title="${attr(r.model)}">${esc(r.model)}</td>
           <td title="${attr([r.cpu, r.ram, r.storage].filter(Boolean).join(" · "))}">${esc([r.cpu, r.ram, r.storage].filter(Boolean).join(" · "))}</td>
           <td>${esc(r.site_tag)}</td><td>${warrCell(r.warranty)}</td><td>${esc(day(r.date_added))}</td>
-          <td style="text-align:right;white-space:nowrap">${act("✎", "editstock", r.serial, false, "Edit device")} ${act("✕", "remove", r.serial, true, "Remove")}</td></tr>` +
+          <td style="text-align:right;white-space:nowrap">${act("🚀 Deploy", "deploy", r.serial, false, r.deploy_date ? "Deployed " + r.deploy_date + " - click to change" : "Record the date this machine was deployed")} ${act("✎", "editstock", r.serial, false, "Edit device")} ${act("✕", "remove", r.serial, true, "Remove")}</td></tr>` +
           (open ? detail(r) : "");
         }).join("") +
         `</tbody></table>`;
@@ -1200,24 +1301,24 @@ const App = {
         : v === "No"
         ? '<span style="color:#ff6b6b;font-weight:600">No</span>'
         : '<span style="color:var(--muted)" title="MFA status unavailable — needs AuditLog.Read.All consent">—</span>';
-      const detail = r => `<tr><td></td><td colspan="9" class="detailcell" style="padding:0 18px 14px;">
+      const detail = r => `<tr><td></td><td colspan="10" class="detailcell" style="padding:0 18px 14px;">
         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 24px;background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:14px 16px;">
           ${dl("Device name", r.device_name)}${dl("Serial number", r.serial)}${dl("Primary user", r.user)}
           ${dl("Manufacturer", r.manufacturer)}${dl("Model", r.model)}${dl("Site tag", r.site_tag)}
           ${dl("CPU", r.cpu)}${dl("RAM", r.ram)}${dl("Storage", r.storage)}
           ${dl("OS version", winOsLabel(r.os_version))}${dl("OS install date", day(r.os_install))}${dl("Warranty", r.warranty)}
-          ${dl("MFA registered", r.mfa || "—")}
+          ${dl("MFA registered", r.mfa || "—")}${dateEd(r, "deploy")}${dateEd(r, "mfg")}
         </div>
         <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">
           <button class="rowbtn" onclick="HotSpares.openMove('${attr(r.serial)}')" title="Move back to In Stock and log as a ready hot spare (held out of the stock count)">🔥 Hot Spare</button>
           <button class="rowbtn" onclick="App.moveToStock('${attr(r.serial)}')" title="Move back to In Stock (clears the assigned user)">📦 In Stock</button>
         </div></td></tr>`;
       wrap.innerHTML = `<table class="fit">` +
-        `<colgroup><col style="width:42px"><col style="width:11%"><col style="width:12%"><col style="width:15%"><col style="width:19%"><col style="width:6%"><col style="width:7%"><col style="width:10%"><col style="width:12%"><col style="width:96px"></colgroup>` +
+        `<colgroup><col style="width:42px"><col style="width:10%"><col style="width:11%"><col style="width:13%"><col style="width:17%"><col style="width:6%"><col style="width:6%"><col style="width:9%"><col style="width:9%"><col style="width:11%"><col style="width:96px"></colgroup>` +
         `<thead><tr>` +
         `<th></th>` +
         th("Serial number", "serial") + th("Manufacturer", "manufacturer") + th("Model", "model") +
-        th("Assigned user", "user") + th("MFA", "mfa") + th("Site", "site_tag") + th("Warranty", "warranty", dcol) +
+        th("Assigned user", "user") + th("MFA", "mfa") + th("Site", "site_tag") + th("Warranty", "warranty", dcol) + th("Deployed", "deploy_date", dcol) +
         th("Last check-in", "last_checkin", dcol) +
         `<th style="text-align:right">Actions</th></tr></thead><tbody>` +
         rows.map(r => {
@@ -1226,6 +1327,7 @@ const App = {
             <td><button class="rowbtn" data-action="expand" data-serial="${attr(r.serial)}" style="padding:2px 8px;line-height:1" title="Show all specs">${open ? "−" : "+"}</button></td>
             <td class="mono" title="${attr(r.serial)}">${esc(r.serial)}</td><td class="cell-mfr" title="${attr(r.manufacturer)}">${esc(r.manufacturer)}</td><td title="${attr(r.model)}">${esc(r.model)}</td>
             <td class="cell-user">${r.user ? `<a class="sw-user" data-user="${attr(r.user)}" title="See everything ${attr(r.user)} has installed">${esc(r.user)}</a>` : "—"}</td><td>${mfaCell(r.mfa)}</td><td>${esc(r.site_tag)}</td><td>${warrCell(r.warranty)}</td>
+            <td>${r.deploy_date ? esc(r.deploy_date) : '<span class="muted">—</span>'}</td>
             <td>${esc(day(r.last_checkin))}${checkinBadge(r.last_checkin)}</td>
             <td style="text-align:right;white-space:nowrap">${act("✎", "editspecs", r.serial, false, "Edit CPU, RAM, storage and warranty")} ${act("⬆", "upgrade", r.serial, false, "Add to upgrade list")} ${act("✕", "remove", r.serial, true, "Remove")}</td></tr>` +
             (open ? detail(r) : "");
@@ -1514,13 +1616,17 @@ const DeleteView = {
 /* ---- bulk actions on the Devices page: one confirmation, then the same single-device calls one by one ---- */
 const Bulk = {
   kind: "", serials: [], pri: 3,
-  TITLE: { site: "Set site", remove: "Remove devices", tostock: "Move to In Stock", upgrade: "Add to upgrade list", restore: "Restore to Stock" },
+  TITLE: { deploy: "Deploy date", mfgdate: "Manufacture date", site: "Set site", remove: "Remove devices", tostock: "Move to In Stock", upgrade: "Add to upgrade list", restore: "Restore to Stock" },
   open(kind) {
     this.kind = kind; this.serials = [...App.state.sel]; this.pri = 3;
     const n = this.serials.length; if (!n) return;
     const list = `<div class="bulk-list">${this.serials.slice(0, 8).map(s => `<span class="md-tag">${esc(s)}</span>`).join(" ")}${n > 8 ? ` <span class="muted">+ ${n - 8} more</span>` : ""}</div>`;
     let body = "", btn = "Run", danger = false;
-    if (kind === "site") {
+    if (kind === "deploy" || kind === "mfgdate") {
+      const today = new Date().toISOString().slice(0, 10);
+      body = `<div class="field"><label>${kind === "deploy" ? "Deploy date" : "Manufacture date"}</label><input type="date" id="bkDate" value="${kind === "deploy" ? today : ""}" max="${today}"></div>`;
+      btn = `Save on ${n}`;
+    } else if (kind === "site") {
       body = `<div class="field"><label>New site</label><select id="bkSite">${App.state.siteTags.map(t => `<option>${esc(t)}</option>`).join("")}</select></div>`; btn = `Set site on ${n}`;
     } else if (kind === "remove") {
       danger = true; btn = `Remove ${n}`;
@@ -1550,6 +1656,15 @@ const Bulk = {
   async run() {
     const kind = this.kind, serials = this.serials.slice(), v = id => ((document.getElementById(id) || {}).value || "").trim();
     if (kind === "remove" && serials.length > 5 && v("bkConfirm") !== String(serials.length)) return App.toast(`Type ${serials.length} to confirm.`, true);
+    if (kind === "deploy" || kind === "mfgdate") {                         // one call for all of them
+      const d = v("bkDate"); if (!d) return App.toast("Choose a date.", true);
+      const go0 = document.getElementById("bkGo"); go0.disabled = true;
+      const r = await DeviceDates.set(serials, kind === "deploy" ? d : null, kind === "mfgdate" ? d : null);
+      go0.disabled = false;
+      if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+      App.state.sel.clear(); this.close(); App.render(); App.toast(`${this.TITLE[kind]} saved on ${serials.length} device${serials.length === 1 ? "" : "s"}.`);
+      return;
+    }
     const reason = v("bkReason"), site = v("bkSite"), notes = v("bkNotes"), pri = this.pri;
     const call = {
       site: s => Backend.call("set_site", s, site),
@@ -4103,6 +4218,7 @@ const Upgrade = {
     const set = (id, v) => { const e = document.getElementById(id); if (e) e.value = v; };
     set("upQ", this.f.q); set("upPri", this.f.pri); set("upReason", this.f.reason); set("upStatus", this.f.status);
     document.querySelectorAll("#upViewSeg label").forEach(l => { const i = l.querySelector("input"); i.checked = i.value === this.view; l.classList.toggle("on", i.checked); });
+    Filt.syncAll();
   },
 
   /* remembered for each division: site tab, view and filters */
@@ -5933,6 +6049,15 @@ Object.assign(Mock, {
     return { ok: true, data: this._mfaPeople };
   },
   async bulk_audit() { return { ok: true }; },
+  _deviceDates: {},
+  async device_dates_get() { return { ok: true, data: this._deviceDates }; },
+  async device_dates_set(serials, deploy, mfg) {
+    (serials || []).forEach(s => { const k = String(s).toLowerCase(), cur = { ...(this._deviceDates[k] || {}) };
+      if (deploy !== null && deploy !== undefined) { if (deploy) cur.deploy = deploy; else delete cur.deploy; }
+      if (mfg !== null && mfg !== undefined) { if (mfg) cur.mfg = mfg; else delete cur.mfg; }
+      this._deviceDates[k] = cur; });
+    return { ok: true, data: this._deviceDates };
+  },
   async open_mailto(to, subject, body) { console.log("mailto", to, subject); return { ok: true }; },
   async issue_counts() { return { ok: true, new: this._issues.filter(d => d.status === "new").length, updates: 1, triage: true }; },
   async get_update_info() { return { ok: true, current: "2026.10.01", latest: "", min: "", update_available: false, update_required: false }; },

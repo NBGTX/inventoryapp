@@ -127,7 +127,8 @@ const Help = {
         <h5>Finding things</h5>
         <ul>
           <li>Type in the search box to filter the current tab. It matches serial, hostname, user, model, OS and site.</li>
-          <li><b>Site</b> and <b>warranty</b> filters work on every tab. On <b>In use</b> there are also model, CPU, RAM, last check-in and MFA filters. <b>Clear filters</b> removes them all. The line at the right shows how many rows match.</li>
+          <li>Every filter box is <b>searchable</b>: click it and type part of a name (for example a model) to narrow the list, then click or press Enter. <b>Manufacturer</b> merges names like "Dell" and "Dell Inc.".</li>
+          <li><b>Site</b>, <b>manufacturer</b> and <b>warranty</b> filters work on every tab. On <b>In use</b> there are also model, CPU, RAM, last check-in and MFA filters. <b>Clear filters</b> removes them all. The line at the right shows how many rows match.</li>
           <li>Click a column heading to sort. Click anywhere on a row (or its <b>+</b>) to see its full details.</li>
           <li><b>Copy list</b> copies the rows you see (after search and filters) so you can paste them into Excel or a message.</li>
           <li>Warranty dates show <span style="color:var(--red)">red</span> when expired and <span style="color:var(--amber)">amber</span> when they end within 90 days.</li>
@@ -136,6 +137,12 @@ const Help = {
         </ul>
         <h5>Adding machines</h5>
         <p>Click <b>Add new machine</b>: choose the maker, paste or scan up to 10 serial numbers, then review what the maker's service lookup found and click <b>Add</b>. See the notes inside that window.</p>
+        <h5>Deploy and manufacture dates</h5>
+        <ul>
+          <li>On <b>In stock</b>, click <b>🚀 Deploy</b> on a row to record the day it was deployed (today by default). It records the date only; the machine moves to In use when it checks in with a user.</li>
+          <li>Open a row (click it) to type or pick a <b>Deploy date</b> or <b>Manufacture date</b> yourself; clear the box to remove it. <b>In use</b> shows a <b>Deployed</b> column, and both dates are in <b>Copy list</b> and can be searched.</li>
+          <li>With rows ticked, <b>Mark deployed</b> / <b>Set deploy date</b> and <b>Set manufacture date</b> apply one date to all of them. The dates are kept per serial number, so they stay with a machine as it moves between lists.</li>
+        </ul>
         <h5>Several machines at once</h5>
         <ul>
           <li>Tick the boxes at the start of rows (the box in the heading ticks every row shown). A bar appears with what you can do to the ticked rows: <b>Set site</b> and <b>Remove</b> on In stock; <b>Add to upgrade list</b>, <b>Move to In Stock</b> and <b>Remove</b> on In use; <b>Restore</b> on the Boneyard.</li>
