@@ -946,3 +946,16 @@ a.sw-user{color:var(--amber);cursor:pointer;}a.sw-user:hover{text-decoration:und
 .sw-ed-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 #swEdQ{background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;margin-bottom:6px;}
 .modal-body .field input[type=number]{max-width:160px;}
+
+/* ---- Mandatory apps window ---- */
+.md-tabs{display:flex;gap:4px;padding:0 22px;border-bottom:1px solid var(--border);}
+.md-tab{background:transparent;border:none;border-bottom:3px solid transparent;color:var(--muted);padding:10px 14px;font-size:14px;cursor:pointer;margin-bottom:-1px;}
+.md-tab:hover{color:var(--light);}
+.md-tab.on{color:var(--amber);border-bottom-color:var(--amber);font-weight:600;}
+.md-tag{font-size:11px;border:1px solid var(--border);border-radius:10px;padding:1px 8px;color:var(--muted);white-space:nowrap;}
+.md-tag.you{border-color:var(--amber);color:var(--amber);}.md-tag.off{border-color:var(--red);color:var(--red);}
+.md-more{margin-top:18px;padding-top:12px;border-top:1px solid var(--border);}
+.md-rule{display:grid;grid-template-columns:170px 90px 1fr;gap:12px;align-items:center;margin-bottom:12px;font-size:13px;}
+.md-rule input{background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:14px;width:90px;}
+.md-preview{margin-top:16px;padding:10px 14px;border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.03);font-size:13px;}
+.sw-ed-row{grid-template-columns:1fr auto auto auto;}

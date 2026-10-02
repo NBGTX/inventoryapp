@@ -3410,94 +3410,118 @@ const Software = {
     if (!r || !r.ok) App.toast((r && r.error) || "Could not save.", true);
     return !!(r && r.ok);
   },
-  /* ---- editor for one department's mandatory list ---- */
-  _ed: { scope: "", q: "" },
-  editList() {
-    const scope = this._scope();
-    if (scope === "all") return App.toast("Pick a department first.", true);
-    this._ed = { scope, q: "" };
-    this._edRender();
+  /* ---- "Mandatory apps" window: tab 1 = one department's list, tab 2 = the automatic rule ---- */
+  _md: { tab: "dept", scope: "", q: "", draft: null },
+  mandatory(tab) {
+    const s = this._scope();
+    this._md = { tab: tab || "dept", scope: s === "all" ? "" : s, q: "", draft: null };
+    this._mdRender();
   },
-  _edRender() {
-    const { scope, q } = this._ed, A = this.data.apps, U = this.data.users;
+  _mdDepts() { return [...new Set((this.data.users || []).map(u => SWLogic.deptKey(u)))].sort(); },
+  _mdRender() {
+    const m = this._md;
+    const tabs = [["dept", "Department list"], ["auto", "Automatic rule"]].map(([id, label]) =>
+      `<button type="button" class="md-tab${m.tab === id ? " on" : ""}" onclick="Software.mdTab('${id}')">${label}</button>`).join("");
+    const body = m.tab === "dept" ? this._mdDept() : this._mdAuto();
+    document.getElementById("modalRoot").innerHTML =
+      `<div class="overlay"><div class="modal" style="width:780px;max-width:96vw">
+        <div class="modal-head"><h3>Mandatory apps</h3><button onclick="Software.mdClose()">&times;</button></div>
+        <div class="md-tabs">${tabs}</div>
+        <div class="modal-body" style="max-height:66vh;overflow-y:auto">${body}</div>
+        <div class="modal-foot">${m.tab === "auto"
+          ? `<button class="ghost" onclick="Software.mdClose()">Cancel</button><button class="primary" onclick="Software.arSave(this)">Save rule</button>`
+          : `<button class="primary" onclick="Software.mdClose()">Done</button>`}</div>
+      </div></div>`;
+    if (m.tab === "auto") this.arDraft();
+    if (m.tab === "dept" && m.q) { const el = document.getElementById("swEdQ"); if (el) { el.focus(); el.setSelectionRange(m.q.length, m.q.length); } }
+  },
+  mdTab(t) { this._md.tab = t; this._md.draft = null; this._mdRender(); },
+  mdClose() { document.getElementById("modalRoot").innerHTML = ""; this.render(); },
+
+  /* tab 1 */
+  _mdDept() {
+    const { scope, q } = this._md, A = this.data.apps, U = this.data.users;
+    const picker = `<div class="field" style="margin:0 0 12px;max-width:420px"><label>Department</label>
+      <select id="mdDept" onchange="Software.mdScope(this.value)"><option value="">Choose a department…</option>${this._mdDepts().map(k => `<option${k === scope ? " selected" : ""}>${esc(k)}</option>`).join("")}</select></div>`;
+    if (!scope) return picker + `<p class="sub-note" style="margin:0">Pick a department to see and change the apps every person in it must have. These lists drive the <b>Mandatory only</b> view and the missing-software checks.</p>`;
     const cn = SWLogic.counts(A, U, scope), cnt = Object.fromEntries(cn.rows.map(r => [r.name, r.n]));
     const mand = SWLogic.mandatoryApps(A, U, this.rules, scope).sort((x, y) => (cnt[y] || 0) - (cnt[x] || 0) || x.localeCompare(y));
     const autoSet = new Set(SWLogic.autoTop(A, U, scope));
     const removed = [...autoSet].filter(n => !mand.includes(n));
     const pct = n => cn.people ? Math.round(100 * (cnt[n] || 0) / cn.people) + "%" : "";
-    const row = (n, tag, btn) => `<div class="sw-ed-row"><span class="sw-ed-name" title="${attr(n)}">${esc(n)}</span><span class="muted">${cnt[n] || 0} of ${cn.people} · ${pct(n)}</span>${tag}${btn}</div>`;
+    const row = (n, tag, btn) => `<div class="sw-ed-row"><span class="sw-ed-name" title="${attr(n)}">${esc(n)}</span><span class="muted">${cnt[n] || 0} of ${cn.people} people (${pct(n)})</span>${tag}${btn}</div>`;
+    const auto = `<span class="md-tag">Automatic</span>`, added = `<span class="md-tag you">Added by you</span>`;
     const ql = q.toLowerCase();
     const cands = ql ? cn.rows.filter(r => !mand.includes(r.name) && r.name.toLowerCase().includes(ql)).slice(0, 12) : [];
-    const others = [...new Set((U || []).map(u => SWLogic.deptKey(u)))].filter(k => k !== scope).sort();
-    document.getElementById("modalRoot").innerHTML =
-      `<div class="overlay"><div class="modal" style="width:760px;max-width:96vw">
-        <div class="modal-head"><h3>Mandatory apps <span class="drill-n">${esc(scope)}</span></h3><button onclick="Software.edClose()">&times;</button></div>
-        <div class="modal-body" style="max-height:72vh;overflow-y:auto">
-          <p class="sub-note" style="margin:0 0 10px">${cn.people} ${cn.people === 1 ? "person" : "people"} in this department. Automatic rule: ${esc(SWLogic.autoText())}. Your changes below are saved straight away.</p>
-          <div class="sw-ed-h">Mandatory now (${mand.length})</div>
-          ${mand.length ? mand.map(n => row(n, autoSet.has(n) ? `<span class="auto-tag">auto</span>` : `<span class="auto-tag" style="color:var(--amber)">added</span>`,
-              `<button class="rowbtn" onclick="Software.edSet('${attr(n)}',false)">Remove</button>`)).join("") : `<div class="muted" style="padding:6px 0">Nothing is mandatory yet.</div>`}
-          ${removed.length ? `<div class="sw-ed-h" style="margin-top:14px">Removed from the automatic list (${removed.length})</div>` +
-            removed.map(n => row(n, `<span class="auto-tag" style="color:var(--red)">removed</span>`, `<button class="rowbtn" onclick="Software.edSet('${attr(n)}',true)">Restore</button>`)).join("") : ""}
-          <div class="sw-ed-h" style="margin-top:14px">Add an app</div>
-          <input id="swEdQ" type="search" placeholder="Type part of an app name… (apps installed in this department)" value="${attr(q)}" oninput="Software.edSearch(this.value)" autocomplete="off" style="width:100%">
-          ${ql ? (cands.length ? cands.map(r => row(r.name, "", `<button class="rowbtn" onclick="Software.edSet('${attr(r.name)}',true)">Add</button>`)).join("") : `<div class="muted" style="padding:6px 0">No other app here matches.</div>`) : ""}
-          <div class="sw-ed-h" style="margin-top:14px">Shortcuts</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-            <select id="swEdCopy" style="max-width:300px"><option value="">Copy the list from another department…</option>${others.map(k => `<option>${esc(k)}</option>`).join("")}</select>
-            <button class="ghost" onclick="Software.edCopy()">Copy</button>
-            <button class="ghost" style="margin-left:auto" onclick="Software.edReset()">Reset to automatic</button>
-          </div>
-        </div>
-        <div class="modal-foot"><button class="primary" onclick="Software.edClose()">Done</button></div>
-      </div></div>`;
-    const el = document.getElementById("swEdQ"); if (el && q) { el.focus(); el.setSelectionRange(q.length, q.length); }
+    const others = this._mdDepts().filter(k => k !== scope);
+    return picker +
+      `<p class="sub-note" style="margin:0 0 12px">Every person in <b>${esc(scope)}</b> (${cn.people}) is expected to have these apps. Changes save as you click.</p>
+       <div class="sw-ed-h">Must have (${mand.length})</div>
+       ${mand.length ? mand.map(n => row(n, autoSet.has(n) ? auto : added, `<button class="rowbtn" onclick="Software.edSet('${attr(n)}',false)">Remove</button>`)).join("")
+                     : `<div class="muted" style="padding:6px 0">Nothing yet. Add an app below.</div>`}
+       ${removed.length ? `<div class="sw-ed-h" style="margin-top:14px">Taken off the automatic list (${removed.length})</div>` +
+         removed.map(n => row(n, `<span class="md-tag off">Removed</span>`, `<button class="rowbtn" onclick="Software.edSet('${attr(n)}',true)">Put back</button>`)).join("") : ""}
+       <div class="sw-ed-h" style="margin-top:16px">Add another app</div>
+       <input id="swEdQ" type="search" placeholder="Type part of an app name…" value="${attr(q)}" oninput="Software.edSearch(this.value)" autocomplete="off" style="width:100%">
+       ${ql ? (cands.length ? cands.map(r => row(r.name, "", `<button class="rowbtn" onclick="Software.edSet('${attr(r.name)}',true)">Add</button>`)).join("") : `<div class="muted" style="padding:6px 0">No other app installed in this department matches.</div>`) : ""}
+       <div class="md-more"><div class="sw-ed-h">Other options</div>
+         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+           <select id="swEdCopy" style="max-width:300px"><option value="">Copy the list from…</option>${others.map(k => `<option>${esc(k)}</option>`).join("")}</select>
+           <button class="ghost" onclick="Software.edCopy()">Copy list</button>
+           <button class="ghost" style="margin-left:auto" onclick="Software.edReset()" title="Remove all your additions and removals for this department">Back to automatic</button>
+         </div></div>`;
   },
-  edSearch(v) { this._ed.q = v; this._edRender(); },
-  async edSet(name, on) { this._applyRule(name, this._ed.scope, on); await this._saveRules(); this._edRender(); },
+  mdScope(v) { this._md.scope = v; this._md.q = ""; this._mdRender(); },
+  edSearch(v) { this._md.q = v; this._mdRender(); },
+  async edSet(name, on) { this._applyRule(name, this._md.scope, on); await this._saveRules(); this._mdRender(); },
   async edReset() {
-    if (!confirm(`Reset ${this._ed.scope} to the automatic list? Your additions and removals for this department are cleared.`)) return;
-    this.rules = this.rules.filter(r => r.scope !== this._ed.scope);
-    await this._saveRules(); this._edRender();
+    if (!confirm(`Go back to the automatic list for ${this._md.scope}? Your additions and removals for this department are cleared.`)) return;
+    this.rules = this.rules.filter(r => r.scope !== this._md.scope);
+    await this._saveRules(); this._mdRender();
   },
   async edCopy() {
-    const from = (document.getElementById("swEdCopy") || {}).value, scope = this._ed.scope;
+    const from = (document.getElementById("swEdCopy") || {}).value, scope = this._md.scope;
     if (!from) return App.toast("Choose the department to copy from.", true);
-    if (!confirm(`Make ${scope} use the same mandatory list as ${from}? This replaces your changes for ${scope}.`)) return;
+    if (!confirm(`Make ${scope} use the same list as ${from}? This replaces your changes for ${scope}.`)) return;
     const A = this.data.apps, U = this.data.users;
     const want = new Set(SWLogic.mandatoryApps(A, U, this.rules, from)), auto = new Set(SWLogic.autoTop(A, U, scope));
     const keep = this.rules.filter(r => r.scope !== scope), now = new Date().toISOString(), by = App.state.account || "";
     want.forEach(n => { if (!auto.has(n)) keep.push({ app: n, scope, required: true, set_by: by, set_at: now }); });
     auto.forEach(n => { if (!want.has(n)) keep.push({ app: n, scope, required: false, set_by: by, set_at: now }); });
     this.rules = keep;
-    await this._saveRules(); this._edRender();
+    await this._saveRules(); this._mdRender();
   },
-  edClose() { document.getElementById("modalRoot").innerHTML = ""; this.render(); },
-  /* ---- the automatic rule ---- */
-  autoRules() {
-    const c = SWLogic.cfg;
-    document.getElementById("modalRoot").innerHTML =
-      `<div class="overlay"><div class="modal" style="width:560px;max-width:96vw">
-        <div class="modal-head"><h3>Automatic mandatory rule</h3><button onclick="Software.arClose()">&times;</button></div>
-        <div class="modal-body">
-          <p class="sub-note" style="margin:0 0 12px">For each department, the most widely installed apps are mandatory automatically. Manual additions and removals per department always win over this rule. Division admins can change it.</p>
-          <div class="field"><label>Number of apps per department <span class="muted">(0 = no automatic apps)</span></label><input id="arTop" type="number" min="0" max="50" value="${c.top}"></div>
-          <div class="field"><label>Only apps installed for at least this % of the department <span class="muted">(0 = no minimum)</span></label><input id="arPct" type="number" min="0" max="100" value="${c.minPct}"></div>
-          <div class="field"><label>Skip departments with fewer people than <span class="muted">(1 = every department)</span></label><input id="arPpl" type="number" min="1" max="50" value="${c.minPeople}"></div>
-          <p class="sub-note" style="margin:12px 0 0">Tip: a minimum of 50-60% keeps one-off apps out of small departments.</p>
-        </div>
-        <div class="modal-foot"><button class="ghost" onclick="Software.arClose()">Cancel</button><button class="primary" onclick="Software.arSave(this)">Save</button></div>
-      </div></div>`;
+
+  /* tab 2 */
+  _mdAuto() {
+    const c = SWLogic.cfg, d = this._md.draft || (this._md.draft = { top: c.top, pct: c.minPct, ppl: c.minPeople });
+    return `<p class="sub-note" style="margin:0 0 14px">Each department starts with an automatic list: the apps most of its people already have. Anything you add or remove on the <b>Department list</b> tab always wins over this rule. Only division admins can change it.</p>
+      <div class="md-rule"><label for="arTop">How many apps</label><input id="arTop" type="number" min="0" max="50" value="${d.top}" oninput="Software.arDraft()"><span class="muted">per department. 0 turns the automatic list off.</span></div>
+      <div class="md-rule"><label for="arPct">At least</label><input id="arPct" type="number" min="0" max="100" value="${d.pct}" oninput="Software.arDraft()"><span class="muted">% of the department must have the app. 0 = no minimum. 50-60 keeps one-off apps out.</span></div>
+      <div class="md-rule"><label for="arPpl">Skip departments under</label><input id="arPpl" type="number" min="1" max="50" value="${d.ppl}" oninput="Software.arDraft()"><span class="muted">people. 1 = use every department.</span></div>
+      <div class="md-preview" id="mdPrev"></div>`;
   },
-  arClose() { document.getElementById("modalRoot").innerHTML = ""; },
-  async arSave(btn) {
+  arDraft() {
     const v = id => parseInt(document.getElementById(id).value, 10);
-    const auto = { top: v("arTop"), min_pct: v("arPct"), min_people: v("arPpl") };
+    this._md.draft = { top: isNaN(v("arTop")) ? 0 : v("arTop"), pct: isNaN(v("arPct")) ? 0 : v("arPct"), ppl: isNaN(v("arPpl")) ? 1 : v("arPpl") };
+    const el = document.getElementById("mdPrev"); if (!el) return;
+    const keep = SWLogic.cfg, d = this._md.draft;
+    SWLogic.setCfg({ top: d.top, min_pct: d.pct, min_people: d.ppl });
+    const depts = this._mdDepts(), withAuto = depts.filter(k => SWLogic.autoTop(this.data.apps, this.data.users, k).length).length;
+    const sc = this._md.scope, sample = sc ? SWLogic.autoTop(this.data.apps, this.data.users, sc) : [];
+    SWLogic.cfg = keep;
+    el.innerHTML = `<b>With these numbers:</b> ${withAuto} of ${depts.length} departments get an automatic list.` +
+      (sc ? ` <b>${esc(sc)}</b> would get ${sample.length} app${sample.length === 1 ? "" : "s"}${sample.length ? ": " + esc(sample.slice(0, 5).join(", ")) + (sample.length > 5 ? ", …" : "") : ""}.` : ` Pick a department on the first tab to see an example.`);
+  },
+  async arSave(btn) {
+    const d = this._md.draft || {};
+    const auto = { top: d.top, min_pct: d.pct, min_people: d.ppl };
     let r; await Ui.working(btn, "Saving…", async () => { r = await Backend.call("software_save_rules", { rules: this.rules, auto }); return false; });
     if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
     SWLogic.setCfg(r.auto || auto);
-    this.arClose(); this.render();
+    this._md.draft = null;
     App.toast("Automatic rule saved.");
+    this.mdTab("dept");
   },
   async toggleMandatory(appName, scope, on) {
     if (scope === "all") return;
@@ -3521,7 +3545,6 @@ const Software = {
       return;
     }
     const scope = this._scope();
-    const eb = document.getElementById("swEditBtn"); if (eb) eb.disabled = scope === "all";
     // ONE search box. It matches software (name / publisher) and people (user / device / serial).
     // If it matches software, the list is those apps ("who has it?"). If it only matches people, the list is
     // everything installed on those people/devices ("what does this person have?"). When both match, chips let you pick.
