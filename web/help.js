@@ -40,7 +40,7 @@ const Help = {
       html: `
         <ul>
           <li><b>Division switcher</b> (top of the sidebar): choose which division you are working in. It only appears if you can see more than one. Switching reloads the app and puts you back on the same page. It is blocked while a long job (a sync, for example) is still running.</li>
-          <li><b>Data: Live / Local</b> (sidebar): <b>Live</b> is real production data. <b>Local</b> is a private copy on this PC: you can test freely and nothing reaches SharePoint. Click it to switch or to pull a fresh copy.</li>
+          <li><b>Data: Live / Local</b> (sidebar, <b>super admins only</b>): <b>Live</b> is real production data. <b>Local</b> is a private copy on this PC: you can test freely and nothing reaches SharePoint. Click it to switch or to pull a fresh copy.</li>
           <li><b>Spinner chip above your name</b>: a long job (sync, software pull, MFA) is still running. You can move to other pages meanwhile.</li>
           <li><b>"Saving…" pill</b> at the top: a save is in progress. Wait for it to finish before closing the app.</li>
           <li><b>Number badges</b> on a menu item: something there needs attention. On <b>Issues</b>, super admins see how many issues are still <b>New</b> (not triaged); everyone else sees how many of their own or watched issues have news since they last opened the page. The badge clears when you open the page (for super admins it clears as each New issue is triaged).</li>

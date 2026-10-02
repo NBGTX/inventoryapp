@@ -444,6 +444,7 @@ const DataMode = {
     if (!r || !r.ok || !b) return;
     this.info = r;
     const local = r.mode === "local";
+    b.classList.toggle("hidden", !(r.can_switch || local));        // super admins only; anyone stuck in Local mode can still get back to Live
     b.textContent = local ? "Data: LOCAL copy" : "Data: Live";
     b.classList.toggle("dm-local", local);
   },
@@ -6447,7 +6448,7 @@ Object.assign(Mock, {
   },
   /* data mode - mirrors Api.get_data_mode / pull_prod_snapshot / set_data_mode */
   _dm: { mode: "live", snap: "" },
-  async get_data_mode() { return { ok: true, mode: this._dm.mode, has_snapshot: !!this._dm.snap, snapshot: { taken_at: this._dm.snap, counts: {} } }; },
+  async get_data_mode() { return { ok: true, mode: this._dm.mode, has_snapshot: !!this._dm.snap, can_switch: true, snapshot: { taken_at: this._dm.snap, counts: {} } }; },
   async pull_prod_snapshot() { this._dm.snap = new Date().toISOString().slice(0, 19); return { ok: true, taken_at: this._dm.snap, counts: {} }; },
   async set_data_mode(m) { if (m === "local" && !this._dm.snap) return { ok: false, error: "No local snapshot yet." }; this._dm.mode = m; return { ok: true, mode: m }; },
   /* divisions (tenants) - mirrors Api.get_divisions / switch_division */

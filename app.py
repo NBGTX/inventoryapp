@@ -765,7 +765,7 @@ class Api:
         try:
             gc = self._client()
             return {"ok": True, "mode": gc.data_mode, "snapshot": gc._ls().info(),
-                    "has_snapshot": gc._ls().has_snapshot()}
+                    "has_snapshot": gc._ls().has_snapshot(), "can_switch": bool(gc.is_super_admin())}
         except Exception as e:
             return self._fail(e)
 
@@ -773,6 +773,8 @@ class Api:
         """READ-ONLY pull of production lists + hub folder into the local sandbox."""
         try:
             gc = self._client()
+            if not gc.is_super_admin():
+                return {"ok": False, "error": "Only a super admin can copy production data to this PC."}
             gc.sign_in(interactive=True)
             with self._work():
                 info = gc.clone_for_snapshot().snapshot_prod()      # own state: live client untouched
@@ -785,6 +787,8 @@ class Api:
         this machine). Local needs a snapshot first."""
         try:
             gc = self._client()
+            if mode == "local" and not gc.is_super_admin():          # going back to Live is always allowed
+                return {"ok": False, "error": "Only a super admin can switch to a local copy."}
             gc.set_data_mode(mode)
             self._hub = None
             return {"ok": True, "mode": gc.data_mode}
