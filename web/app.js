@@ -3912,7 +3912,7 @@ const Software = {
     const body = m.tab === "dept" ? this._mdDept() : this._mdAuto();
     document.getElementById("modalRoot").innerHTML =
       `<div class="overlay"><div class="modal" style="width:780px;max-width:96vw">
-        <div class="modal-head"><h3>Mandatory apps</h3><button onclick="Software.mdClose()">&times;</button></div>
+        <div class="modal-head"><h3>Mandatory apps</h3><span class="md-wait hidden" id="mdWait"><span class="busy-spin"></span><span id="mdWaitTxt">Saving…</span></span><button onclick="Software.mdClose()">&times;</button></div>
         <div class="md-tabs">${tabs}</div>
         <div class="modal-body" style="max-height:66vh;overflow-y:auto">${body}</div>
         <div class="modal-foot">${m.tab === "auto"
@@ -3921,6 +3921,17 @@ const Software = {
       </div></div>`;
     if (m.tab === "auto") this.arDraft();
     if (m.tab === "dept" && m.q) { const el = document.getElementById("swEdQ"); if (el) { el.focus(); el.setSelectionRange(m.q.length, m.q.length); } }
+  },
+  /* saving goes to SharePoint and takes a moment: show it, and ignore clicks until it is done */
+  _mdBusy(on, txt) {
+    const w = document.getElementById("mdWait"), b = document.querySelector(".modal-body");
+    if (w) w.classList.toggle("hidden", !on);
+    const t = document.getElementById("mdWaitTxt"); if (t && txt) t.textContent = txt;
+    if (b) b.classList.toggle("md-busy", !!on);
+  },
+  async _mdSave(txt, fn) {
+    this._mdBusy(true, txt);
+    try { fn(); const ok = await this._saveRules(); if (!ok) await this.load(); } finally { this._mdRender(); }   // a failed save: reload what is really stored
   },
   mdTab(t) { this._md.tab = t; this._md.draft = null; this._mdRender(); },
   mdClose() { document.getElementById("modalRoot").innerHTML = ""; this.render(); },
@@ -3962,11 +3973,10 @@ const Software = {
   },
   mdScope(v) { this._md.scope = v; this._md.q = ""; this._mdRender(); },
   edSearch(v) { this._md.q = v; this._mdRender(); },
-  async edSet(name, on) { this._applyRule(name, this._md.scope, on); await this._saveRules(); this._mdRender(); },
+  async edSet(name, on) { await this._mdSave(on ? "Adding…" : "Removing…", () => this._applyRule(name, this._md.scope, on)); },
   async edReset() {
     if (!confirm(`Clear your changes for ${this._md.scope}? The apps you added or took off are undone and the automatic list is used again.`)) return;
-    this.rules = this.rules.filter(r => r.scope !== this._md.scope);
-    await this._saveRules(); this._mdRender();
+    await this._mdSave("Clearing your changes…", () => { this.rules = this.rules.filter(r => r.scope !== this._md.scope); });
   },
   async edCopy() {
     const from = (document.getElementById("swEdCopy") || {}).value, scope = this._md.scope;
@@ -3977,8 +3987,7 @@ const Software = {
     const keep = this.rules.filter(r => r.scope !== scope), now = new Date().toISOString(), by = App.state.account || "";
     want.forEach(n => { if (!auto.has(n)) keep.push({ app: n, scope, required: true, set_by: by, set_at: now }); });
     auto.forEach(n => { if (!want.has(n)) keep.push({ app: n, scope, required: false, set_by: by, set_at: now }); });
-    this.rules = keep;
-    await this._saveRules(); this._mdRender();
+    await this._mdSave("Copying the list…", () => { this.rules = keep; });
   },
 
   /* tab 2 */
