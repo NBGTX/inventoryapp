@@ -371,8 +371,24 @@
         <button class="ghost" id="upRefresh" onclick="Upgrade.refresh(this)">↻ Refresh</button>
       </div>
       <div class="help-slot" data-help="upgrades"></div>
-      <div class="up-tabs" id="upTabs"></div>
-      <div id="upHost"><div class="empty">Loading…</div></div>
+      <div class="stats" id="upStats"></div>
+      <div class="panel">
+        <div class="tabs" id="upTabs"></div>
+        <div class="tools" id="upTools">
+          <input id="upQ" type="search" placeholder="Search serial, hostname, user, model, notes…" autocomplete="off" oninput="Upgrade.typed(this.value)">
+          <select id="upPri" class="filt" onchange="Upgrade.setF('pri',this.value)"><option value="">All priorities</option><option value="5">P5 (highest)</option><option value="4">P4</option><option value="3">P3</option><option value="2">P2</option><option value="1">P1</option></select>
+          <select id="upReason" class="filt" onchange="Upgrade.setF('reason',this.value)"><option value="">Auto and manual</option><option value="auto">Added automatically</option><option value="manual">Added by hand</option></select>
+          <select id="upStatus" class="filt" onchange="Upgrade.setF('status',this.value)"><option value="">Waiting and working</option><option value="waiting">Waiting</option><option value="working">Working</option></select>
+          <div class="iss-seg" role="radiogroup" aria-label="View" id="upViewSeg">
+            <label class="on"><input type="radio" name="upView" value="list" checked onchange="Upgrade.setView('list')">Priority list</label>
+            <label><input type="radio" name="upView" value="model" onchange="Upgrade.setView('model')">By model</label>
+          </div>
+          <button id="upClear" class="rowbtn hidden" onclick="Upgrade.clearF()">Clear filters</button>
+          <span class="dev-tools-r"><span class="muted" id="upCount"></span><button class="rowbtn" onclick="Upgrade.copy()" title="Copy what is shown, ready to paste into Excel or a purchase request">Copy list</button></span>
+        </div>
+        <div id="upBulk" class="bulk-bar hidden"></div>
+        <div id="upHost"><div class="empty">Loading…</div></div>
+      </div>
     </section>
 
   </div>

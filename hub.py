@@ -687,6 +687,67 @@ class Hub:
             self._ignore_upgrade(gone.get("serial", ""), "removed", actor)
         return {"items": items}
 
+    def _ignore_many(self, serials, why: str, actor: str = "") -> None:
+        try:
+            cur = self.get_upgrade_ignored()
+            now = _now_iso()
+            for s in serials:
+                s = (s or "").strip().lower()
+                if s:
+                    cur[s] = {"why": why, "by": actor or _user(), "at": now}
+            self.put_named("upgrade-ignore", {"serials": cur})
+        except Exception:
+            pass
+
+    def bulk_upgrades(self, action: str, ids, priority=None, site=None, actor: str = "") -> dict:
+        """Change several upgrade entries at once with ONE read and ONE write: set priority, move to a site,
+        mark upgraded (to the completed log) or remove. One audit entry for the whole run."""
+        data = self.get_upgrades() or {"items": []}
+        items = data.get("items") or []
+        want = set(ids or [])
+        who = actor or _user()
+        now = _now_iso()
+        hit = [it for it in items if it.get("id") in want]
+        if action == "priority":
+            try:
+                pr = max(1, min(5, int(priority)))
+            except (TypeError, ValueError):
+                raise ValueError("Priority must be 1 to 5.")
+            for it in hit:
+                it["priority"] = pr
+                it["updated_by"], it["updated_at"] = who, now
+                it.setdefault("history", []).append({"at": now, "by": who, "action": "updated", "priority": pr, "notes": it.get("notes", "")})
+            detail = f"{len(hit)} set to P{pr}"
+        elif action == "site":
+            site = (site or "").strip()
+            if not site:
+                raise ValueError("Choose a site.")
+            for it in hit:
+                it["site"] = site
+                it["updated_by"], it["updated_at"] = who, now
+                it.setdefault("history", []).append({"at": now, "by": who, "action": "moved", "notes": "to " + site})
+            detail = f"{len(hit)} moved to {site}"
+        elif action == "complete":
+            log = self.get_upgrade_log() or {"entries": []}
+            for it in reversed(hit):
+                e = dict(it)
+                e["completed_by"], e["completed_at"] = who, now
+                log.setdefault("entries", []).insert(0, e)
+            items = [it for it in items if it.get("id") not in want]
+            if hit:
+                self._write(self.upgrade_log_path, json.dumps(log, indent=2, ensure_ascii=False))
+                self._ignore_many([it.get("serial") for it in hit], "completed", who)
+            detail = f"{len(hit)} marked upgraded"
+        elif action == "remove":
+            items = [it for it in items if it.get("id") not in want]
+            self._ignore_many([it.get("serial") for it in hit], "removed", who)
+            detail = f"{len(hit)} removed"
+        else:
+            raise ValueError("Unknown action.")
+        self._write_upgrades({"items": items})
+        self._change("Upgrade list", "Bulk: " + detail)
+        return {"items": items, "done": len(hit)}
+
     def complete_upgrade(self, item_id: str, actor: str = "") -> dict:
         """Check an item off: remove it from the list and append it to the log."""
         data = self.get_upgrades() or {"items": []}

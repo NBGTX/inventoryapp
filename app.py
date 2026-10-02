@@ -2530,6 +2530,18 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    def hub_bulk_upgrades(self, action: str, ids, priority=None, site=None) -> dict:
+        """Several upgrade entries at once: action = priority | site | complete | remove."""
+        try:
+            ids = [str(i) for i in (ids or [])]
+            if not ids:
+                return {"ok": False, "error": "Nothing selected."}
+            return {"ok": True, **self._hubc().bulk_upgrades(action, ids, priority, site, self._actor())}
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
+            return self._fail(e)
+
     def hub_clear_upgrade_ignored(self) -> dict:
         """Let the automatic rules queue devices that were completed or removed before (division admins)."""
         try:

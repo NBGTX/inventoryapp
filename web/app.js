@@ -11,7 +11,7 @@ const attr = s => (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/"
    must NOT lock the screen, so they are excluded. */
 const Busy = {
   n: 0, timer: null,
-  WRITE: /^(bulk_|save_|set_|add_|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|switch_|register_|reserve_|complete_|start_|issue_(create|comment|update|delete|vote|watch|notify)|issues_import)/,
+  WRITE: /^(bulk_|save_|set_|add_|hub_bulk|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|switch_|register_|reserve_|complete_|start_|issue_(create|comment|update|delete|vote|watch|notify)|issues_import)/,
   LONG: /^(run_sync|enrich_inventory|sync_all_divisions|master_sync|populate_mfa|boneyard_sweep|software_refresh|mfa_people_refresh|pull_prod_snapshot|set_data_mode)$/,
   watches(method) { return this.WRITE.test(method) && !this.LONG.test(method); },
   /* Long jobs keep running when you move to another page (the work is in the backend); this shows them in the sidebar
@@ -4075,20 +4075,67 @@ const Upgrade = {
         this._setupsById[s.id] = { pct, status: s.status, done: s.done || 0, total: s.total || 0 };
       });
     } catch (e) {}
+    this._restoreView();
     if (![...this.SITES, "log"].includes(this.activeTab)) this.activeTab = this.SITES[0];
     this.renderTabs(); this.render();
   },
 
+  /* ---- state of the page: filters, view, ticked rows ---- */
+  f: { q: "", pri: "", reason: "", status: "" }, view: "list", sel: new Set(), _t: null,
+  _isAuto(it) { return /^auto-added:/i.test(it.notes || ""); },
+  _reason(it) { return (it.notes || "").replace(/^auto-added:\s*/i, ""); },
+  _dev(serial) { const s = String(serial); return (App.state.use || []).find(x => x.serial === s) || (App.state.stock || []).find(x => x.serial === s) || null; },
+  _siteList() { return this.items.filter(it => this.siteKey(it.site) === this.activeTab); },
+  _match(it) {
+    const f = this.f, q = f.q.trim().toLowerCase();
+    if (f.pri && String(it.priority || 3) !== f.pri) return false;
+    if (f.reason && (f.reason === "auto") !== this._isAuto(it)) return false;
+    if (f.status && (f.status === "working") !== (it.status === "working")) return false;
+    return !q || [it.serial, it.device_name, it.user, it.model, it.notes].some(v => (v || "").toLowerCase().includes(q));
+  },
+  _visible() { return this._siteList().filter(it => this._match(it)); },
+  _anyFilter() { return !!(this.f.q.trim() || this.f.pri || this.f.reason || this.f.status); },
+  typed(v) { this.f.q = v; clearTimeout(this._t); this._t = setTimeout(() => this.render(), 120); },
+  setF(k, v) { this.f[k] = v; this.render(); },
+  clearF() { this.f = { q: "", pri: "", reason: "", status: "" }; this._syncTools(); this.render(); },
+  setView(v) { this.view = v; document.querySelectorAll("#upViewSeg label").forEach(l => l.classList.toggle("on", l.querySelector("input").value === v)); this.render(); },
+  _syncTools() {
+    const set = (id, v) => { const e = document.getElementById(id); if (e) e.value = v; };
+    set("upQ", this.f.q); set("upPri", this.f.pri); set("upReason", this.f.reason); set("upStatus", this.f.status);
+    document.querySelectorAll("#upViewSeg label").forEach(l => { const i = l.querySelector("input"); i.checked = i.value === this.view; l.classList.toggle("on", i.checked); });
+  },
+
+  /* remembered for each division: site tab, view and filters */
+  _viewKey() { return "nbg_up_view_" + (Divisions.current || "x"); },
+  _restoreView() {
+    const key = this._viewKey(); if (this._restored === key) return; this._restored = key;
+    let v = null; try { v = JSON.parse(localStorage.getItem(key) || "null"); } catch (e) { v = null; }
+    if (!v) return;
+    if (typeof v.tab === "string") this.activeTab = v.tab;
+    if (v.view === "model" || v.view === "list") this.view = v.view;
+    if (v.f && typeof v.f === "object") this.f = { q: String(v.f.q || ""), pri: String(v.f.pri || ""), reason: String(v.f.reason || ""), status: String(v.f.status || "") };
+    this._syncTools();
+  },
+  _saveView() { if (this._restored !== this._viewKey()) return; try { localStorage.setItem(this._viewKey(), JSON.stringify({ tab: this.activeTab, view: this.view, f: this.f })); } catch (e) { /* private window */ } },
+
+  _stats() {
+    const el = document.getElementById("upStats"); if (!el) return;
+    const items = this.items, high = items.filter(it => (it.priority || 3) >= 4).length, working = items.filter(it => it.status === "working").length;
+    const card = (n, l) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`;
+    el.innerHTML = card(items.length, "On the list") + card(high, "High priority (P4-P5)") + card(working, "Being upgraded now") + card((this.log || []).length, "Completed");
+  },
+
   renderTabs() {
     const el = document.getElementById("upTabs"); if (!el) return;
-    const tabs = [...this.SITES.map(s => ({ id: s, label: s === "Other" ? "Other" : s })), { id: "log", label: "Completed" }];
+    const tabs = [...this.SITES.map(s => ({ id: s, label: s })), { id: "log", label: "Completed" }];
     const count = id => id === "log" ? (this.log || []).length : this.items.filter(it => this.siteKey(it.site) === id).length;
-    el.innerHTML = tabs.map(t =>
-      `<button class="up-tab${this.activeTab === t.id ? " active" : ""}" onclick="Upgrade.tab('${t.id}')">${esc(t.label)} <span class="up-badge">${count(t.id)}</span></button>`).join("");
+    el.innerHTML = tabs.map(t => `<div class="tab${this.activeTab === t.id ? " active" : ""}" onclick="Upgrade.tab('${t.id}')">${esc(t.label)} (${count(t.id)})</div>`).join("");
   },
-  tab(id) { this.activeTab = id; this.renderTabs(); this.render(); },
+  tab(id) { if (this.activeTab !== id) this.sel.clear(); this.activeTab = id; this.renderTabs(); this.render(); },
 
   render() {
+    this._restoreView();
+    this._stats();
     this._renderBody();
     const host = document.getElementById("upHost");
     if (host && this.activeTab !== "log" && this.ignored) {
@@ -4098,6 +4145,7 @@ const Upgrade = {
         <button class="ghost" onclick="Upgrade.allowAgain()">Allow them again</button>`;
       host.appendChild(n);
     }
+    this._saveView();
   },
   async allowAgain() {
     if (!confirm("Let the automatic rules add these devices again if they still meet the rules?")) return;
@@ -4106,18 +4154,125 @@ const Upgrade = {
     App.toast(r.cleared + " device(s) can be added again at the next sync.");
     this.load();
   },
+  _toolbar(shown, total, isLog) {
+    ["upPri", "upReason", "upStatus", "upViewSeg"].forEach(id => { const e = document.getElementById(id); if (e) e.classList.toggle("hidden", isLog); });
+    const cnt = document.getElementById("upCount");
+    if (cnt) cnt.textContent = shown === total ? `${total} ${total === 1 ? "device" : "devices"}` : `Showing ${shown} of ${total}`;
+    const c = document.getElementById("upClear"); if (c) c.classList.toggle("hidden", !this._anyFilter());
+  },
   _renderBody() {
     const host = document.getElementById("upHost"); if (!host) return;
-    if (this.activeTab === "log") { host.innerHTML = this._logHtml(); return; }
-    const list = this.items.filter(it => this.siteKey(it.site) === this.activeTab);
-    if (!list.length) {
-      host.innerHTML = `<div class="empty">No devices queued for ${this.activeTab === "Other" ? "sites outside " + Divisions.label() : this.activeTab}. Add one from the Devices list or the “Needs upgrade” dashboard tile.</div>`;
-      return;
+    if (this.activeTab === "log") {
+      const q = this.f.q.trim().toLowerCase();
+      const rows = (this.log || []).filter(e => !q || [e.serial, e.model, e.user, e.site, e.completed_by, e.added_by].some(v => (v || "").toLowerCase().includes(q)));
+      this._shownLog = rows; this._shown = []; this.sel.clear();
+      host.innerHTML = this._logHtml(rows);
+      this._toolbar(rows.length, (this.log || []).length, true); this.updateBulk(); return;
     }
+    const all = this._siteList(), list = this._visible();
+    this._shown = list; this._shownAll = all;
+    const shownIds = new Set(list.map(it => it.id));
+    [...this.sel].forEach(id => { if (!shownIds.has(id)) this.sel.delete(id); });         // only rows you can see stay ticked
+    this._toolbar(list.length, all.length, false);
+    if (!all.length) {
+      host.innerHTML = `<div class="empty">No devices queued for ${this.activeTab === "Other" ? "sites outside " + Divisions.label() : this.activeTab}. Add one from the Devices list or the “Needs upgrade” dashboard tile.</div>`;
+      this.updateBulk(); return;
+    }
+    if (!list.length) { host.innerHTML = `<div class="empty">Nothing matches these filters. <a class="sw-user" onclick="Upgrade.clearF()">Clear filters</a></div>`; this.updateBulk(); return; }
+    if (this.view === "model") { host.innerHTML = this._modelHtml(list); this.updateBulk(); return; }
     host.innerHTML = "";
     const wrap = document.createElement("div"); wrap.className = "up-list";
-    list.forEach((it, idx) => wrap.appendChild(this._row(it, idx)));
+    list.forEach(it => wrap.appendChild(this._row(it, all.indexOf(it))));
     host.appendChild(wrap);
+    this.updateBulk();
+  },
+
+  /* ---- "by model": what to order, at a glance ---- */
+  _byModel(list) {
+    const m = {};
+    list.forEach(it => { const k = (it.model || "").trim() || "(model unknown)"; const g = m[k] = m[k] || { model: k, n: 0, pri: {}, names: [] }; g.n++; const p = it.priority || 3; g.pri[p] = (g.pri[p] || 0) + 1; g.names.push(it.device_name || it.serial); });
+    return Object.values(m).sort((a, b) => b.n - a.n || a.model.localeCompare(b.model));
+  },
+  _priText(g) { return [5, 4, 3, 2, 1].filter(p => g.pri[p]).map(p => `P${p}×${g.pri[p]}`).join("  "); },
+  _modelHtml(list) {
+    const rows = this._byModel(list);
+    return `<table class="fit"><thead><tr><th>Model</th><th style="width:70px">Qty</th><th style="width:230px">Priorities</th><th>Devices</th></tr></thead><tbody>` +
+      rows.map(g => `<tr class="up-modelrow" onclick="Upgrade.openModel(this.dataset.m)" data-m="${attr(g.model)}" title="Show these devices"><td><b>${esc(g.model)}</b></td><td>${g.n}</td><td>${esc(this._priText(g))}</td>` +
+        `<td class="muted">${esc(g.names.slice(0, 6).join(", "))}${g.names.length > 6 ? ` + ${g.names.length - 6} more` : ""}</td></tr>`).join("") +
+      `</tbody></table><div class="sub-note" style="margin:10px 18px">${list.length} devices, ${rows.length} model${rows.length === 1 ? "" : "s"}. Click a model to see its devices.</div>`;
+  },
+  openModel(m) { this.f.q = m === "(model unknown)" ? "" : m; this._syncTools(); this.setView("list"); },
+
+  copy() {
+    const cell = v => String(v == null ? "" : v).replace(/[\t\r\n]+/g, " ");
+    let head, rows;
+    if (this.activeTab === "log") {
+      head = ["Serial", "Model", "Site", "Priority", "User", "Added", "Completed", "Completed by", "Days on list"];
+      rows = (this._shownLog || []).map(e => [e.serial, e.model, e.site, "P" + (e.priority || ""), e.user, (e.added_at || "").slice(0, 10), (e.completed_at || "").slice(0, 10), e.completed_by, this._waited(e)]);
+    } else if (this.view === "model") {
+      head = ["Model", "Qty", "Priorities"];
+      rows = this._byModel(this._shown || []).map(g => [g.model, g.n, this._priText(g)]);
+    } else {
+      head = ["#", "Serial", "Hostname", "Model", "User", "Priority", "Status", "Reason / notes", "Warranty", "Added"];
+      rows = (this._shown || []).map(it => [(this._shownAll || []).indexOf(it) + 1, it.serial, it.device_name, it.model, it.user, "P" + (it.priority || 3), it.status === "working" ? "Working" : "Waiting", this._reason(it), this._warrDate(it), (it.added_at || "").slice(0, 10)]);
+    }
+    const txt = [head.join("\t")].concat(rows.map(r => r.map(cell).join("\t"))).join("\n");
+    const done = () => App.toast(`Copied ${rows.length} row${rows.length === 1 ? "" : "s"}. Paste into Excel or a message.`);
+    const fb = () => { const t = document.createElement("textarea"); t.value = txt; document.body.appendChild(t); t.select(); try { document.execCommand("copy"); done(); } catch (e) { App.toast("Could not copy.", true); } t.remove(); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, fb); else fb();
+  },
+  _warrDate(it) { const d = this._dev(it.serial); return d ? (d.warranty || "").slice(0, 10) : ""; },
+  _warrHtml(it) {
+    const w = this._warrDate(it); if (!w) return "";
+    const t = Date.parse(w); if (isNaN(t)) return "";
+    const days = Math.floor((t - Date.now()) / 86400000);
+    const cls = days < 0 ? "w-exp" : days <= 90 ? "w-soon" : "";
+    return ` · <span class="${cls}" title="${days < 0 ? "Warranty ended" : "Warranty ends"}">${days < 0 ? "warranty ended " : "warranty to "}${esc(w)}</span>`;
+  },
+  _waited(e) {
+    const a = Date.parse(e.added_at || ""), b = Date.parse(e.completed_at || "");
+    return isNaN(a) || isNaN(b) ? "" : Math.max(0, Math.round((b - a) / 86400000));
+  },
+
+  /* ---- tick rows, then act on all of them ---- */
+  selToggle(id, on) { if (on) this.sel.add(id); else this.sel.delete(id); this.updateBulk(); },
+  selAll(on) {
+    this.sel.clear(); if (on) (this._shown || []).forEach(it => this.sel.add(it.id));
+    document.querySelectorAll("#upHost .up-sel").forEach(cb => { cb.checked = on; });
+    this.updateBulk();
+  },
+  updateBulk() {
+    const bar = document.getElementById("upBulk"); if (!bar) return;
+    const n = this.sel.size, shown = (this._shown || []).length;
+    if (this.activeTab === "log" || this.view === "model" || !shown) { bar.classList.add("hidden"); bar.innerHTML = ""; return; }
+    bar.classList.remove("hidden");
+    const all = n === shown;
+    bar.innerHTML = `<label class="bulk-all"><input type="checkbox" ${all ? "checked" : ""} onchange="Upgrade.selAll(this.checked)"> ${n ? `<b>${n} selected</b>` : "Select all shown"}</label>` +
+      (n ? `<span class="bulk-actions"><button class="rowbtn" onclick="Upgrade.bulkOpen('priority')">Set priority…</button><button class="rowbtn" onclick="Upgrade.bulkOpen('site')">Move to site…</button>` +
+           `<button class="rowbtn" onclick="Upgrade.bulkOpen('complete')">✓ Mark upgraded…</button><button class="rowbtn danger" onclick="Upgrade.bulkOpen('remove')">Remove…</button></span><a class="bulk-clear" onclick="Upgrade.selAll(false)">Clear selection</a>` : "");
+  },
+  bulkOpen(kind) {
+    this._bk = kind; this._bpri = 3;
+    const n = this.sel.size; if (!n) return;
+    const T = { priority: "Set priority", site: "Move to site", complete: "Mark upgraded", remove: "Remove from list" }[kind];
+    let body = "", btn = "Do it", danger = false;
+    if (kind === "priority") { body = `<label class="up-lbl">New priority <span class="muted">(5 = highest)</span></label><div class="up-pri" id="bkUpPri">${[1, 2, 3, 4, 5].map(k => `<button type="button" class="up-pri-opt p${k}${k === 3 ? " sel" : ""}" data-p="${k}" onclick="Upgrade.bulkPick(${k})">${k}</button>`).join("")}</div>`; btn = `Set on ${n}`; }
+    else if (kind === "site") { body = `<div class="field"><label>Site</label><select id="bkUpSite">${Divisions.codes().map(c => `<option>${esc(c)}</option>`).join("")}</select></div>`; btn = `Move ${n}`; }
+    else if (kind === "complete") { body = `<p class="sub-note" style="margin:0">Each one leaves this list and is saved to the Completed log. The automatic rules will not queue it again.</p>`; btn = `Mark ${n} upgraded`; }
+    else { danger = true; body = `<p class="sub-note" style="margin:0">Each one is removed from the list and is <b>not</b> logged as completed. The automatic rules will not queue it again.</p>`; btn = `Remove ${n}`; }
+    document.getElementById("modalRoot").innerHTML =
+      `<div class="overlay"><div class="modal" style="width:500px;max-width:94vw"><div class="modal-head"><h3>${T} <span class="drill-n">${n}</span></h3><button onclick="Drill.close()">&times;</button></div>
+        <div class="modal-body">${body}</div>
+        <div class="modal-foot"><button class="ghost" onclick="Drill.close()">Cancel</button><button class="primary" id="bkUpGo" ${danger ? 'style="background:var(--red)"' : ""} onclick="Upgrade.bulkRun(this)">${btn}</button></div></div></div>`;
+  },
+  bulkPick(k) { this._bpri = k; document.querySelectorAll("#bkUpPri .up-pri-opt").forEach(b => b.classList.toggle("sel", +b.dataset.p === k)); },
+  async bulkRun(btn) {
+    const kind = this._bk, ids = [...this.sel], site = ((document.getElementById("bkUpSite") || {}).value || "");
+    let r; await Ui.working(btn, "Working…", async () => { r = await Backend.call("hub_bulk_upgrades", kind, ids, kind === "priority" ? this._bpri : null, kind === "site" ? site : null); return false; });
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not do that.", true);
+    Drill.close(); this.sel.clear();
+    await this.load();
+    App.toast(`${r.done} device${r.done === 1 ? "" : "s"} updated.`);
   },
 
   _row(it, idx) {
@@ -4135,24 +4290,26 @@ const Upgrade = {
           `<span class="up-prog-lbl">${sp ? `${sp.done}/${sp.total} (${pct}%)` : "setup linked"}</span>` +
           `<button class="rowbtn up-opensetup" title="Open the linked computer setup">Open setup</button></div>`
       : "";
+    const auto = this._isAuto(it);
     row.innerHTML =
+      `<input type="checkbox" class="rowsel up-sel" title="Select" ${this.sel.has(it.id) ? "checked" : ""}>` +
       `<span class="up-pos">${idx + 1}</span>` +
       `<span class="handle" title="Drag to reorder">☰</span>` +
       `<span class="up-badge2 p${p}" title="Priority ${p} (5 = highest)">P${p}</span>` +
       `<div class="up-main">` +
         `<div class="up-top"><span class="mono">${esc(it.serial)}</span> <span class="up-model">${esc(it.model || "")}</span>${it.device_name ? ` <span class="muted">· ${esc(it.device_name)}</span>` : ""}</div>` +
-        `<div class="up-sub">${esc(it.user || "—")}${it.notes ? ` — <span class="up-note">${esc(it.notes)}</span>` : ""}</div>` +
-        `<div class="up-meta">Added ${esc((it.added_at || "").slice(0, 10))}${it.added_by ? ` by ${esc(it.added_by)}` : ""}` +
-          `${(it.updated_at && it.updated_at !== it.added_at) ? ` · edited ${esc(it.updated_at.slice(0, 10))}${it.updated_by ? ` by ${esc(it.updated_by)}` : ""}` : ""}</div>` +
+        `<div class="up-sub">${esc(it.user || "—")}${it.notes ? ` — ${auto ? '<span class="md-tag" title="Added by the automatic rules">Auto</span> ' : ""}<span class="up-note">${esc(auto ? this._reason(it) : it.notes)}</span>` : ""}${this._warrHtml(it)}</div>` +
+        `<div class="up-meta">Added ${esc((it.added_at || "").slice(0, 10))}${auto ? " automatically" : (it.added_by ? ` by ${esc(it.added_by)}` : "")}` +
+          `${(it.updated_at && it.updated_at !== it.added_at && !(auto && (it.history || []).length < 2)) ? ` · edited ${esc(it.updated_at.slice(0, 10))}${it.updated_by ? ` by ${esc(it.updated_by)}` : ""}` : ""}</div>` +
         workHtml +
       `</div>` +
       `<div class="up-ctrls">` +
         (working ? "" : `<button class="iconbtn up-begin" title="Begin upgrade — starts a new computer setup and marks this Working">▶ Begin</button>`) +
         `<button class="iconbtn" title="Move up">↑</button>` +
         `<button class="iconbtn" title="Move down">↓</button>` +
-        `<button class="iconbtn" title="Edit priority / notes">✎</button>` +
-        `<button class="iconbtn done" title="Mark upgraded (moves to completed log)">✓</button>` +
-        `<button class="iconbtn del" title="Remove (not logged)">✕</button>` +
+        `<button class="iconbtn txt" title="Edit priority / notes, see history">✎ Edit</button>` +
+        `<button class="iconbtn done txt" title="Mark upgraded (moves to the Completed log)">✓ Done</button>` +
+        `<button class="iconbtn del txt" title="Remove from the list (not logged as completed)">✕ Remove</button>` +
       `</div>`;
     const beginBtn = row.querySelector(".up-begin"); if (beginBtn) beginBtn.onclick = () => this.begin(it.id);
     const openBtn = row.querySelector(".up-opensetup"); if (openBtn) openBtn.onclick = () => { if (it.setup_id) { Nav.go("hub"); Hub.resumeSetup(it.setup_id); } };
@@ -4162,6 +4319,8 @@ const Upgrade = {
     btns[2].onclick = () => this.editPrompt(it.id);
     btns[3].onclick = () => this.complete(it.id);
     btns[4].onclick = () => this.remove(it.id);
+    row.querySelector(".up-sel").addEventListener("change", e => this.selToggle(it.id, e.target.checked));
+    row.addEventListener("click", e => { if (!e.target.closest("button,input,a,.handle,select,textarea")) this.editPrompt(it.id); });
     row.addEventListener("dragstart", e => { row.classList.add("dragging"); e.dataTransfer.setData("text/plain", it.id); });
     row.addEventListener("dragend", () => { row.classList.remove("dragging"); document.querySelectorAll(".up-row.dragover").forEach(x => x.classList.remove("dragover")); });
     row.addEventListener("dragover", e => { e.preventDefault(); row.classList.add("dragover"); });
@@ -4305,13 +4464,18 @@ const Upgrade = {
     this.renderTabs(); this.render();
   },
 
-  _logHtml() {
-    const log = this.log || [];
-    if (!log.length) return `<div class="empty">No completed upgrades yet. Check a device off to log it here.</div>`;
-    return `<table class="up-logtbl"><thead><tr><th>Serial</th><th>Model</th><th>Site</th><th>Priority</th><th>User</th><th>Added</th><th>Completed</th></tr></thead><tbody>` +
-      log.map(e => `<tr><td class="mono">${esc(e.serial || "")}</td><td>${esc(e.model || "")}</td><td>${esc(e.site || "")}</td><td>P${esc(e.priority || "")}</td><td>${esc(e.user || "")}</td>` +
-        `<td>${esc((e.added_at || "").slice(0, 10))}${e.added_by ? ` · ${esc(e.added_by)}` : ""}</td>` +
-        `<td>${esc((e.completed_at || "").slice(0, 10))}${e.completed_by ? ` · ${esc(e.completed_by)}` : ""}</td></tr>`).join("") +
+  _logHtml(rows) {
+    const all = this.log || [];
+    if (!all.length) return `<div class="empty">No completed upgrades yet. Check a device off to log it here.</div>`;
+    rows = rows || all;
+    if (!rows.length) return `<div class="empty">Nothing matches that search.</div>`;
+    const waits = rows.map(e => this._waited(e)).filter(w => w !== "");
+    const avg = waits.length ? Math.round(waits.reduce((a, b) => a + b, 0) / waits.length) : null;
+    return `<div class="sub-note" style="margin:12px 18px 0">${rows.length} completed${avg !== null ? ` · on average ${avg} day${avg === 1 ? "" : "s"} from being added to being upgraded` : ""}.</div>` +
+      `<table class="up-logtbl"><thead><tr><th>Serial</th><th>Model</th><th>Site</th><th>Priority</th><th>User</th><th>Added</th><th>Completed</th><th>Days on list</th></tr></thead><tbody>` +
+      rows.map(e => `<tr><td class="mono">${esc(e.serial || "")}</td><td>${esc(e.model || "")}</td><td>${esc(e.site || "")}</td><td>P${esc(e.priority || "")}</td><td>${esc(e.user || "")}</td>` +
+        `<td>${esc((e.added_at || "").slice(0, 10))}${e.added_by && !/^auto/i.test(e.notes || "") ? ` · ${esc(e.added_by)}` : (/^auto/i.test(e.notes || "") ? " · auto" : "")}</td>` +
+        `<td>${esc((e.completed_at || "").slice(0, 10))}${e.completed_by ? ` · ${esc(e.completed_by)}` : ""}</td><td>${esc(this._waited(e))}</td></tr>`).join("") +
       `</tbody></table>`;
   },
 };
@@ -5946,6 +6110,13 @@ Object.assign(Mock, {
     const it = this._upgrades.find(x => x.id === id);
     if (it) { it.status = "working"; it.started_by = "Demo User"; it.started_at = new Date().toISOString(); it.setup_id = setupId; }
     return { ok: true, items: this._upgrades };
+  },
+  async hub_bulk_upgrades(action, ids, priority, site) {
+    const want = new Set(ids || []); const hit = this._upgrades.filter(x => want.has(x.id));
+    if (action === "priority") hit.forEach(x => { x.priority = +priority; });
+    else if (action === "site") hit.forEach(x => { x.site = site; });
+    else if (action === "complete" || action === "remove") this._upgrades = this._upgrades.filter(x => !want.has(x.id));
+    return { ok: true, items: this._upgrades, done: hit.length };
   },
   async hub_remove_upgrade(id) { this._upgrades = this._upgrades.filter(x => x.id !== id); return { ok: true, items: this._upgrades }; },
   async hub_complete_upgrade(id) {

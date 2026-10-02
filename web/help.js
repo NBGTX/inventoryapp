@@ -207,8 +207,16 @@ const Help = {
           <li>Each device lands under its <b>site tab</b>. Devices whose site does not match the division's sites go under <b>Other</b>.</li>
           <li><b>Reorder</b> by dragging, or with the ↑ ↓ buttons. The order is yours to set: priority is a label, not an automatic sort.</li>
           <li><b>▶ Begin</b> starts a New Computer Setup for that device in Endpoint Provisioning and marks the entry <b>Working</b> with your name. The setup's progress then shows on the list.</li>
-          <li><b>✓</b> checks it off: it leaves the queue and is added to the <b>Log</b> tab with who finished it and when. ✎ edits priority or notes; ✕ removes it without completing.</li>
+          <li><b>✓ Done</b> checks it off: it leaves the queue and is added to the <b>Completed</b> tab with who finished it, when, and how many days it waited. <b>✎ Edit</b> changes priority or notes and shows the history; <b>✕ Remove</b> drops it without completing. Clicking anywhere on a row opens the same details.</li>
         </ol>
+        <h5>Finding and planning</h5>
+        <ul>
+          <li>Search by serial, hostname, user, model or notes, and filter by <b>priority</b>, by <b>auto or by hand</b>, and <b>waiting or working</b>. <b>Clear filters</b> resets them; your tab, view and filters are remembered for each division.</li>
+          <li>Rows from the automatic rules carry an <b>Auto</b> tag with the reason. The warranty end date is shown when it is known (red = ended, amber = within 90 days).</li>
+          <li><b>By model</b> groups the list by model with a count and a priority breakdown, which is what you need to order parts or machines. Click a model to see its devices. <b>Copy list</b> copies whatever view is showing for Excel or a request.</li>
+        </ul>
+        <h5>Several at once</h5>
+        <p>Tick rows (or <b>Select all shown</b>) to <b>set the priority</b>, <b>move to another site</b>, <b>mark upgraded</b> or <b>remove</b> them together. Only rows you can see are changed, and each action is one entry in the change log.</p>
         <p><b>Refresh</b> re-reads the list if someone else changed it.</p>`
     },
 

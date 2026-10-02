@@ -109,6 +109,48 @@ class IgnoreList(unittest.TestCase):
         self.assertIn("s1", self.hub.get_upgrade_ignored())
 
 
+class Bulk(unittest.TestCase):
+    def setUp(self):
+        self.hub = Hub(logs_folder=tempfile.mkdtemp(),
+                       division={"id": "nbgtx", "name": "TX", "legacy_data": False, "sites": [{"code": "TER", "name": "T"}]})
+        for sn in ("A", "B", "C"):
+            self.hub.add_upgrade({"serial": sn, "model": "M", "site": "TER"}, 3, "", "me")
+        self.ids = {i["serial"]: i["id"] for i in self.hub.get_upgrades()["items"]}
+
+    def items(self):
+        return {i["serial"]: i for i in self.hub.get_upgrades()["items"]}
+
+    def test_priority_and_site_change_only_the_chosen_rows(self):
+        r = self.hub.bulk_upgrades("priority", [self.ids["A"], self.ids["B"]], priority=5, actor="me")
+        self.assertEqual(r["done"], 2)
+        it = self.items()
+        self.assertEqual((it["A"]["priority"], it["B"]["priority"], it["C"]["priority"]), (5, 5, 3))
+        self.assertEqual(it["A"]["history"][-1]["action"], "updated")
+        self.hub.bulk_upgrades("site", [self.ids["C"]], site="LTR", actor="me")
+        self.assertEqual(self.items()["C"]["site"], "LTR")
+        with self.assertRaises(ValueError):
+            self.hub.bulk_upgrades("priority", [self.ids["A"]], priority="x")
+        with self.assertRaises(ValueError):
+            self.hub.bulk_upgrades("site", [self.ids["A"]], site=" ")
+
+    def test_complete_logs_each_and_blocks_auto_requeue_remove_does_not_log(self):
+        self.hub.bulk_upgrades("complete", [self.ids["A"], self.ids["B"]], actor="me")
+        self.assertEqual(sorted(self.items()), ["C"])
+        log = self.hub.get_upgrade_log()["entries"]
+        self.assertEqual(sorted(e["serial"] for e in log), ["A", "B"])
+        self.assertTrue(all(e["completed_by"] == "me" and e["completed_at"] for e in log))
+        self.hub.bulk_upgrades("remove", [self.ids["C"]], actor="me")
+        self.assertEqual(self.items(), {})
+        self.assertEqual(len(self.hub.get_upgrade_log()["entries"]), 2)                          # removal is not a completion
+        self.assertEqual(set(self.hub.get_upgrade_ignored()), {"a", "b", "c"})
+
+    def test_unknown_action_and_unknown_ids(self):
+        with self.assertRaises(ValueError):
+            self.hub.bulk_upgrades("explode", [self.ids["A"]])
+        self.assertEqual(self.hub.bulk_upgrades("remove", ["nope"], actor="me")["done"], 0)
+        self.assertEqual(len(self.items()), 3)
+
+
 class Queue(unittest.TestCase):
     def fake_gc(self, rows_use, rows_stock=(), settings=None):
         class G:
