@@ -1069,3 +1069,16 @@ td.sw-vname{padding-left:34px!important;color:var(--muted);}
 #appview-activity .iss-seg{margin:0;}
 .md-tag.act-access{border-color:var(--red);color:var(--red);}.md-tag.act-settings{border-color:var(--amber);color:var(--amber);}
 .md-tag.act-sync{color:var(--light);}.md-tag.act-devices{border-color:#3ecf8e;color:#3ecf8e;}
+
+/* ---- sidebar header + division picker ---- */
+.side-brand{align-items:center;gap:12px;padding:2px 6px 0;}
+.side-brand img.mark{width:38px;height:38px;flex:none;}
+.side-title{display:flex;flex-direction:column;justify-content:center;gap:1px;min-width:0;}
+.side-brand h1{line-height:1.15;font-size:16px;}
+.side-brand span{line-height:1.2;font-size:12px;}
+.div-pick{margin:2px 0 10px;}
+.div-pick label{display:block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 2px 4px;}
+.div-pick .div-switch{width:100%;max-width:none;margin:0;padding:9px 30px 9px 12px;font-size:13px;font-family:inherit;appearance:none;-webkit-appearance:none;color-scheme:dark;cursor:pointer;
+  background:var(--darker) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a9b8ae' stroke-width='3'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 11px center;
+  border:1px solid var(--border);border-radius:8px;color:var(--text);}
+.div-pick .div-switch:hover,.div-pick .div-switch:focus{border-color:var(--amber);outline:none;}

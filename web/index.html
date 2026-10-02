@@ -13,7 +13,7 @@
   <aside class="sidebar">
     <div class="side-brand">
       <img class="mark" src="hub-mark.svg" alt="NBG Hub">
-      <div><h1>NBG Hub</h1><span id="divSub">Systems</span><select id="divSwitch" class="div-switch hidden" title="Switch division" onchange="Divisions.switchTo(this.value)"></select></div>
+      <div class="side-title"><h1>NBG Hub</h1><span id="divSub">Systems</span></div>
     </div>
     <nav class="nav">
       <button class="navitem active" data-view="dashboard" onclick="Nav.go('dashboard')">
@@ -58,6 +58,10 @@
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Settings</button>
       <button class="side-config dm-btn" id="dmBtn" onclick="DataMode.open()" title="Live production data or a local copy (writes stay on this PC)">Data: …</button>
+      <div class="div-pick hidden" id="divPick">
+        <label for="divSwitch">Division</label>
+        <select id="divSwitch" class="div-switch" title="Switch division" onchange="Divisions.switchTo(this.value)"></select>
+      </div>
       <div class="acct-line"><span id="acct">Not signed in</span></div>
       <button class="primary hidden" id="signinBtn" style="width:100%;justify-content:center;margin:6px 0" onclick="App.signIn(this)">Sign in</button>
       <a id="signout" class="hidden" onclick="App.signOut()">Sign out</a>

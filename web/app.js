@@ -514,16 +514,16 @@ const Divisions = {
   /* css class for a site: first two keep the original ltr/bri colours */
   cls(code) { if (code === "Other") return "other"; const i = this.codes().indexOf(code); return i === 0 ? "ltr" : i === 1 ? "bri" : "s" + (i < 0 ? 9 : i); },
   renderSwitcher() {
-    const el = document.getElementById("divSwitch");
+    const el = document.getElementById("divSwitch"), pick = document.getElementById("divPick");
     if (!el) return;
     const sub = document.getElementById("divSub");
     if (this.list.length < 2) {                 // one division: no dropdown, just its name
-      el.classList.add("hidden");
+      if (pick) pick.classList.add("hidden");
       if (sub) sub.textContent = this.cur().name || "Systems";
       return;
     }
     if (sub) sub.textContent = "Systems";
-    el.classList.remove("hidden");
+    if (pick) pick.classList.remove("hidden");
     el.innerHTML = this.list.map(d => `<option value="${attr(d.id)}"${d.id === this.current ? " selected" : ""}>${esc(d.name)}</option>`).join("");
   },
   async switchTo(id) {
