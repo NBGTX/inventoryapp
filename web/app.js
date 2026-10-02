@@ -3951,6 +3951,15 @@ const Software = {
     }
     apps.sort((a, b) => b.scoped.length - a.scoped.length || a.name.localeCompare(b.name));
     this._view = apps;
+    const total = this.data.apps.length, cnt = document.getElementById("swCount");
+    if (cnt) cnt.textContent = apps.length === total ? `${total} apps` : `Showing ${apps.length} of ${total}`;
+    const st = document.getElementById("swStats");
+    if (st) {
+      const depts = new Set((this.data.users || []).map(u => this.deptKeyOf(u))).size;
+      const when = this.generatedAt ? this.generatedAt.slice(0, 10) : "—";
+      const card = (n, l) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`;
+      st.innerHTML = card(total.toLocaleString(), "Apps found") + card((this.data.users || []).length.toLocaleString(), "People scanned") + card(depts, "Departments") + card(`<span style="font-size:22px">${esc(when)}</span>`, "Last synced");
+    }
     const noteBits = [];
     if (ql && mode === "apps") noteBits.push(`matching <b>${esc(q)}</b>`);
     if (ql && mode === "people") noteBits.push(`installed on people or devices matching <b>${esc(q)}</b>`);
@@ -3974,6 +3983,13 @@ const Software = {
         <td style="text-align:right;white-space:nowrap"><button class="rowbtn">Who has it ›</button></td></tr>`).join("") +
       `</tbody></table>`;
     host.innerHTML = html;
+  },
+  copy() {
+    const rows = this._view || [], cell = v => String(v == null ? "" : v).replace(/[\t\r\n]+/g, " ");
+    const txt = ["App\tVersion\tPublisher\tInstalls"].concat(rows.map(a => [a.name, a.version, a.publisher, (a.scoped || []).length].map(cell).join("\t"))).join("\n");
+    const done = () => App.toast(`Copied ${rows.length} app${rows.length === 1 ? "" : "s"}.`);
+    const fb = () => { const t = document.createElement("textarea"); t.value = txt; document.body.appendChild(t); t.select(); try { document.execCommand("copy"); done(); } catch (e) { App.toast("Could not copy.", true); } t.remove(); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, fb); else fb();
   },
   _mode: "", _t: null,
   typed() { this._mode = ""; clearTimeout(this._t); this._t = setTimeout(() => this.render(), 120); },

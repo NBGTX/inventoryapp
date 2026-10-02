@@ -998,3 +998,14 @@ td.cell-user a.sw-user{color:inherit;border-bottom:1px dotted var(--muted);}td.c
 .uf-chip a{cursor:pointer;font-size:16px;line-height:1;padding:0 6px;}
 .uf-chip.hidden{display:none;}
 #appview-people .rowsel,#pplAll{margin:0;}
+
+/* Software page uses the same card layout as Devices and Teammates */
+.panel .sw-tools{margin-bottom:0;}
+#swSearch{max-width:520px;min-width:260px;background:var(--darker);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text);font-size:13px;flex:1;}
+.panel .sw-tools .iss-seg{margin:0;}
+.panel #swHost > :not(table){margin:14px 18px;}
+.panel #swHost > .empty{margin:0;}
+.panel #swHost .sw-compliance{margin:14px 18px;}
+.panel #swHost > .sub-note{margin:14px 18px 8px !important;}
+.panel #swHost > .ak-chips{margin:0 18px 12px !important;}
+.panel #swHost > .cfg-warn{margin:14px 18px !important;}
