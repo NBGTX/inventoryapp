@@ -204,7 +204,7 @@ const Mock = {
   async coil_card_find(nbs) {
     nbs = (nbs || "").trim();
     const c = this._coil[nbs];
-    if (!c) return { ok: true, found: false, nbs };
+    if (!c) return { ok: true, found: false, nbs, server: "(mock)", db: "CoilCard" };
     const { tracking, ...card } = c;
     return { ok: true, found: true, nbs, card: { NBSNumber: nbs, ...card }, tracking_rows: tracking };
   },
@@ -3460,7 +3460,7 @@ const BGTools = {
     const r = await Backend.call("coil_card_find", nbs);
     if (!document.getElementById("bgcBody")) return;
     if (!r || !r.ok) { body.innerHTML = `<div class="cfg-warn">${esc((r && r.error) || "Lookup failed.")}</div>`; return; }
-    if (!r.found) { this._coil = null; body.innerHTML = `<p class="hint">No coil card ${esc(nbs)}.</p>`; return; }
+    if (!r.found) { this._coil = null; body.innerHTML = `<p class="hint">No coil card ${esc(nbs)} in ${esc(r.db || "")} on ${esc(r.server || "")}.</p>`; return; }
     this._coil = r.nbs;
     const c = r.card || {};
     const f = (k, l) => c[k] ? `<tr><td class="muted">${l}</td><td>${esc(c[k])}</td></tr>` : "";

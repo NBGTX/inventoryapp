@@ -1975,7 +1975,8 @@ class Api:
         try:
             import coilcards
             c = coilcards.conf(self._client())
-            return {"ok": True, **coilcards.preview(self._ts_server(), c, nbs)}
+            srv = self._ts_server()
+            return {"ok": True, "server": srv, "db": c["coilcard_db"], **coilcards.preview(srv, c, nbs)}
         except Exception as e:
             return self._fail(e)
 
