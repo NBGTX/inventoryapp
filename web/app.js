@@ -1728,6 +1728,11 @@ const Bulk = {
 /* ---- log view ------------------------------------------------------------ */
 const LogView = {
   async open() {
+    const nav = document.getElementById("navActivity");
+    if (nav && !nav.classList.contains("hidden")) { Nav.go("activity"); return; }          // admins: the full Activity page
+    return this._modal();
+  },
+  async _modal() {
     document.getElementById("modalRoot").innerHTML =
       `<div class="overlay"><div class="modal" style="width:760px;max-width:94vw;">
         <div class="modal-head"><h3>Activity log</h3><button onclick="LogView.close()">&times;</button></div>
@@ -2084,13 +2089,31 @@ const Badges = {
       if (!r || !r.ok) return 0;
       return r.triage ? r.new : r.updates;          // super admins: untriaged issues. Everyone else: news on their own issues.
     },
+    upgrades: async () => {                          // devices waiting on the Upgrade list
+      const r = await Backend.call("hub_get_upgrades");
+      return (r && r.ok && r.data && (r.data.items || []).length) || 0;
+    },
+    specs: async () => {                             // devices with no CPU, RAM or warranty recorded (the Dashboard 'Missing specs' tile)
+      const inv = Dashboard._inv();
+      return inv && inv.missing_specs_count ? inv.missing_specs_count : 0;
+    },
+  },
+  TITLES: {
+    issues: n => n + " issue" + (n === 1 ? "" : "s") + " need attention",
+    upgrades: n => n + " device" + (n === 1 ? "" : "s") + " on the Upgrade list",
+    specs: n => n + " device" + (n === 1 ? " has" : "s have") + " missing specs (CPU, RAM or warranty). Click to fill them in.",
   },
   set(name, n) {
     const el = document.getElementById("badge-" + name);
     if (!el) return;
     el.textContent = n > 99 ? "99+" : String(n);
     el.classList.toggle("hidden", !(n > 0));
-    el.title = n + (name === "issues" ? " issue" + (n === 1 ? "" : "s") + " need attention" : "");
+    el.title = this.TITLES[name] ? this.TITLES[name](n) : String(n);
+  },
+  openSpecs(ev) {
+    if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+    Nav.go("dashboard");
+    setTimeout(() => { try { Dashboard.drillMissingSpecs(); } catch (e) { /* dashboard still loading */ } }, 400);
   },
   async refresh() {
     if (document.body.classList.contains("signed-out")) return;
@@ -2478,13 +2501,21 @@ const Sites = {
 
 /* ---- Edit specs: fill in CPU / RAM / storage / warranty by hand (for makers whose lookup is not available) ---- */
 const Specs = {
-  _t: null,
+  _t: null, _queue: [],
   _find(serial) {
     const all = [].concat(App.state.use || [], App.state.stock || [], (Dashboard._inv().missing_specs || []));
     return all.find(r => r.serial === serial) || { serial };
   },
-  open(serial) {
-    const r = this._find(serial), f = (id, label, val, ph, extra) => `<div class="field"><label>${label}</label><input id="${id}" value="${attr(val || "")}" placeholder="${attr(ph || "")}" autocomplete="off" ${extra || ""}></div>`;
+  /* same model, same CPU/RAM/storage: offer to fill the other devices of this model that lack them */
+  _siblings(r) {
+    const miss = Dashboard._inv().missing_specs || [];
+    if (!r.model) return [];
+    return miss.filter(x => x.serial !== r.serial && (x.model || "") === r.model && (x.manufacturer || "") === (r.manufacturer || ""));
+  },
+  open(serial, queue) {
+    if (queue) this._queue = queue.filter(s => s !== serial); else if (queue === undefined && !this._keep) this._queue = [];
+    this._keep = false;
+    const r = this._find(serial), sib = this._siblings(r), f = (id, label, val, ph, extra) => `<div class="field"><label>${label}</label><input id="${id}" value="${attr(val || "")}" placeholder="${attr(ph || "")}" autocomplete="off" ${extra || ""}></div>`;
     document.getElementById("modalRoot").innerHTML =
       `<div class="overlay"><div class="modal" style="width:560px;max-width:94vw;">
         <div class="modal-head"><h3>Edit specs — <span class="mono">${esc(serial)}</span></h3><button onclick="Drill.close()">&times;</button></div>
@@ -2495,8 +2526,11 @@ const Specs = {
           <div class="fields">${f("sp_ram", "RAM", r.ram, "e.g. 16 GB", 'list="sp_ramlist"')}${f("sp_storage", "Storage", r.storage, "e.g. 512 GB")}</div>
           <datalist id="sp_ramlist"><option value="4 GB"><option value="8 GB"><option value="16 GB"><option value="32 GB"><option value="64 GB"></datalist>
           <div class="field" style="max-width:240px"><label>Warranty ends</label><input id="sp_warranty" type="date" value="${attr((r.warranty || "").slice(0, 10))}"></div>
-          <div class="up-actions"><button class="ghost" onclick="Drill.close()">Cancel</button>
-            <button class="primary" onclick="Specs.save('${attr(serial)}')">Save</button></div>
+          ${sib.length ? `<label class="up-check"><input type="checkbox" id="sp_sib" checked> Also fill the processor, RAM and storage on the <b>${sib.length}</b> other ${esc(r.model)} device${sib.length === 1 ? " that lacks" : "s that lack"} them (warranty stays per device)</label>` : ""}
+          <div class="up-actions">${this._queue.length ? `<span class="muted" style="margin-right:auto">${this._queue.length} more after this one</span>` : ""}
+            <button class="ghost" onclick="Drill.close()">Cancel</button>
+            ${this._queue.length ? `<button class="ghost" onclick="Specs.next()">Skip</button>` : ""}
+            <button class="primary" onclick="Specs.save('${attr(serial)}')">${this._queue.length ? "Save &amp; next" : "Save"}</button></div>
         </div></div></div>`;
     this.hint();
     setTimeout(() => { const el = document.getElementById("sp_cpu"); if (el) el.focus(); }, 30);
@@ -2517,12 +2551,35 @@ const Specs = {
   },
   async save(serial) {
     const val = id => (document.getElementById(id).value || "").trim();
-    const r = await Backend.call("update_device_specs", serial, { cpu: val("sp_cpu"), ram: val("sp_ram"), storage: val("sp_storage"), warranty: val("sp_warranty") });
+    const me = this._find(serial), sibOn = document.getElementById("sp_sib") && document.getElementById("sp_sib").checked;
+    const mine = { cpu: val("sp_cpu"), ram: val("sp_ram"), storage: val("sp_storage"), warranty: val("sp_warranty") };
+    const sibs = sibOn ? this._siblings(me) : [];
+    let r;
+    if (sibs.length) {
+      const items = [{ serial, fields: mine }].concat(sibs.map(s => {
+        const f = {}; ["cpu", "ram", "storage"].forEach(k => { if (mine[k] && !String(s[k] || "").trim()) f[k] = mine[k]; });
+        return { serial: s.serial, fields: f };
+      }));
+      r = await Backend.call("update_specs_bulk", items);
+    } else r = await Backend.call("update_device_specs", serial, mine);
     if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
-    Drill.close();
-    App.toast("Specs saved." + (r.queued_upgrades ? " " + r.queued_upgrades + " device(s) added to the Upgrade list." : ""));
+    const done = new Set(sibs.map(s => s.serial));
+    this._queue = this._queue.filter(s => !done.has(s));
+    App.toast((sibs.length ? (r.updated || 1) + " devices updated." : "Specs saved.") + (r.queued_upgrades ? " " + r.queued_upgrades + " device(s) added to the Upgrade list." : ""));
     try { await App.reload(); } catch (e) {}
-    try { Dashboard.load(); } catch (e) {}
+    try { await Dashboard.load(); } catch (e) {}
+    Badges.refresh();
+    if (this._queue.length) this.next(); else Drill.close();
+  },
+  walk() {
+    const all = (Dashboard._inv().missing_specs || []).map(x => x.serial);
+    if (all.length) this.open(all[0], all);
+  },
+  next() {
+    const s = this._queue.shift();
+    if (!s) return Drill.close();
+    this._keep = true;
+    this.open(s);
   },
 };
 
@@ -2876,7 +2933,8 @@ const Dashboard = {
       { label: "User", get: r => r.user, w: "16%" }, { label: "Missing", get: r => (r.missing || []).join(", "), sortGet: r => (r.missing || []).length, w: "14%" },
       { label: "Source", get: r => r.source || "—", w: "8%" }],
       { empty: "Every device has its CPU, RAM and warranty recorded.",
-        rowAction: { label: "✎ Edit specs", fn: r => Specs.open(r.serial) } });
+        rowAction: { label: "✎ Edit specs", fn: r => Specs.open(r.serial, []) },
+        footerHtml: (this._inv().missing_specs || []).length ? `<button class="primary" onclick="Specs.walk()">Fill them one by one (${(this._inv().missing_specs || []).length})</button>` : "" });
   },
   // "Needs upgrade" tile: side-by-side LTR / BRI upgrade plan. Each column = top 5,
   // combining user-prioritized upgrade-list entries (priority first) with the most
@@ -4631,6 +4689,7 @@ const Upgrade = {
       this.log = (r && r.ok && r.log && Array.isArray(r.log.entries)) ? r.log.entries : [];
       this.ignored = (r && r.ok && r.ignored) || 0;
     } catch (e) { this.items = []; this.log = []; }
+    Badges.set("upgrades", this.items.length);
     // linked setups -> live progress for "working" items
     this._setupsById = {};
     try {
@@ -6439,6 +6498,15 @@ Object.assign(Mock, {
     if (f.warranty && !/^\d{4}-\d{2}-\d{2}$/.test(f.warranty)) return { ok: false, error: "Warranty must be a date like 2027-05-31." };
     for (const list of [this._use, this._stock]) { const r = list.find(x => x.serial === serial); if (r) { ["cpu", "ram", "storage", "warranty"].forEach(k => { if (f[k] !== undefined) r[k] = f[k]; }); return { ok: true, queued_upgrades: 0 }; } }
     return { ok: false, error: serial + " was not found in inventory." };
+  },
+  async update_specs_bulk(items) {
+    let n = 0; const nf = [];
+    for (const it of items || []) {
+      let hit = false;
+      for (const list of [this._use, this._stock]) { const r = list.find(x => x.serial === it.serial); if (r) { ["cpu", "ram", "storage", "warranty"].forEach(k => { if (it.fields[k] !== undefined) r[k] = it.fields[k]; }); hit = true; } }
+      if (hit) n++; else nf.push(it.serial);
+    }
+    return { ok: true, updated: n, not_found: nf, queued_upgrades: 0 };
   },
   async hub_clear_upgrade_ignored() { return { ok: true, cleared: 0 }; },
   /* issues board - mirrors Api.issue_* */

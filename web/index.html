@@ -24,13 +24,13 @@
         Endpoint Provisioning</button>
       <button class="navitem" data-view="inventory" onclick="Nav.go('inventory')">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7L12 3 4 7l8 4 8-4z"/><path d="M4 7v10l8 4 8-4V7"/><path d="M12 11v10"/></svg>
-        Devices</button>
+        Devices<span class="nav-badge hidden" id="badge-specs" onclick="Badges.openSpecs(event)"></span></button>
       <button class="navitem" data-view="people" onclick="Nav.go('people')">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         Teammates</button>
       <button class="navitem" data-view="upgrades" onclick="Nav.go('upgrades')">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
-        Upgrades</button>
+        Upgrades<span class="nav-badge hidden" id="badge-upgrades"></span></button>
       <button class="navitem" data-view="software" onclick="Nav.go('software')">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
         Software</button>

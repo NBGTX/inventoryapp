@@ -21,7 +21,7 @@ const Help = {
           <li><b>No UPN set</b>: devices with no primary user.</li>
           <li><b>Warranties ≤ 90 days</b>: warranty ends within 90 days (or already expired).</li>
           <li><b>Upgrade Forecast</b>: devices that meet the upgrade rules (a processor older than a set number of years, and/or a warranty that ended a set number of months ago; a super admin sets these under Platform → Integrations → Upgrades). Click for the list with the reason for each; the Upgrade list page queues them.</li>
-          <li><b>Missing specs</b> (appears when there are any): devices with no CPU, RAM or warranty date recorded. This happens for makers whose lookup is not available yet (Dell and HP need an API key). Click it, then <b>Edit specs</b> on a row to type the values in; they count immediately toward the upgrade rules. Virtual machines are left out.</li>
+          <li><b>Missing specs</b> (appears when there are any): devices with no CPU, RAM or warranty date recorded. This happens for makers whose lookup is not available yet (Dell and HP need an API key). Click it, then <b>Edit specs</b> on a row, or <b>Fill them one by one</b> to step through the list with <b>Save &amp; next</b>. When other devices of the same model lack the same data, one tick fills their processor, RAM and storage too (warranty stays per device). Values count immediately toward the upgrade rules. Virtual machines are left out.</li>
           <li><b>No check-in N+ days</b>: devices that have not reported to Intune for longer than the stale limit (30 days unless a super admin changed it).</li>
           <li><b>Users without MFA</b>: people with a device but no registered multi-factor method.</li>
           <li><b>Not part of this division</b>: devices in the division's Intune category whose user is not in the division's Entra company. Usually a mis-categorized device.</li>
@@ -43,7 +43,7 @@ const Help = {
           <li><b>Data: Live / Local</b> (sidebar, <b>super admins only</b>): <b>Live</b> is real production data. <b>Local</b> is a private copy on this PC: you can test freely and nothing reaches SharePoint. Click it to switch or to pull a fresh copy.</li>
           <li><b>Spinner chip above your name</b>: a long job (sync, software pull, MFA) is still running. You can move to other pages meanwhile.</li>
           <li><b>"Saving…" pill</b> at the top: a save is in progress. Wait for it to finish before closing the app.</li>
-          <li><b>Number badges</b> on a menu item: something there needs attention. On <b>Issues</b>, super admins see how many issues are still <b>New</b> (not triaged); everyone else sees how many of their own or watched issues have news since they last opened the page. The badge clears when you open the page (for super admins it clears as each New issue is triaged).</li>
+          <li><b>Number badges</b> on a menu item: something there needs attention. On <b>Issues</b>, super admins see how many issues are still <b>New</b> (not triaged); everyone else sees how many of their own or watched issues have news since they last opened the page. The badge clears when you open the page (for super admins it clears as each New issue is triaged). <b>Devices</b> shows how many devices have missing specs (click the badge to fill them in); <b>Upgrades</b> shows how many devices are on the Upgrade list.</li>
           <li><b>Version</b> (bottom of the sidebar): click it to see which version each person is running. A yellow or red version means an update is available or required.</li>
           <li><b>Report bug / feature</b>: opens a short form that files an issue on the shared Issues board.</li>
           <li><b>Settings</b>: what you see there depends on your role. Everyone sees General; division admins see more; super admins also see the Platform section.</li>
@@ -172,7 +172,7 @@ const Help = {
         </ul>
         <h5>The buttons at the top</h5>
         <ul>
-          <li><b>Log</b>: the activity log of every add, move and removal.</li>
+          <li><b>Log</b>: opens the Activity page (admins), or a short list of recent adds, moves and removals (everyone else).</li>
           <li><b>Sync now</b>: pulls this division's devices from Intune into <i>In use</i>, adds new ones, updates the rest and removes duplicate rows. It never deletes devices, and afterwards it adds any device that meets the upgrade rules to the Upgrade list. The same sync runs by itself when the app opens, unless a super admin turned that off.</li>
           <li><b>Populate MFA</b>: fills the MFA column from each user's registered methods. It needs a role that can read authentication methods.</li>
           <li><b>Master sync</b>: a slower, deliberate full refresh that <b>overwrites</b> every device's user, specs, MFA, last check-in and OS from Intune and Entra. Use it when the stored values look wrong.</li>

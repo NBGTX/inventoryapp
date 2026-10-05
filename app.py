@@ -2858,6 +2858,45 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    def update_specs_bulk(self, items: list) -> dict:
+        """Set specs on several devices at once (same model, 'Save & next'). items = [{serial, fields}]. One audit entry, one requeue."""
+        try:
+            import re as _re
+            import sync
+            gc = self._client()
+            todo = []
+            for it in (items or [])[:200]:
+                serial = str((it or {}).get("serial") or "").strip()
+                upd = {}
+                for k in ("cpu", "ram", "storage", "warranty"):
+                    v = (it.get("fields") or {}).get(k)
+                    if v is None:
+                        continue
+                    v = " ".join(str(v).split())
+                    if len(v) > 120:
+                        return {"ok": False, "error": f"{k.upper()} is too long."}
+                    if k == "warranty" and v and not _re.match(r"^\d{4}-\d{2}-\d{2}$", v):
+                        return {"ok": False, "error": "Warranty must be a date like 2027-05-31."}
+                    upd[k] = v
+                if serial and upd:
+                    todo.append((serial, upd))
+            done, missing = 0, []
+            for serial, upd in todo:
+                key, item = "in_use", gc.find_by_serial("in_use", serial)
+                if not item:
+                    key, item = "new_stock", gc.find_by_serial("new_stock", serial)
+                if not item:
+                    missing.append(serial)
+                    continue
+                gc.update_item(key, item["id"], upd)
+                done += 1
+            if done:
+                gc.add_log("Specs edited", "", "", actor=gc.account_name or "", details=f"Bulk: {done} device(s)")
+            queued = sync.queue_upgrades(gc) if done else 0
+            return {"ok": True, "updated": done, "not_found": missing, "queued_upgrades": queued}
+        except Exception as e:
+            return self._fail(e)
+
     def hub_begin_upgrade(self, item_id: str, setup_id: str) -> dict:
         try:
             return {"ok": True, **self._hubc().begin_upgrade(item_id, setup_id, self._actor())}

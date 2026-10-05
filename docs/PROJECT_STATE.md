@@ -41,18 +41,14 @@ Hub documents (named docs, via `Hub.get_named/put_named`): division hub = `devic
   - Master settings (catalog, group Directory/Tools): `coilcard_db` (default `CoilCard`), `coilcard_card_table` (`dbo.Card`), `coilcard_tracking_table` (`dbo.CoilTracking`), `coilcard_untested_label` (heading shows "(Untested)" until set to `off`). One tool tile "Coil Cards" with Delete / Restore tabs, one help box (`bgt-coilcard`). Disabled in Local data mode. One audit entry per delete / restore (`hub._change`). Tests: `tests/test_coilcards.py`.
 - Org instructions: Entra ID for auth; LLM endpoints from Azure AI Foundry with managed identity (none used yet); Nucor Brand Kit for public/branded artifacts. The user declined the Nucor architecture-guidance offer: do not raise it again.
 
-## Open items (nothing here is done)
-1. **Release 2026.10.02**: smoke test on a clean PC (checklist in `docs/BUILD_AND_DEPLOY.md`), hand out the `.exe` + `.sha256`, set Settings > Platform > Integrations > Releases > *Latest released version*, then `git tag v2026.10.02` and push the tag.
-2. **NBGW go-live**: tell NBGW to stop using their old site/exe, take a fresh snapshot, `load_central.py --hub` dry run, then `--commit` (needs approval), spot-check counts. See `docs/MIGRATION.md`.
-3. **Unattended nightly sync**: decisions pending (Entra consent, which server/owner runs it, Teams or webhook for failures). See `docs/UNATTENDED_SYNC.md`.
-4. **Notification webhook** (Power Automate flow) not created yet.
-5. **Dell and HP keys** not entered; the HP response parser is unverified (use `tools/vendor_probe.py`).
-6. **Terrell upgrade list is empty** until CPU data is filled (Dashboard > Missing specs) or a warranty rule is set (Settings > Platform > Integrations > Upgrades).
-7. **AD tools**: set `ad_domain_controller` in master settings; "Add to AD" from Missing Groups has not been run against live AD (Copy Permissions was, once). Teammates > Refresh from Entra falls back to one Entra call per person when the bulk report is unavailable (slow).
-8. **NBT Sites**: a super admin should open Settings > Platform > NBT Sites once and save, so the platform-wide list exists on purpose (until then each division shows its own old list).
-9. **Code-signing certificate**: none yet; installs show the SmartScreen warning.
-10. Ideas not done: Devices "Log" button -> Activity page; remember the last mail button; more badge sources (upgrades queued, missing specs); real SharePoint columns for deploy/manufacture dates; bundle SVG colour icons for NBT Sites.
-11. **Coil Cards never run against real data**: do a delete + restore of a throwaway card, compare the `Card` / `CoilTracking` rows before and after, then set master setting "Mark Coil Cards as (Untested)" to Off. To find a test card: `SELECT TOP 20 CoilID, COUNT(*) FROM dbo.CoilTracking GROUP BY CoilID ORDER BY COUNT(*)`.
+## Open items
+1. **Release**: latest build is 2026.10.05 (`release\NBG-Hub-Setup-2026.10.05.exe`, tag `v2026.10.05`). Smoke test on a clean PC (checklist in `docs/BUILD_AND_DEPLOY.md`), hand out the `.exe` + `.sha256`, set Settings > Platform > Integrations > Releases > *Latest released version*. Later commits (specs walk-through, badges, Log button) are not in that build yet.
+2. **NBGW go-live** (user is talking to NBGW): they stop using their old site/exe, take a fresh snapshot, `load_central.py --hub` dry run, then `--commit` (needs approval), spot-check counts. See `docs/MIGRATION.md`.
+3. **Deferred**: unattended nightly sync (`docs/UNATTENDED_SYNC.md`), notification webhook (Power Automate), Dell/HP keys (HP parser unverified, `tools/vendor_probe.py`).
+4. **Terrell upgrade list** stays empty until CPU data is filled. Dashboard > Missing specs > *Fill them one by one* (Save & next, one tick fills the same model) or set a warranty rule (Settings > Platform > Integrations > Upgrades). Sidebar badge on Devices counts devices with missing specs.
+5. **Real SharePoint columns for deploy/manufacture dates**: needs approval (creates columns on the production central lists; run `tools\check_central.py` after). Dates live in hub doc `device-dates` until then.
+6. **Coil Cards** never run against real data (sporadic use, tested when needed): delete + restore a throwaway card, compare the `Card` / `CoilTracking` rows before and after, then set master setting "Mark Coil Cards as (Untested)" to Off.
+7. Ideas not done: remember the last mail button; bundle SVG colour icons for NBT Sites. Teammates > Refresh from Entra is slow when it falls back to one Entra call per person.
 
 ## How to work in this repo
 - Commands, rules and conventions: `CLAUDE.md`. Build and deploy: `docs/BUILD_AND_DEPLOY.md`.

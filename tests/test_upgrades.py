@@ -224,6 +224,20 @@ class SpecEditing(unittest.TestCase):
         self.assertTrue(self.api.update_device_specs("ABC", {"user": "x"})["ok"])                   # nothing allowed -> nothing written
         self.assertEqual(self.updates, [])
 
+    def test_bulk_writes_each_device_with_one_log_and_one_requeue(self):
+        self.gc.find_by_serial = lambda key, s: {"id": s, "fields": {"Title": s}} if (key, s) in (("in_use", "A1"), ("new_stock", "B2")) else None
+        r = self.api.update_specs_bulk([{"serial": "A1", "fields": {"cpu": "Intel i5", "user": "evil"}},
+                                        {"serial": "B2", "fields": {"ram": " 16  GB"}}, {"serial": "ZZ", "fields": {"cpu": "x"}}, {"serial": "A1", "fields": {}}])
+        self.assertTrue(r["ok"], r)
+        self.assertEqual((r["updated"], r["not_found"]), (2, ["ZZ"]))
+        self.assertEqual(self.updates, [("in_use", "A1", {"cpu": "Intel i5"}), ("new_stock", "B2", {"ram": "16 GB"})])
+        self.assertEqual((len(self.logs), self.queued), (1, [1]))
+
+    def test_bulk_validates_before_writing_anything(self):
+        r = self.api.update_specs_bulk([{"serial": "ABC", "fields": {"cpu": "i5"}}, {"serial": "ABC", "fields": {"warranty": "soon"}}])
+        self.assertFalse(r["ok"])
+        self.assertEqual(self.updates, [])
+
     def test_cpu_info(self):
         r = self.api.cpu_info("Intel Core i5-6300U")
         self.assertEqual((r["year"], r["age"]), (2015, date.today().year - 2015))
