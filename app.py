@@ -1137,12 +1137,10 @@ class Api:
                     if ce.__class__.__name__ != "HubConflict" or attempt == 2:      # someone saved first: reload and retry
                         raise
             col_ok = 0
-            for s in sn:                                  # the list columns are the main copy; the hub document stays as the fallback
-                try:
-                    if self._client().set_row_dates(s, dep, mf):
-                        col_ok += 1
-                except Exception:
-                    pass
+            try:                                          # the list columns are the main copy; the hub document stays as the fallback
+                col_ok = self._client().set_row_dates_bulk({s: (dep, mf) for s in sn})
+            except Exception:
+                pass
             try:
                 bits = (f"deploy date {dep or 'cleared'}" if dep is not None else "") + (", " if dep is not None and mf is not None else "") + (f"manufacture date {mf or 'cleared'}" if mf is not None else "")
                 h._change("Device dates", f"{self._actor() or 'NBG Hub'}: {bits} on {len(sn)} device(s)" + (f" ({', '.join(sn[:5])})" if len(sn) <= 5 else ""))
@@ -2866,6 +2864,177 @@ class Api:
                        actor=gc.account_name or "", details=", ".join(f"{k}={v or '(blank)'}" for k, v in upd.items()))
             queued = sync.queue_upgrades(gc) if ("cpu" in upd or "warranty" in upd) else 0
             return {"ok": True, "queued_upgrades": queued}
+        except Exception as e:
+            return self._fail(e)
+
+    # ---- back-fill and import of deploy / manufacture dates ----
+    @staticmethod
+    def _iso_date(v, label):
+        import datetime
+        v = str(v or "").strip()
+        if not v:
+            return ""
+        try:
+            d = datetime.date.fromisoformat(v)
+        except ValueError:
+            raise ValueError(f"{label} '{v}' is not a date like 2026-09-30.")
+        if d > datetime.date.today() or d.year < 1990:
+            raise ValueError(f"{label} '{v}' is outside the allowed range.")
+        return v
+
+    def deploy_backfill(self, commit: bool = False) -> dict:
+        """Fill BLANK deploy dates of In Use devices from the Intune enrollment date (kept in the OS Install Date column).
+        commit=False only counts. Existing dates are never overwritten. One log entry per run. Admins only."""
+        try:
+            import datetime
+            gc = self._client()
+            if gc.division_role() not in ("super", "admin"):
+                return {"ok": False, "error": "Only division admins can fill dates in bulk."}
+            items = gc._items_raw("in_use")
+            if items and not gc._internal_for("in_use", "deploy_date"):
+                return {"ok": False, "error": "The In Use list has no 'Deploy Date' column yet."}
+            hub_dates = (self._hubc().get_named("device-dates") or {}).get("dates") or {}
+            today = datetime.date.today()
+            todo, has, no_src = [], 0, 0
+            for it in items:
+                cur = gc._row(it["fields"], "in_use", in_use=True)
+                serial = (cur.get("serial") or "").strip()
+                if not serial:
+                    continue
+                if cur.get("deploy_date") or (hub_dates.get(serial.lower()) or {}).get("deploy"):
+                    has += 1
+                    continue
+                src = (cur.get("os_install") or "")[:10]
+                try:
+                    d = datetime.date.fromisoformat(src)
+                except ValueError:
+                    no_src += 1
+                    continue
+                if d > today or d.year < 1990:
+                    no_src += 1
+                    continue
+                todo.append((it["id"], serial, src))
+            out = {"ok": True, "candidates": len(todo), "already": has, "no_source": no_src, "written": 0,
+                   "sample": [{"serial": s, "date": d} for _, s, d in todo[:5]], "errors": []}
+            if commit and todo:
+                streak = 0
+                for iid, serial, d in todo:
+                    try:
+                        gc.update_item("in_use", iid, {"deploy_date": d})
+                        out["written"] += 1
+                        streak = 0
+                    except Exception as e:
+                        out["errors"].append(f"{serial}: {e}")
+                        streak += 1
+                        if streak >= 5:
+                            out["errors"].append("Stopped after 5 failures in a row.")
+                            break
+                gc.add_log("Device dates", "", "", actor=gc.account_name or "",
+                           details=f"Deploy dates filled from Intune enrollment date on {out['written']} In Use device(s)")
+            return out
+        except Exception as e:
+            return self._fail(e)
+
+    def device_dates_import(self, rows: list, commit: bool = False) -> dict:
+        """Import deploy / manufacture dates for many serials: rows = [{serial, deploy?, mfg?}] with ISO dates.
+        commit=False only reports matches. A blank date cell leaves that date alone. One change entry per run."""
+        try:
+            gc = self._client()
+            if gc.division_role() not in ("super", "admin"):
+                return {"ok": False, "error": "Only division admins can import dates."}
+            rows = list(rows or [])[:2000]
+            known = set()
+            for key in ("in_use", "new_stock"):
+                known.update((it.get("fields", {}).get("Title") or "").strip().lower() for it in gc._items_raw(key))
+            clean, unmatched, bad = {}, [], []
+            for r in rows:
+                s = str((r or {}).get("serial") or "").strip()
+                if not s:
+                    continue
+                try:
+                    dep = self._iso_date((r or {}).get("deploy"), "Deploy date")
+                    mf = self._iso_date((r or {}).get("mfg"), "Manufacture date")
+                except ValueError as ve:
+                    bad.append(f"{s}: {ve}")
+                    continue
+                if not dep and not mf:
+                    continue
+                if s.lower() not in known:
+                    unmatched.append(s)
+                    continue
+                cur = clean.setdefault(s.lower(), {"serial": s})
+                if dep:
+                    cur["deploy"] = dep
+                if mf:
+                    cur["mfg"] = mf
+            out = {"ok": True, "matched": len(clean), "unmatched": unmatched[:200], "unmatched_count": len(unmatched),
+                   "invalid": bad[:50], "invalid_count": len(bad), "written": 0, "columns": 0}
+            if commit and clean:
+                h = self._hubc()
+                for attempt in range(3):
+                    try:
+                        doc = h.get_named("device-dates") or {}
+                        dates = dict(doc.get("dates") or {})
+                        for k, v in clean.items():
+                            cur = dict(dates.get(k) or {})
+                            if v.get("deploy"):
+                                cur["deploy"] = v["deploy"]
+                            if v.get("mfg"):
+                                cur["mfg"] = v["mfg"]
+                            dates[k] = cur
+                        h.put_named("device-dates", {"dates": dates})
+                        break
+                    except Exception as ce:
+                        if ce.__class__.__name__ != "HubConflict" or attempt == 2:
+                            raise
+                try:
+                    out["columns"] = gc.set_row_dates_bulk({k: (v.get("deploy"), v.get("mfg")) for k, v in clean.items()})
+                except Exception:
+                    pass
+                out["written"] = len(clean)
+                try:
+                    h._change("Device dates", f"{self._actor() or 'NBG Hub'}: imported dates for {len(clean)} device(s)")
+                except Exception:
+                    pass
+            return out
+        except Exception as e:
+            return self._fail(e)
+
+    def health_get(self) -> dict:
+        """System health for admins: last sync, SharePoint columns check, counts and how complete the date data is."""
+        try:
+            import synclock
+            import schema
+            import version
+            gc = self._client()
+            if gc.division_role() not in ("super", "admin"):
+                return {"ok": False, "error": "Health is for admins."}
+            out = {"ok": True, "version": getattr(version, "APP_VERSION", ""), "account": gc.account_upn or "",
+                   "mode": getattr(gc, "data_mode", ""), "division": (gc.division or {}).get("name", "")}
+            try:
+                out["sync"] = synclock.status(self._hubc())
+            except Exception as e:
+                out["sync"] = {"error": str(e)}
+            try:                                               # same check as tools\check_central.py, plus the optional date columns
+                found = schema.problems(gc)
+                notes = [f"{n}: {x}" for n, xs in found.items() for x in xs]
+                for key in ("in_use", "new_stock"):
+                    for logical, label in (("deploy_date", "Deploy Date"), ("mfg_date", "Mfg Date")):
+                        if not gc._internal_for(key, logical):
+                            notes.append(f"{gc.cfg['lists'].get(key, key)}: optional column '{label}' is missing")
+                out["columns"] = {"ok": not notes, "notes": notes}
+            except Exception as e:
+                out["columns"] = {"ok": False, "notes": [f"Could not check: {e}"]}
+            try:
+                use, stock = gc.get_in_use(), gc.get_new_stock()
+                dev = use + stock
+                out["counts"] = {"in_use": len(use), "stock": len(stock),
+                                 "deploy_dates": sum(1 for r in use if r.get("deploy_date")),
+                                 "mfg_dates": sum(1 for r in dev if r.get("mfg_date")),
+                                 "total": len(dev)}
+            except Exception as e:
+                out["counts"] = {"error": str(e)}
+            return out
         except Exception as e:
             return self._fail(e)
 

@@ -187,6 +187,7 @@ const Settings = {
     this.allowed = (ro && ro.ok && ro.sections) || [];          // sections beyond General this role may use (Platform > Role access)
     if (typeof DataMode !== "undefined") DataMode.refresh();            // the Data button is for super admins; re-check now that the account is known
     const nav = document.getElementById("navActivity"); if (nav) nav.classList.toggle("hidden", !(this.su || this.role === "super" || this.role === "admin"));   // the Activity page is for admins
+    const hb = document.getElementById("dashHealth"); if (hb) hb.classList.toggle("hidden", !(this.su || this.role === "super" || this.role === "admin"));          // so is the Health check
   },
   can(min) { return (this.RANK[this.role] || 0) >= this.RANK[min]; },
   open(tab) { if (tab) this.tab = tab; Nav.go("settings"); },

@@ -18,7 +18,7 @@
     <nav class="nav">
       <button class="navitem active" data-view="dashboard" onclick="Nav.go('dashboard')">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
-        Dashboard</button>
+        Dashboard<span class="nav-badge hidden" id="badge-attention"></span></button>
       <button class="navitem" data-view="hub" onclick="Nav.go('hub')">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         Endpoint Provisioning</button>
@@ -94,7 +94,8 @@
     <section class="appview active" id="appview-dashboard">
       <div class="pagehead">
         <div><h2>Dashboard</h2><p>Setups and inventory at a glance. <span id="syncLine" class="sync-line"></span></p></div>
-        <button class="ghost" id="dashRefresh" onclick="Dashboard.refresh()">↻ Refresh</button>
+        <div class="actions"><button class="ghost hidden" id="dashHealth" onclick="Health.open()" title="Last sync, SharePoint columns check, data completeness">🩺 Health</button>
+        <button class="ghost" id="dashRefresh" onclick="Dashboard.refresh()">↻ Refresh</button></div>
       </div>
       <div class="help-slot" data-help="dashboard"></div>
       <div class="help-slot" data-help="basics"></div>
@@ -222,6 +223,8 @@
           <div class="menu-wrap">
             <button class="ghost" id="moreBtn" onclick="App.toggleMore(event)" title="Less-used tools">⋯ More</button>
             <div class="menu hidden" id="devMore">
+              <button id="datesBackfillBtn" onclick="App.closeMore();DateTools.backfill()" title="Fill the blank Deployed dates of In use devices from the Intune enrollment date">📅 Fill deploy dates from Intune…</button>
+              <button id="datesImportBtn" onclick="App.closeMore();DateTools.importOpen()" title="Paste or open a list of serial numbers with manufacture / deploy dates">📥 Import dates (CSV / Excel)…</button>
               <button id="mfaBtn" onclick="App.closeMore();Nav.go('people')" title="MFA is kept per person on the Teammates page">🔒 Teammates &amp; MFA…</button>
               <button id="masterSyncBtn" onclick="App.masterSync()" title="Force-refresh every device's primary user, specs, MFA, last check-in and OS from Intune/Entra (overwrites stored values; can take a few minutes)">⟳ Master sync</button>
             </div>

@@ -13,6 +13,7 @@ const Help = {
     dashboard: {
       title: "How to use the Dashboard",
       html: `
+        <p>Admins also get a <b>🩺 Health</b> button here: last sync and its errors, a check that the SharePoint columns are right, and how complete the deploy and manufacture dates are. The sidebar badge on Dashboard counts devices with no check-in for 30+ days plus warranties that ended or end within 90 days.</p>
         <p>The Dashboard is a summary of the <b>division you have selected</b> (top of the sidebar). Almost everything on it is clickable: click a tile or bar to see the devices behind the number.</p>
         <h5>The tiles</h5>
         <ul>
@@ -138,6 +139,7 @@ const Help = {
         <h5>Finding things</h5>
         <ul>
           <li>Type in the search box to filter the current tab. It matches serial, hostname, user, model, OS and site.</li>
+          <li><b>⋯ More &rarr; Fill deploy dates from Intune</b> (admins) gives every In use device that has no deploy date its Intune enrollment date; existing dates are never changed. <b>Import dates</b> takes a pasted Excel range or CSV (serial, manufacture date, optional deploy date), shows what will change, then applies it.</li>
           <li>Every filter box is <b>searchable</b>: click it and type part of a name (for example a model) to narrow the list, then click or press Enter. <b>Manufacturer</b> merges names like "Dell" and "Dell Inc.".</li>
           <li><b>Site</b>, <b>manufacturer</b> and <b>warranty</b> filters work on every tab. On <b>In use</b> there are also model, CPU, RAM, last check-in and MFA filters. <b>Clear filters</b> removes them all. The line at the right shows how many rows match.</li>
           <li>Click a column heading to sort. Click anywhere on a row (or its <b>+</b>) to see its full details.</li>

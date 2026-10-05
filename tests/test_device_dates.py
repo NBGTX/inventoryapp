@@ -152,5 +152,79 @@ class DateColumns(unittest.TestCase):
         self.assertEqual(post["DeployDate"], datetime.date.today().isoformat())
 
 
+class BackfillImportHealth(unittest.TestCase):
+    def setUp(self):
+        import _env
+        cols = dict(_env.DEFAULT_COLS, **{"deploy date": "DeployDate", "mfg date": "MfgDate", "os install date": "OSInstallDate"})
+        self.gc = make_client(extra={"super_admins": ["boss@nucor.com"]})
+        self.site = FakeSite(self.gc, colmaps={"in_use": cols, "new_stock": cols})
+        self.gc._assert_own_item = lambda *a, **k: None
+        self.gc.update_item = lambda key, iid, vals: self.site.sent.append(("UPDATE", key, iid, vals))
+        self.gc.sign_in = lambda interactive=False: ""
+        self.gc.account_upn, self.gc.account_name = "boss@nucor.com", "Boss"
+        self.api = app.Api()
+        self.api._gc = self.gc
+        self.api._hub = Hub(logs_folder=tempfile.mkdtemp(), division={"id": "nbgw", "name": "W", "legacy_data": True, "sites": []})
+        self.site.add("in_use", Title="A1", Division="nbgw", OSInstallDate="2025-03-04T10:00:00Z")
+        self.site.add("in_use", Title="A2", Division="nbgw", OSInstallDate="2025-05-06T10:00:00Z", DeployDate="2024-01-01")
+        self.site.add("in_use", Title="A3", Division="nbgw")
+        self.site.add("in_use", Title="A4", Division="nbgw", OSInstallDate="2999-01-01T00:00:00Z")
+        self.site.add("new_stock", Title="S1", Division="nbgw")
+
+    def updates(self):
+        return [x for x in self.site.sent if x[0] == "UPDATE"]
+
+    def test_backfill_counts_then_fills_blanks_only(self):
+        r = self.api.deploy_backfill(False)
+        self.assertEqual((r["candidates"], r["already"], r["no_source"]), (1, 1, 2))
+        self.assertEqual(self.updates(), [])                                    # dry run writes nothing
+        r = self.api.deploy_backfill(True)
+        self.assertEqual(r["written"], 1)
+        self.assertEqual(self.updates(), [("UPDATE", "in_use", "1", {"deploy_date": "2025-03-04"})])
+        self.assertEqual(len([x for x in self.site.sent if x[0] == "LOG"]), 1)
+
+    def test_backfill_respects_a_date_held_in_the_hub_document(self):
+        self.api._hub.put_named("device-dates", {"dates": {"a1": {"deploy": "2025-01-01"}}})
+        self.assertEqual(self.api.deploy_backfill(False)["candidates"], 0)
+
+    def test_backfill_is_for_admins(self):
+        self.gc.account_upn = "tech@nucor.com"
+        self.gc.division_role = lambda: "user"
+        self.assertFalse(self.api.deploy_backfill(True)["ok"])
+
+    def test_import_reports_matches_bad_rows_and_unknown_serials(self):
+        rows = [{"serial": "a1", "mfg": "2024-02-02"}, {"serial": "S1", "deploy": "2025-01-01", "mfg": "2024-01-01"},
+                {"serial": "NOPE", "mfg": "2024-01-01"}, {"serial": "A3", "mfg": "last week"}, {"serial": "A2"}, {"serial": ""}]
+        r = self.api.device_dates_import(rows, False)
+        self.assertEqual((r["matched"], r["unmatched"], r["invalid_count"]), (2, ["NOPE"], 1))
+        self.assertEqual([x for x in self.site.sent if x[0] == "PATCH"], [])
+        r = self.api.device_dates_import(rows, True)
+        self.assertEqual((r["written"], r["columns"]), (2, 2))
+        self.assertEqual(self.api.device_dates_get()["data"]["a1"], {"mfg": "2024-02-02"})
+        patches = sorted(str(x[2]) for x in self.site.sent if x[0] == "PATCH")
+        self.assertEqual(len(patches), 2)
+
+    def test_bulk_column_write_reads_each_list_once(self):
+        calls = []
+        orig = self.gc._items_raw
+        self.gc._items_raw = lambda k: (calls.append(k), orig(k))[1]
+        self.gc.set_row_dates_bulk({"a1": ("2025-01-01", None), "a3": ("2025-01-02", None), "s1": (None, "2024-01-01")})
+        self.assertEqual(sorted(calls), ["in_use", "new_stock"])
+
+    def test_health_is_for_admins_and_reports_counts(self):
+        import schema
+        orig = schema.problems
+        schema.problems = lambda gc, keys=None: {}
+        try:
+            r = self.api.health_get()
+        finally:
+            schema.problems = orig
+        self.assertTrue(r["ok"], r)
+        self.assertEqual((r["counts"]["in_use"], r["counts"]["stock"], r["counts"]["deploy_dates"]), (4, 1, 1))
+        self.assertTrue(r["columns"]["ok"], r["columns"])
+        self.gc.division_role = lambda: "user"
+        self.assertFalse(self.api.health_get()["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()

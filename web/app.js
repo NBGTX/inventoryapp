@@ -639,6 +639,125 @@ const DeviceDates = {
   },
 };
 
+/* ---- Devices > More: fill deploy dates from Intune, import dates from a list ---- */
+const DateTools = {
+  async backfill() {
+    const root = document.getElementById("modalRoot");
+    root.innerHTML = `<div class="overlay"><div class="modal" style="width:520px;max-width:94vw"><div class="modal-head"><h3>Fill deploy dates from Intune</h3><button onclick="App._closeModal()">&times;</button></div>
+      <div class="modal-body"><div class="empty"><span class="busy-spin"></span> Counting…</div></div></div></div>`;
+    const r = await Backend.call("deploy_backfill", false);
+    const body = root.querySelector(".modal-body"); if (!body) return;
+    if (!r || !r.ok) { body.innerHTML = `<p style="color:var(--red)">${esc((r && r.error) || "Could not check.")}</p><div class="up-actions"><button class="ghost" onclick="App._closeModal()">Close</button></div>`; return; }
+    body.innerHTML = `<p>For In use devices with <b>no deploy date</b>, use the date the device was <b>enrolled in Intune</b>. Dates already entered are never changed.</p>
+      <div class="one-grid"><div><span class="muted">Will be filled</span><b>${r.candidates}</b></div><div><span class="muted">Already have a date</span><b>${r.already}</b></div>
+        <div><span class="muted">No usable enrollment date</span><b>${r.no_source}</b></div>${r.sample.length ? `<div><span class="muted">For example</span><b class="mono" style="font-size:12.5px">${esc(r.sample.map(s => s.serial + " " + s.date).join(", "))}</b></div>` : ""}</div>
+      <p class="muted" style="font-size:12.5px;margin-top:12px">Enrollment is the last time Intune enrolled the device (a re-image or re-enrollment resets it), so it is a good starting point, not exact. You can correct any row afterwards.</p>
+      <div class="up-actions"><button class="ghost" onclick="App._closeModal()">Cancel</button><button class="primary" ${r.candidates ? "" : "disabled"} onclick="DateTools.backfillGo(this)">Fill ${r.candidates} date${r.candidates === 1 ? "" : "s"}</button></div>`;
+  },
+  async backfillGo(btn) {
+    await Ui.working(btn, "Filling…", async () => {
+      const r = await Backend.call("deploy_backfill", true);
+      if (!r || !r.ok) { App.toast((r && r.error) || "Could not fill the dates.", true); return false; }
+      App._closeModal();
+      App.toast(`Filled ${r.written} deploy date${r.written === 1 ? "" : "s"}.` + (r.errors && r.errors.length ? ` ${r.errors.length} problem(s): ${r.errors[0]}` : ""), !!(r.errors && r.errors.length));
+      try { await App.reload(); } catch (e) {}
+      return false;
+    });
+  },
+
+  /* ---- import ---- */
+  _rows: [],
+  importOpen() {
+    this._rows = [];
+    document.getElementById("modalRoot").innerHTML = `<div class="overlay"><div class="modal" style="width:680px;max-width:96vw"><div class="modal-head"><h3>Import deploy / manufacture dates</h3><button onclick="App._closeModal()">&times;</button></div>
+      <div class="modal-body" id="dtImpBody">
+        <p>Paste rows from Excel (or open a CSV file). One device per row: <b>serial number</b>, then <b>manufacture date</b>, then optionally <b>deploy date</b>. A header row with <i>Serial</i>, <i>Mfg</i> / <i>Manufacture</i> and <i>Deploy</i> columns in any order also works. Blank cells leave that date alone.</p>
+        <textarea id="dtImpText" rows="8" style="width:100%;font-family:var(--mono,monospace);font-size:12.5px" placeholder="Serial&#9;Manufacture date&#10;PF2ABC12&#9;2024-03-15&#10;PF2ABC13&#9;3/18/2024" spellcheck="false"></textarea>
+        <div class="up-actions" style="justify-content:space-between"><label class="ghost" style="cursor:pointer;padding:7px 12px;border:1px solid var(--border);border-radius:8px">Open a file…<input type="file" accept=".csv,.tsv,.txt" style="display:none" onchange="DateTools.importFile(this)"></label>
+          <span><button class="ghost" onclick="App._closeModal()">Cancel</button> <button class="primary" onclick="DateTools.importCheck(this)">Check</button></span></div>
+        <div id="dtImpOut"></div></div></div></div>`;
+  },
+  importFile(inp) {
+    const f = inp.files && inp.files[0]; if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => { const t = document.getElementById("dtImpText"); if (t) t.value = String(rd.result || ""); };
+    rd.readAsText(f);
+  },
+  _date(v) {
+    v = String(v == null ? "" : v).trim().replace(/^"|"$/g, "");
+    if (!v) return "";
+    if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
+    let m = v.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/);
+    if (m) { let y = +m[3]; if (y < 100) y += 2000; return `${y}-${String(+m[1]).padStart(2, "0")}-${String(+m[2]).padStart(2, "0")}`; }
+    if (/^\d{5}(\.\d+)?$/.test(v) && +v > 20000 && +v < 80000) return new Date(Date.UTC(1899, 11, 30) + Math.floor(+v) * 86400000).toISOString().slice(0, 10);   // Excel serial number
+    return v;                                                      // let the server say it is not a date
+  },
+  parse(text) {
+    const lines = String(text || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (!lines.length) return [];
+    const delim = lines[0].includes("\t") ? "\t" : lines[0].includes(";") && !lines[0].includes(",") ? ";" : ",";
+    const split = l => l.split(delim).map(x => x.trim().replace(/^"|"$/g, ""));
+    let iS = 0, iM = 1, iD = 2, start = 0;
+    const head = split(lines[0]);
+    if (head.some(h => /serial/i.test(h))) {
+      start = 1; iS = head.findIndex(h => /serial/i.test(h));
+      iM = head.findIndex(h => /mfg|manufactur/i.test(h)); iD = head.findIndex(h => /deploy/i.test(h));
+    }
+    return lines.slice(start).map(l => { const c = split(l); return { serial: c[iS] || "", mfg: iM >= 0 ? this._date(c[iM]) : "", deploy: iD >= 0 ? this._date(c[iD]) : "" }; }).filter(r => r.serial);
+  },
+  async importCheck(btn) {
+    this._rows = this.parse((document.getElementById("dtImpText") || {}).value);
+    const out = document.getElementById("dtImpOut");
+    if (!this._rows.length) { out.innerHTML = `<p style="color:var(--red)">Nothing to import yet. Paste or open a list first.</p>`; return; }
+    await Ui.working(btn, "Checking…", async () => {
+      const r = await Backend.call("device_dates_import", this._rows, false);
+      if (!r || !r.ok) { out.innerHTML = `<p style="color:var(--red)">${esc((r && r.error) || "Could not check.")}</p>`; return false; }
+      const lst = (arr, n, label) => arr && arr.length ? `<details style="margin-top:6px"><summary>${n} ${label}</summary><div class="mono muted" style="font-size:12px;max-height:120px;overflow:auto">${arr.map(esc).join("<br>")}</div></details>` : "";
+      out.innerHTML = `<div class="one-grid" style="margin-top:12px"><div><span class="muted">Rows read</span><b>${this._rows.length}</b></div><div><span class="muted">Will be updated</span><b>${r.matched}</b></div></div>` +
+        lst(r.unmatched, r.unmatched_count, "serial number(s) not found in this division (skipped)") + lst(r.invalid, r.invalid_count, "row(s) with a date that cannot be read (skipped)") +
+        `<div class="up-actions"><button class="primary" ${r.matched ? "" : "disabled"} onclick="DateTools.importGo(this)">Import ${r.matched} device${r.matched === 1 ? "" : "s"}</button></div>`;
+      return false;
+    });
+  },
+  async importGo(btn) {
+    await Ui.working(btn, "Importing…", async () => {
+      const r = await Backend.call("device_dates_import", this._rows, true);
+      if (!r || !r.ok) { App.toast((r && r.error) || "Import failed.", true); return false; }
+      App._closeModal();
+      App.toast(`Imported dates for ${r.written} device${r.written === 1 ? "" : "s"}.`);
+      try { await App.reload(); } catch (e) {}
+      return false;
+    });
+  },
+};
+
+/* ---- Dashboard > Health: is the system in good shape? ---- */
+const Health = {
+  async open() {
+    const root = document.getElementById("modalRoot");
+    root.innerHTML = `<div class="overlay"><div class="modal" style="width:640px;max-width:96vw"><div class="modal-head"><h3>System health</h3><button onclick="App._closeModal()">&times;</button></div>
+      <div class="modal-body"><div class="empty"><span class="busy-spin"></span> Checking…</div></div></div></div>`;
+    const r = await Backend.call("health_get");
+    const body = root.querySelector(".modal-body"); if (!body) return;
+    if (!r || !r.ok) { body.innerHTML = `<p style="color:var(--red)">${esc((r && r.error) || "Could not check.")}</p>`; return; }
+    const row = (state, label, text) => `<tr><td style="width:34px;font-size:18px">${state === "ok" ? "✅" : state === "warn" ? "⚠️" : "❌"}</td><td style="width:170px"><b>${esc(label)}</b></td><td>${text}</td></tr>`;
+    const sy = r.sync || {}, errs = (sy.errors || []).length;
+    const syncText = sy.never || !sy.ended ? "Never run for this division." : `Last finished ${esc(Tz.dt(sy.ended))} (${sy.age_hours} h ago)${sy.by ? " by " + esc(sy.by) : ""}${errs ? `. <b>${errs} error(s):</b> ${esc(String(sy.errors[0]))}` : ""}`;
+    const syncState = sy.never || !sy.ended ? "bad" : sy.stale || errs ? "warn" : "ok";
+    const col = r.columns || {};
+    const c = r.counts || {}, pct = (n, t) => t ? Math.round(100 * n / t) : 0;
+    body.innerHTML = `<p class="muted" style="margin:0 0 8px">${esc(r.division)} · v${esc(r.version)} · ${esc(r.mode)} data · signed in as ${esc(r.account)}</p>
+      <table class="fit"><tbody>
+        ${row(syncState, "Last sync", syncText)}
+        ${row(col.ok ? "ok" : "warn", "SharePoint columns", col.ok ? "All expected columns are present and the right type." : (col.notes || []).map(esc).join("<br>"))}
+        ${c.error ? row("bad", "Device counts", esc(c.error)) : row("ok", "Devices", `${c.in_use} in use, ${c.stock} in stock`)}
+        ${c.error ? "" : row(pct(c.deploy_dates, c.in_use) >= 90 ? "ok" : "warn", "Deploy dates", `${c.deploy_dates} of ${c.in_use} in-use devices (${pct(c.deploy_dates, c.in_use)}%). <a onclick="App._closeModal();DateTools.backfill()" style="cursor:pointer">Fill from Intune…</a>`)}
+        ${c.error ? "" : row("ok", "Manufacture dates", `${c.mfg_dates} of ${c.total} devices (${pct(c.mfg_dates, c.total)}%). <a onclick="App._closeModal();DateTools.importOpen()" style="cursor:pointer">Import…</a>`)}
+      </tbody></table>
+      <div class="up-actions"><button class="primary" onclick="App._closeModal()">Close</button></div>`;
+  },
+};
+
 /* Searchable pick list: type to filter (every word must appear somewhere in the option), click or Enter to pick.
    Keeps the chosen value in a hidden input with id `valueId`, so older code can read it like a <select>. */
 const Combo = {
@@ -1854,7 +1973,18 @@ const People = {
   METHODS: { microsoftAuthenticatorPush: "Authenticator app", microsoftAuthenticatorPasswordless: "Authenticator (passwordless)", mobilePhone: "Phone", alternateMobilePhone: "Alt phone",
              officePhone: "Office phone", softwareOneTimePasscode: "Authenticator code", hardwareOneTimePasscode: "Hardware code", fido2: "Security key", windowsHelloForBusiness: "Windows Hello",
              email: "Email", temporaryAccessPass: "Temp access pass", passKeyDeviceBound: "Passkey", passKeyDeviceBoundAuthenticator: "Passkey", passKeySynced: "Passkey" },
+  _viewKey() { return "nbg_ppl_view_" + (Divisions.current || "x"); },
+  _restoreView() {
+    const key = this._viewKey(); if (this._restored === key) return; this._restored = key;
+    let v = null; try { v = JSON.parse(localStorage.getItem(key) || "null"); } catch (e) { v = null; }
+    if (!v) return;
+    if (typeof v.q === "string") this.f.q = v.q;
+    if (["all", "yes", "no", "unknown"].includes(v.mfa)) this.f.mfa = v.mfa;
+    if (v.sort && typeof v.sort.key === "string" && (v.sort.dir === 1 || v.sort.dir === -1)) this.sort = { key: v.sort.key, dir: v.sort.dir };
+  },
+  _saveView() { try { localStorage.setItem(this._viewKey(), JSON.stringify({ q: this.f.q, mfa: this.f.mfa, sort: this.sort })); } catch (e) { /* private window */ } },
   async load() {
+    this._restoreView();
     const r = await Backend.call("mfa_people_get");
     this.doc = (r && r.ok && r.data) || null;
     this.render();
@@ -1892,6 +2022,7 @@ const People = {
   },
   render() {
     const host = document.getElementById("pplHost"); if (!host) return;
+    this._saveView();
     const meta = document.getElementById("pplMeta"), d = this.doc;
     if (meta) meta.textContent = d ? `Refreshed ${String(d.generated_at || "").slice(0, 16).replace("T", " ")}${d.by ? " by " + d.by : ""}` : "Not refreshed yet";
     if (!d) { host.innerHTML = `<div class="empty">No MFA list yet. Click <b>Refresh from Entra</b> to build it. This reads the sign-in method registrations of everyone who has a machine.</div>`; return; }
@@ -2107,6 +2238,10 @@ const Badges = {
       const r = await Backend.call("hub_get_upgrades");
       return (r && r.ok && r.data && (r.data.items || []).length) || 0;
     },
+    attention: async () => {                         // Dashboard: no check-in for N+ days, warranties ended or ending within 90 days
+      const inv = Dashboard._inv(), w = (inv && inv.warranty) || {};
+      return (inv.stale_checkin_count || 0) + (w.expired || 0) + (w.expiring_90 || 0);
+    },
     specs: async () => {                             // devices with no CPU, RAM or warranty recorded (the Dashboard 'Missing specs' tile)
       const inv = Dashboard._inv();
       return inv && inv.missing_specs_count ? inv.missing_specs_count : 0;
@@ -2115,6 +2250,8 @@ const Badges = {
   TITLES: {
     issues: n => n + " issue" + (n === 1 ? "" : "s") + " need attention",
     upgrades: n => n + " device" + (n === 1 ? "" : "s") + " on the Upgrade list",
+    attention: n => { const inv = Dashboard._inv(), w = (inv && inv.warranty) || {};
+      return `${inv.stale_checkin_count || 0} with no check-in for ${inv.stale_days || 30}+ days, ${w.expired || 0} warranties ended, ${w.expiring_90 || 0} ending within 90 days`; },
     specs: n => n + " device" + (n === 1 ? " has" : "s have") + " missing specs (CPU, RAM or warranty). Click to fill them in.",
   },
   set(name, n) {
@@ -2158,7 +2295,10 @@ const Tz = {
 };
 
 const Nav = {
-  go(view) {
+  _cur: null,
+  go(view, opts) {
+    if (!(opts && opts.pop) && view !== this._cur) { try { history.pushState({ view }, "", "#" + view); } catch (e) { /* file:// quirks */ } }
+    this._cur = view;
     if (view !== "hub" && typeof Hub !== "undefined" && Hub.templateMode) {
       Hub.templateMode = false;
       const b = document.getElementById("tplBanner"); if (b) b.classList.add("hidden");
@@ -2182,6 +2322,25 @@ const Nav = {
     if (view === "dashboard") SyncLine.refresh();
   },
 };
+/* Mouse back / forward buttons (and Alt+Left / Alt+Right) walk through the pages you visited. */
+(function () {
+  try { history.replaceState({ view: "dashboard" }, "", "#dashboard"); Nav._cur = "dashboard"; } catch (e) {}
+  window.addEventListener("popstate", ev => {
+    const v = ev.state && ev.state.view;
+    if (!v || document.body.classList.contains("signed-out")) return;
+    if (!document.getElementById("appview-" + v)) return;
+    const m = document.getElementById("modalRoot"); if (m) m.innerHTML = "";
+    Nav.go(v, { pop: true });
+  });
+  const mouse = ev => {
+    if (ev.button !== 3 && ev.button !== 4) return;
+    ev.preventDefault();
+    if (ev.type === "mouseup") { if (ev.button === 3) history.back(); else history.forward(); }
+  };
+  window.addEventListener("mousedown", mouse, true);
+  window.addEventListener("mouseup", mouse, true);
+  window.addEventListener("auxclick", ev => { if (ev.button === 3 || ev.button === 4) ev.preventDefault(); }, true);
+})();
 
 /* ---- Project Hub: dedicated sidebar item -------------------------------
    Project Hub uses MSAL redirect sign-in, which refuses to run in an iframe
@@ -2667,6 +2826,7 @@ const Dashboard = {
     }
     if (!d || !d.ok) { host.innerHTML = `<div class="empty">Could not load dashboard.<div style="margin-top:10px"><button class="rowbtn" onclick="Dashboard.load()">↻ Retry</button></div></div>`; return; }
     this._data = d;
+    setTimeout(() => Badges.refresh(), 0);
     try { const ur = await Backend.call("hub_get_upgrades"); this._upgrades = (ur && ur.ok && ur.data && Array.isArray(ur.data.items)) ? ur.data.items : []; }
     catch (e) { this._upgrades = []; }
     try {
@@ -4341,7 +4501,23 @@ const Software = {
     return dept || (site !== "—" ? `(no dept) · ${site}` : "(no dept)");
   },
 
+  _viewKey() { return "nbg_sw_view_" + (Divisions.current || "x"); },
+  _restoreView() {
+    const key = this._viewKey(); if (this._restored === key) return; this._restored = key;
+    let v = null; try { v = JSON.parse(localStorage.getItem(key) || "null"); } catch (e) { v = null; }
+    if (!v) return;
+    const q = document.getElementById("swSearch"); if (q && typeof v.q === "string") q.value = v.q;
+    const m = document.querySelector(`input[name=swMand][value="${v.mand === "mand" ? "mand" : "all"}"]`);
+    if (m) { m.checked = true; document.querySelectorAll("input[name=swMand]").forEach(i => i.parentElement.classList.toggle("on", i.checked)); }
+    this._pendDept = typeof v.dept === "string" ? v.dept : null;
+  },
+  _saveView() {
+    if (this._pendDept) return;                      // the saved department has not been applied yet
+    const q = document.getElementById("swSearch"), d = document.getElementById("swDept"), m = document.querySelector("input[name=swMand]:checked");
+    try { localStorage.setItem(this._viewKey(), JSON.stringify({ q: q ? q.value : "", dept: d ? d.value : "all", mand: m ? m.value : "all" })); } catch (e) { /* private window */ }
+  },
   async load() {
+    this._restoreView();
     try {
       const r = await Backend.call("software_get");
       const d = (r && r.ok && r.data) || {};
@@ -4360,6 +4536,8 @@ const Software = {
     const cur = sel.value;
     sel.innerHTML = `<option value="all">All departments</option>` + keys.map(k => `<option>${esc(k)}</option>`).join("");
     if (cur && (cur === "all" || keys.includes(cur))) sel.value = cur;
+    if (this._pendDept) { if (keys.includes(this._pendDept)) sel.value = this._pendDept; this._pendDept = null; }
+    if (window.Filt) { try { Filt.syncAll(); } catch (e) {} }
   },
   _scope() { const s = document.getElementById("swDept"); return s ? s.value : "all"; },
   _installsInScope(app, scope) {
@@ -4527,6 +4705,7 @@ const Software = {
       return;
     }
     const scope = this._scope();
+    this._saveView();
     // ONE search box. It matches software (name / publisher) and people (user / device / serial).
     // If it matches software, the list is those apps ("who has it?"). If it only matches people, the list is
     // everything installed on those people/devices ("what does this person have?"). When both match, chips let you pick.
@@ -6521,6 +6700,23 @@ Object.assign(Mock, {
       if (hit) n++; else nf.push(it.serial);
     }
     return { ok: true, updated: n, not_found: nf, queued_upgrades: 0 };
+  },
+  async deploy_backfill(commit) {
+    const todo = this._use.filter(r => !r.deploy_date && r.os_install);
+    if (commit) todo.forEach(r => { r.deploy_date = r.os_install.slice(0, 10); });
+    return { ok: true, candidates: todo.length, already: this._use.length - todo.length, no_source: 0, written: commit ? todo.length : 0, sample: todo.slice(0, 5).map(r => ({ serial: r.serial, date: r.os_install.slice(0, 10) })), errors: [] };
+  },
+  async device_dates_import(rows, commit) {
+    const known = new Set([...this._use, ...this._stock].map(r => r.serial.toLowerCase()));
+    const ok = rows.filter(r => known.has(String(r.serial).toLowerCase()) && (r.deploy || r.mfg)), un = rows.filter(r => r.serial && !known.has(String(r.serial).toLowerCase())).map(r => r.serial);
+    if (commit) ok.forEach(r => [...this._use, ...this._stock].filter(x => x.serial.toLowerCase() === String(r.serial).toLowerCase()).forEach(x => { if (r.deploy) x.deploy_date = r.deploy; if (r.mfg) x.mfg_date = r.mfg; }));
+    return { ok: true, matched: ok.length, unmatched: un, unmatched_count: un.length, invalid: [], invalid_count: 0, written: commit ? ok.length : 0, columns: commit ? ok.length : 0 };
+  },
+  async health_get() {
+    return { ok: true, version: "2026.10.05", account: "demo@nucor.com", mode: "live", division: "NBGW",
+      sync: { ended: new Date(Date.now() - 3 * 3600000).toISOString(), age_hours: 3, stale: false, errors: [], by: "Demo" },
+      columns: { ok: false, notes: ["Inventory - In Use: optional column 'Mfg Date' is missing"] },
+      counts: { in_use: this._use.length, stock: this._stock.length, deploy_dates: 2, mfg_dates: 1, total: this._use.length + this._stock.length } };
   },
   async hub_clear_upgrade_ignored() { return { ok: true, cleared: 0 }; },
   /* issues board - mirrors Api.issue_* */

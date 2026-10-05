@@ -48,7 +48,9 @@ Hub documents (named docs, via `Hub.get_named/put_named`): division hub = `devic
 4. **Terrell upgrade list** stays empty until CPU data is filled. Dashboard > Missing specs > *Fill them one by one* (Save & next, one tick fills the same model) or set a warranty rule (Settings > Platform > Integrations > Upgrades). Sidebar badge on Devices counts devices with missing specs.
 5. **Deploy Date / Mfg Date** are now text columns on `Inventory - New Stock` and `Inventory - In Use` (created by hand, verified read-only). The columns are the main copy; hub doc `device-dates` is the fallback and still written. Moves (assign, return to stock, boneyard, sync) carry them. Not yet exercised with a live write: set and clear a date on one device to confirm.
 6. **Coil Cards** never run against real data (sporadic use, tested when needed): delete + restore a throwaway card, compare the `Card` / `CoilTracking` rows before and after, then set master setting "Mark Coil Cards as (Untested)" to Off.
-7. Ideas not done: remember the last mail button; bundle SVG colour icons for NBT Sites. Teammates > Refresh from Entra is slow when it falls back to one Entra call per person.
+7. **Built, not yet used live** (all offline-tested, Mock-previewed): Devices > More > *Fill deploy dates from Intune* (`Api.deploy_backfill`, uses the OS Install Date = enrollment date, blanks only), *Import dates* (`Api.device_dates_import`, paste/CSV), Dashboard > *Health* (`Api.health_get`), Dashboard sidebar badge (stale check-ins + warranties), Teammates and Software remember their filters per division, mouse back/forward buttons walk visited pages (`Nav` history). Try each once in the real app; back-fill and import write to production.
+8. Deferred by the user: mail reminders through the webhook, unattended nightly sync.
+9. Ideas not done: remember the last mail button; bundle SVG colour icons for NBT Sites. Teammates > Refresh from Entra is slow when it falls back to one Entra call per person.
 
 ## How to work in this repo
 - Commands, rules and conventions: `CLAUDE.md`. Build and deploy: `docs/BUILD_AND_DEPLOY.md`.

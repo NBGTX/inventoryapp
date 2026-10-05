@@ -2002,28 +2002,41 @@ class GraphClient:
         fields.setdefault("Title", data.get("serial"))
         self._create_item("in_use", fields)
 
-    def set_row_dates(self, serial: str, deploy=None, mfg=None) -> bool:
-        """Write the Deploy Date / Mfg Date columns on a device's row (In Use first, then New Stock).
-        None = leave as is, "" = clear. Returns False when the row or the columns do not exist (then the hub document is the only copy)."""
+    def set_row_dates_bulk(self, entries: dict) -> int:
+        """Write the Deploy Date / Mfg Date columns for many devices: {serial: (deploy, mfg)}, None = leave, "" = clear.
+        Reads each list once (In Use first, then New Stock), then one PATCH per row. Returns how many rows were written;
+        rows or columns that do not exist are skipped (the hub document is then the only copy)."""
+        want = {str(k).strip().lower(): v for k, v in (entries or {}).items() if str(k).strip()}
+        if not want:
+            return 0
+        found = {}
         for key in ("in_use", "new_stock"):
-            item = self.find_by_serial(key, serial)
-            if not item:
-                continue
+            for it in self._items_raw(key):
+                s = (it.get("fields", {}).get("Title") or "").strip().lower()
+                if s in want and s not in found:
+                    found[s] = (key, it)
+        n = 0
+        site = None
+        for s, (key, it) in found.items():
+            deploy, mfg = want[s]
             fields = {}
             for logical, v in (("deploy_date", deploy), ("mfg_date", mfg)):
                 internal = self._internal_for(key, logical)
                 if v is not None and internal:
                     fields[internal] = v
             if not fields:
-                return False
+                continue
             if self._local:
-                self._ls().patch(key, item["id"], fields)
-                return True
-            self._assert_own_item(key, item["id"])
-            site = self._ensure_site()
-            self._req("PATCH", f"{GRAPH}/sites/{site}/lists/{self._list_id(key)}/items/{item['id']}/fields", json=fields)
-            return True
-        return False
+                self._ls().patch(key, it["id"], fields)
+            else:
+                self._assert_own_item(key, it["id"])
+                site = site or self._ensure_site()
+                self._req("PATCH", f"{GRAPH}/sites/{site}/lists/{self._list_id(key)}/items/{it['id']}/fields", json=fields)
+            n += 1
+        return n
+
+    def set_row_dates(self, serial: str, deploy=None, mfg=None) -> bool:
+        return bool(self.set_row_dates_bulk({serial: (deploy, mfg)}))
 
     def _assert_own_item(self, key: str, item_id: str) -> None:
         """Central mode: refuse to touch an item that belongs to another division."""
