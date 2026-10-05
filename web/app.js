@@ -160,8 +160,8 @@ const Mock = {
   async get_status() { return { ok: true, signed_in: true, account: "Demo User (mock data)", upn: "demo.user@nucor.com" }; },
   async sign_in() { return { ok: true, account: "Demo User (mock data)" }; },
   async sign_out() { return { ok: true }; },
-  async app_version() { return { ok: true, version: "2026.10.05" }; },
-  async register_client() { return { ok: true, version: "2026.10.05" }; },
+  async app_version() { return { ok: true, version: "2026.10.05.2" }; },
+  async register_client() { return { ok: true, version: "2026.10.05.2" }; },
   async get_clients() {
     return { ok: true, clients: [
       { machine: "BGPF5MDA4B", user: "blake.stevenson", version: "2026.09.29", last_seen: "2026-09-28T15:40:00Z" },
@@ -1469,7 +1469,7 @@ const App = {
         : v === "No"
         ? '<span style="color:#ff6b6b;font-weight:600">No</span>'
         : '<span style="color:var(--muted)" title="MFA status unavailable — needs AuditLog.Read.All consent">—</span>';
-      const detail = r => `<tr><td></td><td colspan="11" class="detailcell" style="padding:0 18px 14px;">
+      const detail = r => `<tr><td></td><td colspan="10" class="detailcell" style="padding:0 18px 14px;">
         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 24px;background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:14px 16px;">
           ${dl("Device name", r.device_name)}${dl("Serial number", r.serial)}${dl("Primary user", r.user)}
           ${dl("Manufacturer", r.manufacturer)}${dl("Model", r.model)}${dl("Site tag", r.site_tag)}
@@ -1482,11 +1482,11 @@ const App = {
           <button class="rowbtn" onclick="App.moveToStock('${attr(r.serial)}')" title="Move back to In Stock (clears the assigned user)">📦 In Stock</button>
         </div></td></tr>`;
       wrap.innerHTML = `<table class="fit">` +
-        `<colgroup><col style="width:42px"><col style="width:9%"><col style="width:9%"><col style="width:11%"><col style="width:14%"><col style="width:5%"><col style="width:5%"><col style="width:8%"><col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:96px"></colgroup>` +
+        `<colgroup><col style="width:42px"><col style="width:9%"><col style="width:9%"><col style="width:11%"><col style="width:17%"><col style="width:6%"><col style="width:8%"><col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:96px"></colgroup>` +
         `<thead><tr>` +
         `<th></th>` +
         th("Serial number", "serial") + th("Manufacturer", "manufacturer") + th("Model", "model") +
-        th("Assigned user", "user") + th("MFA", "mfa") + th("Site", "site_tag") + th("Warranty", "warranty", dcol) + th("Deployed", "deploy_date", dcol) + th("Manufactured", "mfg_date", dcol) +
+        th("Assigned user", "user") + th("Site", "site_tag") + th("Warranty", "warranty", dcol) + th("Deployed", "deploy_date", dcol) + th("Manufactured", "mfg_date", dcol) +
         th("Last check-in", "last_checkin", dcol) +
         `<th style="text-align:right">Actions</th></tr></thead><tbody>` +
         rows.map(r => {
@@ -1494,7 +1494,7 @@ const App = {
           return `<tr>
             <td><button class="rowbtn" data-action="expand" data-serial="${attr(r.serial)}" style="padding:2px 8px;line-height:1" title="Show all specs">${open ? "−" : "+"}</button></td>
             <td class="mono" title="${attr(r.serial)}">${esc(r.serial)}</td><td class="cell-mfr" title="${attr(r.manufacturer)}">${esc(r.manufacturer)}</td><td title="${attr(r.model)}">${esc(r.model)}</td>
-            <td class="cell-user">${r.user ? `<a class="sw-user" data-user="${attr(r.user)}" title="See everything ${attr(r.user)} has installed">${esc(r.user)}</a>` : "—"}</td><td>${mfaCell(r.mfa)}</td><td>${esc(r.site_tag)}</td><td>${warrCell(r.warranty)}</td>
+            <td class="cell-user">${r.user ? `<a class="sw-user" data-user="${attr(r.user)}" title="See everything ${attr(r.user)} has installed">${esc(r.user)}</a>` : "—"}</td><td>${esc(r.site_tag)}</td><td>${warrCell(r.warranty)}</td>
             <td>${dateIn(r, "deploy")}</td><td>${dateIn(r, "mfg")}</td>
             <td>${esc(day(r.last_checkin))}${checkinBadge(r.last_checkin)}</td>
             <td style="text-align:right;white-space:nowrap">${act("✎", "editspecs", r.serial, false, "Edit CPU, RAM, storage and warranty")} ${act("⬆", "upgrade", r.serial, false, "Add to upgrade list")} ${act("✕", "remove", r.serial, true, "Remove")}</td></tr>` +

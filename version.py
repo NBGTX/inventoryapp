@@ -5,7 +5,7 @@ reported (with the user + machine) to the shared hub on launch, so you can see
 which version each person is running from the "Versions in use" list.
 Keep version.txt's FileVersion/ProductVersion in sync for the exe metadata.
 """
-APP_VERSION = "2026.10.05"
+APP_VERSION = "2026.10.05.2"
 
 
 def parse(v: str) -> tuple:
