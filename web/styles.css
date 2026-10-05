@@ -1122,3 +1122,5 @@ td.sw-vname{padding-left:34px!important;color:var(--muted);}
 .bgt-panel > .chart-card{margin-bottom:0;}
 .cp-ro{padding-left:2px;}
 @media(max-width:1000px){.bgt-layout{grid-template-columns:1fr;}.bgt-rail{position:static;flex-direction:row;flex-wrap:wrap;}.bgt-rail-h{width:100%;}.bgt-rail .bgt-tool{width:auto;min-width:230px;}}
+
+.dt-cell{width:100%;min-width:0;box-sizing:border-box;margin:0;padding:4px 6px;font-size:12.5px;}
