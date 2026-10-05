@@ -751,7 +751,7 @@ const Health = {
         ${row(syncState, "Last sync", syncText)}
         ${row(col.ok ? "ok" : "warn", "SharePoint columns", col.ok ? "All expected columns are present and the right type." : (col.notes || []).map(esc).join("<br>"))}
         ${c.error ? row("bad", "Device counts", esc(c.error)) : row("ok", "Devices", `${c.in_use} in use, ${c.stock} in stock`)}
-        ${c.error ? "" : row(pct(c.deploy_dates, c.in_use) >= 90 ? "ok" : "warn", "First Intune enroll", `${c.deploy_dates} of ${c.in_use} in-use devices (${pct(c.deploy_dates, c.in_use)}%). <a onclick="App._closeModal();DateTools.backfill()" style="cursor:pointer">Fill from Intune…</a>`)}
+        ${c.error ? "" : row(pct(c.deploy_dates, c.in_use) >= 90 ? "ok" : "warn", "Deploy dates", `${c.deploy_dates} of ${c.in_use} in-use devices (${pct(c.deploy_dates, c.in_use)}%). <a onclick="App._closeModal();DateTools.backfill()" style="cursor:pointer">Fill from Intune…</a>`)}
         ${c.error ? "" : row("ok", "Manufacture dates", `${c.mfg_dates} of ${c.total} devices (${pct(c.mfg_dates, c.total)}%). <a onclick="App._closeModal();DateTools.importOpen()" style="cursor:pointer">Import…</a>`)}
       </tbody></table>
       <div class="up-actions"><button class="primary" onclick="App._closeModal()">Close</button></div>`;
@@ -1223,8 +1223,8 @@ const App = {
   copyList() {
     const rows = this._shown || [], tab = this.state.tab, day = v => (v || "").slice(0, 10);
     const cols = {
-      stock: [["Serial", r => r.serial], ["Manufacturer", r => r.manufacturer], ["Model", r => r.model], ["CPU", r => r.cpu], ["RAM", r => r.ram], ["Storage", r => r.storage], ["Site", r => r.site_tag], ["Warranty", r => day(r.warranty)], ["Added", r => day(r.date_added)], ["First Intune enroll", r => r.deploy_date], ["Manufactured", r => r.mfg_date]],
-      use: [["Serial", r => r.serial], ["Device", r => r.device_name], ["User", r => r.user], ["Manufacturer", r => r.manufacturer], ["Model", r => r.model], ["CPU", r => r.cpu], ["RAM", r => r.ram], ["Storage", r => r.storage], ["MFA", r => r.mfa], ["Site", r => r.site_tag], ["Warranty", r => day(r.warranty)], ["First Intune enroll", r => r.deploy_date], ["Manufactured", r => r.mfg_date], ["Last check-in", r => day(r.last_checkin)], ["OS", r => winOsLabel(r.os_version)]],
+      stock: [["Serial", r => r.serial], ["Manufacturer", r => r.manufacturer], ["Model", r => r.model], ["CPU", r => r.cpu], ["RAM", r => r.ram], ["Storage", r => r.storage], ["Site", r => r.site_tag], ["Warranty", r => day(r.warranty)], ["Added", r => day(r.date_added)], ["Deployed", r => r.deploy_date], ["Manufactured", r => r.mfg_date]],
+      use: [["Serial", r => r.serial], ["Device", r => r.device_name], ["User", r => r.user], ["Manufacturer", r => r.manufacturer], ["Model", r => r.model], ["CPU", r => r.cpu], ["RAM", r => r.ram], ["Storage", r => r.storage], ["MFA", r => r.mfa], ["Site", r => r.site_tag], ["Warranty", r => day(r.warranty)], ["Deployed", r => r.deploy_date], ["Manufactured", r => r.mfg_date], ["Last check-in", r => day(r.last_checkin)], ["OS", r => winOsLabel(r.os_version)]],
       boneyard: [["Serial", r => r.serial], ["Former hostname", r => r.device_name], ["Model", r => r.model], ["Last user", r => r.user], ["Retired", r => day(r.moved_at)], ["Reason", r => r.reason]],
     }[tab] || [];
     const cell = v => String(v == null ? "" : v).replace(/[\t\r\n]+/g, " ");
@@ -1392,7 +1392,7 @@ const App = {
 
     const dl = (k, v) => `<div><span style="color:var(--muted);font-size:11px;display:block">${esc(k)}</span><span>${esc(v) || "—"}</span></div>`;
     const today = new Date().toISOString().slice(0, 10);
-    const dateEd = (r, which) => `<div><span style="color:var(--muted);font-size:11px;display:block">${which === "deploy" ? "First Intune enroll" : "Manufacture date"}</span>` +
+    const dateEd = (r, which) => `<div><span style="color:var(--muted);font-size:11px;display:block">${which === "deploy" ? "Deploy date" : "Manufacture date"}</span>` +
       `<input type="date" class="dt-in" value="${attr(which === "deploy" ? r.deploy_date || "" : r.mfg_date || "")}" max="${today}" title="Type or pick a date; clear the box to remove it" onchange="App.setDate('${attr(r.serial)}','${which}',this.value)"></div>`;
     // editable date right in the row (back-filling many devices without opening each one)
     const dateIn = (r, which) => `<input type="date" class="dt-in dt-cell" value="${attr(which === "deploy" ? r.deploy_date || "" : r.mfg_date || "")}" max="${today}" title="${which === "deploy" ? "Deploy" : "Manufacture"} date: type or pick one; clear the box to remove it" onchange="App.setDate('${attr(r.serial)}','${which}',this.value)">`;
@@ -1486,7 +1486,7 @@ const App = {
         `<thead><tr>` +
         `<th></th>` +
         th("Serial number", "serial") + th("Manufacturer", "manufacturer") + th("Model", "model") +
-        th("Assigned user", "user") + th("MFA", "mfa") + th("Site", "site_tag") + th("Warranty", "warranty", dcol) + th("First Intune enroll", "deploy_date", dcol) + th("Manufactured", "mfg_date", dcol) +
+        th("Assigned user", "user") + th("MFA", "mfa") + th("Site", "site_tag") + th("Warranty", "warranty", dcol) + th("Deployed", "deploy_date", dcol) + th("Manufactured", "mfg_date", dcol) +
         th("Last check-in", "last_checkin", dcol) +
         `<th style="text-align:right">Actions</th></tr></thead><tbody>` +
         rows.map(r => {
@@ -2088,7 +2088,7 @@ const People = {
     const warr = r => { const w = (r.warranty || "").slice(0, 10); if (!w) return "—"; const d = Math.floor((Date.parse(w) - Date.now()) / 86400000); return `<span class="${d < 0 ? "w-exp" : d <= 90 ? "w-soon" : ""}">${esc(w)}</span>`; };
     let body = "";
     if (o.tab === "devices") {
-      body = devs.length ? `<table class="fit"><thead><tr><th>Device</th><th>Model</th><th>Site</th><th>Last check-in</th><th>Warranty</th><th>First Intune enroll</th><th></th></tr></thead><tbody>` +
+      body = devs.length ? `<table class="fit"><thead><tr><th>Device</th><th>Model</th><th>Site</th><th>Last check-in</th><th>Warranty</th><th>Deployed</th><th></th></tr></thead><tbody>` +
         devs.map(r => `<tr><td><b>${esc(r.device_name || "—")}</b><div class="mono muted" style="font-size:12px">${esc(r.serial)}</div></td><td>${esc(r.model || "—")}</td><td>${esc(r.site_tag || "—")}</td>
           <td>${esc((r.last_checkin || "").slice(0, 10) || "—")}</td><td>${warr(r)}</td><td>${esc(r.deploy_date || "—")}</td>
           <td style="text-align:right;white-space:nowrap"><button class="rowbtn" title="Add to the upgrade list" onclick="Upgrade.addPrompt('${attr(r.serial)}')">⬆ Upgrade</button></td></tr>`).join("") + `</tbody></table>`
