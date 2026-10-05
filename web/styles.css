@@ -712,6 +712,7 @@ details.miss-card .miss-row{padding:5px 14px;}
 .set-layout{display:flex;gap:22px;align-items:flex-start;}
 .set-rail{flex:0 0 210px;position:sticky;top:16px;display:flex;flex-direction:column;gap:2px;}
 .set-rail-title{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:14px 10px 6px;}
+.set-rail-title{background:rgba(255,255,255,.07);border-left:3px solid var(--med);border-radius:6px;padding:7px 10px;margin:16px 0 6px;color:var(--text);font-weight:600;letter-spacing:.07em;}
 .set-rail-title:first-child{margin-top:0;}
 .set-rail-item{background:none;border:none;color:var(--muted);text-align:left;font-size:13.5px;padding:9px 12px;border-radius:8px;cursor:pointer;font-family:inherit;}
 .set-rail-item:hover{background:var(--rowh);color:var(--text);}
