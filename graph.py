@@ -69,6 +69,8 @@ FIELD_ALIASES = {
             "multi-factor", "multi factor"],
     "status": ["status", "device status", "state", "lifecycle"],
     "division": ["division"],
+    "deploy_date": ["deploy date", "deploydate"],
+    "mfg_date": ["mfg date", "mfgdate", "manufacture date"],
 }
 # Central multi-division store (config.json "central": {site_host, site_path, lists}).
 # Default list names match docs/MANUAL_LIST_SETUP.md. Lists in _DIVISION_SCOPED hold rows for
@@ -1932,6 +1934,8 @@ class GraphClient:
             "ram": val("ram"),
             "storage": val("storage"),
             "warranty": val("warranty"),
+            "deploy_date": val("deploy_date")[:10],         # Deploy Date / Mfg Date columns (text, YYYY-MM-DD); blank when the list has none
+            "mfg_date": val("mfg_date")[:10],
         }
         if in_use:
             u = val("user")
@@ -1970,6 +1974,8 @@ class GraphClient:
             "warranty": data.get("warranty"),
             "status": data.get("status") or "Stock",
             "date_added": _dt.date.today().isoformat(),
+            "deploy_date": data.get("deploy_date"),
+            "mfg_date": data.get("mfg_date"),
         })
         fields.setdefault("Title", data.get("serial"))
         self._create_item("new_stock", fields)
@@ -1990,9 +1996,34 @@ class GraphClient:
             "last_checkin": data.get("last_checkin"),
             "warranty": data.get("warranty"),
             "mfa": data.get("mfa"),
+            "deploy_date": data.get("deploy_date"),
+            "mfg_date": data.get("mfg_date"),
         })
         fields.setdefault("Title", data.get("serial"))
         self._create_item("in_use", fields)
+
+    def set_row_dates(self, serial: str, deploy=None, mfg=None) -> bool:
+        """Write the Deploy Date / Mfg Date columns on a device's row (In Use first, then New Stock).
+        None = leave as is, "" = clear. Returns False when the row or the columns do not exist (then the hub document is the only copy)."""
+        for key in ("in_use", "new_stock"):
+            item = self.find_by_serial(key, serial)
+            if not item:
+                continue
+            fields = {}
+            for logical, v in (("deploy_date", deploy), ("mfg_date", mfg)):
+                internal = self._internal_for(key, logical)
+                if v is not None and internal:
+                    fields[internal] = v
+            if not fields:
+                return False
+            if self._local:
+                self._ls().patch(key, item["id"], fields)
+                return True
+            self._assert_own_item(key, item["id"])
+            site = self._ensure_site()
+            self._req("PATCH", f"{GRAPH}/sites/{site}/lists/{self._list_id(key)}/items/{item['id']}/fields", json=fields)
+            return True
+        return False
 
     def _assert_own_item(self, key: str, item_id: str) -> None:
         """Central mode: refuse to touch an item that belongs to another division."""

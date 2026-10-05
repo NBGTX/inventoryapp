@@ -19,6 +19,7 @@ Run manually:
 """
 from __future__ import annotations
 
+import datetime as _dt
 import sys
 
 import vendors
@@ -122,6 +123,11 @@ def run_sync(gc: GraphClient, commit: bool = False) -> dict:
         else:
             if commit:
                 try:
+                    moved_from = stock.get(sl)
+                    if moved_from:                 # stock/boneyard -> in use: carry the manufacture date, stamp the deploy date
+                        old = gc._row(moved_from["fields"], "new_stock")
+                        dev = {**dev, "mfg_date": old.get("mfg_date", ""),
+                               "deploy_date": old.get("deploy_date") or _dt.date.today().isoformat()}
                     gc.add_in_use(dev)
                     if sl in stock:
                         gc.delete_item("new_stock", stock[sl]["id"])

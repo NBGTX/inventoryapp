@@ -1028,6 +1028,8 @@ class Api:
                 return {"ok": False, "error": f"{serial} is not in New Stock."}
             row = gc._row(item["fields"], "new_stock")
             row["user"] = user.strip()
+            if not row.get("deploy_date"):
+                row["deploy_date"] = __import__("datetime").date.today().isoformat()
             gc.add_in_use(row)
             gc.delete_item("new_stock", item["id"])
             details = f"Assigned to {user.strip()}." + (f" Reason: {reason.strip()}" if reason.strip() else "")
@@ -1134,12 +1136,19 @@ class Api:
                 except Exception as ce:
                     if ce.__class__.__name__ != "HubConflict" or attempt == 2:      # someone saved first: reload and retry
                         raise
+            col_ok = 0
+            for s in sn:                                  # the list columns are the main copy; the hub document stays as the fallback
+                try:
+                    if self._client().set_row_dates(s, dep, mf):
+                        col_ok += 1
+                except Exception:
+                    pass
             try:
                 bits = (f"deploy date {dep or 'cleared'}" if dep is not None else "") + (", " if dep is not None and mf is not None else "") + (f"manufacture date {mf or 'cleared'}" if mf is not None else "")
                 h._change("Device dates", f"{self._actor() or 'NBG Hub'}: {bits} on {len(sn)} device(s)" + (f" ({', '.join(sn[:5])})" if len(sn) <= 5 else ""))
             except Exception:
                 pass
-            return {"ok": True, "data": dates}
+            return {"ok": True, "data": dates, "columns": col_ok}
         except ValueError as e:
             return {"ok": False, "error": str(e)}
         except Exception as e:
@@ -1165,6 +1174,7 @@ class Api:
                 "serial": serial, "manufacturer": row.get("manufacturer", ""), "model": row.get("model", ""),
                 "site_tag": row.get("site_tag", ""), "cpu": row.get("cpu", ""), "ram": row.get("ram", ""),
                 "storage": row.get("storage", ""), "warranty": row.get("warranty", ""),
+                "deploy_date": row.get("deploy_date", ""), "mfg_date": row.get("mfg_date", ""),
             })
             gc.delete_item("in_use", item["id"])
             details = "Moved back to New Stock." + (f" Reason: {reason.strip()}" if reason.strip() else "")
@@ -1780,6 +1790,7 @@ class Api:
                           "model": row.get("model", ""), "site_tag": row.get("site_tag", ""),
                           "cpu": row.get("cpu", ""), "ram": row.get("ram", ""),
                           "storage": row.get("storage", ""), "warranty": row.get("warranty", ""),
+                          "deploy_date": row.get("deploy_date", ""), "mfg_date": row.get("mfg_date", ""),
                           "status": "Boneyard"})
         gc.delete_item("in_use", item["id"])
         try:

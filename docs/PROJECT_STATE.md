@@ -46,7 +46,7 @@ Hub documents (named docs, via `Hub.get_named/put_named`): division hub = `devic
 2. **NBGW go-live** (user is talking to NBGW): they stop using their old site/exe, take a fresh snapshot, `load_central.py --hub` dry run, then `--commit` (needs approval), spot-check counts. See `docs/MIGRATION.md`.
 3. **Deferred**: unattended nightly sync (`docs/UNATTENDED_SYNC.md`), notification webhook (Power Automate), Dell/HP keys (HP parser unverified, `tools/vendor_probe.py`).
 4. **Terrell upgrade list** stays empty until CPU data is filled. Dashboard > Missing specs > *Fill them one by one* (Save & next, one tick fills the same model) or set a warranty rule (Settings > Platform > Integrations > Upgrades). Sidebar badge on Devices counts devices with missing specs.
-5. **Real SharePoint columns for deploy/manufacture dates**: needs approval (creates columns on the production central lists; run `tools\check_central.py` after). Dates live in hub doc `device-dates` until then.
+5. **Deploy Date / Mfg Date** are now text columns on `Inventory - New Stock` and `Inventory - In Use` (created by hand, verified read-only). The columns are the main copy; hub doc `device-dates` is the fallback and still written. Moves (assign, return to stock, boneyard, sync) carry them. Not yet exercised with a live write: set and clear a date on one device to confirm.
 6. **Coil Cards** never run against real data (sporadic use, tested when needed): delete + restore a throwaway card, compare the `Card` / `CoilTracking` rows before and after, then set master setting "Mark Coil Cards as (Untested)" to Off.
 7. Ideas not done: remember the last mail button; bundle SVG colour icons for NBT Sites. Teammates > Refresh from Entra is slow when it falls back to one Entra call per person.
 

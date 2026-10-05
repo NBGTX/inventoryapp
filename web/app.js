@@ -614,7 +614,10 @@ const Filt = {
 const DeviceDates = {
   map: {},
   apply(...lists) {
-    lists.forEach(l => (l || []).forEach(x => { const d = this.map[(x.serial || "").toLowerCase()] || {}; x.deploy_date = d.deploy || ""; x.mfg_date = d.mfg || ""; }));
+    lists.forEach(l => (l || []).forEach(x => {          // the list column wins; the hub document fills the gaps
+      if (x._cd === undefined) { x._cd = x.deploy_date || ""; x._cm = x.mfg_date || ""; }
+      const d = this.map[(x.serial || "").toLowerCase()] || {}; x.deploy_date = x._cd || d.deploy || ""; x.mfg_date = x._cm || d.mfg || "";
+    }));
   },
   async overlay(...lists) {
     try { const r = await Backend.call("device_dates_get"); this.map = (r && r.ok && r.data) || {}; } catch (e) { this.map = {}; }
@@ -622,7 +625,16 @@ const DeviceDates = {
   },
   async set(serials, deploy, mfg) {
     const r = await Backend.call("device_dates_set", serials, deploy, mfg);
-    if (r && r.ok) { this.map = r.data || {}; this.apply(App.state.stock, App.state.use, App.state.boneyard); }
+    if (r && r.ok) {
+      this.map = r.data || {};
+      const sn = new Set([].concat(serials).map(s => String(s).toLowerCase()));
+      [App.state.stock, App.state.use, App.state.boneyard].forEach(l => (l || []).forEach(x => {
+        if (!sn.has((x.serial || "").toLowerCase())) return;
+        if (deploy !== null && deploy !== undefined) x._cd = deploy;
+        if (mfg !== null && mfg !== undefined) x._cm = mfg;
+      }));
+      this.apply(App.state.stock, App.state.use, App.state.boneyard);
+    }
     return r;
   },
 };
