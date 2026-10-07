@@ -154,6 +154,7 @@ const Help = {
         <ul>
           <li>On <b>In stock</b>, click <b>🚀 Deploy</b> on a row to record the day it was deployed (today by default). It records the date only; the machine moves to In use when it checks in with a user.</li>
           <li><b>Automatic:</b> when a sync finds a machine that was in <b>In stock</b> or the <b>Boneyard</b> now assigned to a user and moves it to In use, today's date is filled in as its deploy date. A date you set yourself is never overwritten, and machines first seen in Intune (never in stock) get no automatic date.</li>
+          <li><b>Lenovo</b> devices get their <b>Manufactured</b> date automatically: when it is blank, the sync stores the start of the earliest Lenovo warranty (close to the ship date). A date you set yourself is never replaced.</li>
           <li>Open a row (click it) to type or pick a <b>Deploy date</b> or <b>Manufacture date</b> yourself; clear the box to remove it. <b>In use</b> has <b>Deployed</b> and <b>Manufactured</b> columns you can edit right in the row (handy for filling in many devices: pick the date and it saves), and both dates are in <b>Copy list</b> and can be searched.</li>
           <li>With rows ticked, <b>Mark deployed</b> / <b>Set deploy date</b> and <b>Set manufacture date</b> apply one date to all of them. The dates are kept per serial number, so they stay with a machine as it moves between lists.</li>
         </ul>

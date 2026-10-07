@@ -1788,7 +1788,7 @@ class GraphClient:
         if not key or not serial:
             return None
         h = {"ClientID": key, "Content-Type": "application/x-www-form-urlencoded"}
-        res = {"model": "", "cpu": "", "ram": "", "storage": "", "warranty_end": "",
+        res = {"model": "", "cpu": "", "ram": "", "storage": "", "warranty_end": "", "warranty_start": "",
                "machine_type": "", "mtm": ""}
         got = False
 
@@ -1804,6 +1804,8 @@ class GraphClient:
                 warns = d.get("Warranty") or []
                 if warns:
                     res["warranty_end"] = max((w.get("End", "") for w in warns), default="")[:10]
+                    # the earliest warranty start is close to the ship date: used as the manufacture date when none is recorded
+                    res["warranty_start"] = min((w.get("Start", "") for w in warns if w.get("Start")), default="")[:10]
                 got = True
         except Exception:
             pass

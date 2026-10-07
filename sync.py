@@ -301,6 +301,7 @@ def enrich_in_use(gc: GraphClient, commit: bool = True, cap: int | None = None) 
                 _mfa["map"] = {}
         return _mfa["map"] or {}
 
+    has_mfg_col = bool(gc._internal_for("in_use", "mfg_date"))     # the optional Mfg Date column exists on the list
     for item in gc._items_raw("in_use"):
         f = item.get("fields", {})
         serial = (f.get("Title") or "").strip()
@@ -362,6 +363,8 @@ def enrich_in_use(gc: GraphClient, commit: bool = True, cap: int | None = None) 
         did_specs = False
         _vend = vendors.vendor_of(cur.get("manufacturer") or "")
         _need = (not (cur.get("cpu") and cur.get("ram") and cur.get("warranty"))) if _vend == "lenovo" else (not cur.get("warranty"))
+        _want_mfg = _vend == "lenovo" and has_mfg_col and not cur.get("mfg_date")      # Lenovo's warranty start = ship date, stored once
+        _need = _need or _want_mfg
         if _vend and _need:
             candidates += 1
             if enriched < cap:
@@ -378,7 +381,10 @@ def enrich_in_use(gc: GraphClient, commit: bool = True, cap: int | None = None) 
                         updates["storage"] = info["storage"]
                     if not cur.get("warranty") and info.get("warranty_end"):
                         updates["warranty"] = info["warranty_end"]
-                    did_specs = any(k in updates for k in ("cpu", "ram", "storage", "warranty"))
+                    ws = (info.get("warranty_start") or "")[:10]
+                    if _want_mfg and ws and ws <= _dt.date.today().isoformat() and ws >= "1990-01-01":
+                        updates["mfg_date"] = ws
+                    did_specs = any(k in updates for k in ("cpu", "ram", "storage", "warranty", "mfg_date"))
 
         # (d) MFA registered: fill ONLY when this row's MFA cell is blank, then it's
         #     persisted to the list and never queried again (per Blake's request).

@@ -226,5 +226,83 @@ class BackfillImportHealth(unittest.TestCase):
         self.assertFalse(self.api.health_get()["ok"])
 
 
+class LenovoManufactureDate(unittest.TestCase):
+    """Lenovo's earliest warranty start is stored once as the manufacture date."""
+
+    def setUp(self):
+        import _env
+        import sync
+        self.sync = sync
+        cols = dict(_env.DEFAULT_COLS, **{"deploy date": "DeployDate", "mfg date": "MfgDate", "warranty expiration": "Warranty",
+                                          "mfa": "MFA"})
+        self.gc = make_client()
+        self.site = FakeSite(self.gc, colmaps={"in_use": cols})
+        self.gc._assert_own_item = lambda *a, **k: None
+        self.updates = []
+        self.gc.update_item = lambda key, iid, vals: self.updates.append((iid, vals))
+        self.calls = []
+
+        def vendor(serial, maker):
+            self.calls.append(serial)
+            return {"model": "T14", "cpu": "i5", "ram": "16 GB", "storage": "512 GB", "warranty_end": "2027-01-01", "warranty_start": "2024-02-03"}
+        self.gc.lookup_vendor = vendor
+
+    def row(self, **kw):
+        base = dict(Title="L1", Division="nbgw", Manufacturer="LENOVO", CPU="i5", MemoryRAM="16 GB", Storage="512 GB", Warranty="2027-01-01",
+                    PrimaryUser="a@nucor.com", SiteTag="LTR", MFA="Yes")
+        base.update(kw)
+        return self.site.add("in_use", **base)
+
+    def test_blank_manufacture_date_is_filled_from_the_warranty_start(self):
+        self.row()
+        r = self.sync.enrich_in_use(self.gc, commit=True, cap=10)
+        self.assertEqual(self.updates, [("1", {"mfg_date": "2024-02-03"})], r)
+
+    def test_existing_manufacture_date_is_kept_and_not_looked_up(self):
+        self.row(MfgDate="2023-05-05")
+        self.sync.enrich_in_use(self.gc, commit=True, cap=10)
+        self.assertEqual((self.updates, self.calls), ([], []))
+
+    def test_other_makers_and_lists_without_the_column_are_left_alone(self):
+        self.row(Manufacturer="Dell Inc.")
+        self.sync.enrich_in_use(self.gc, commit=True, cap=10)
+        self.assertEqual(self.updates, [])
+        gc2 = make_client()
+        import _env
+        FakeSite(gc2, colmaps={"in_use": dict(_env.DEFAULT_COLS, **{"warranty expiration": "Warranty", "mfa": "MFA"})}).add("in_use", Title="L2", Division="nbgw", Manufacturer="LENOVO", CPU="i5", MemoryRAM="16 GB", Storage="1", Warranty="2027-01-01",
+                          PrimaryUser="a@nucor.com", SiteTag="LTR", MFA="Yes")
+        gc2.update_item = lambda *a: self.updates.append(a)
+        gc2.lookup_vendor = lambda *a: self.calls.append("x") or {"warranty_start": "2024-01-01"}
+        self.sync.enrich_in_use(gc2, commit=True, cap=10)
+        self.assertEqual((self.updates, self.calls), ([], []))
+
+    def test_a_future_start_date_is_ignored(self):
+        self.row()
+        self.gc.lookup_vendor = lambda s, m: {"warranty_start": "2999-01-01", "warranty_end": "2999-02-01"}
+        self.sync.enrich_in_use(self.gc, commit=True, cap=10)
+        self.assertEqual(self.updates, [])
+
+    def test_lenovo_lookup_returns_the_earliest_start(self):
+        import graph
+        gc = make_client()
+        gc.get_setting = lambda k: "KEY"
+
+        class R:
+            ok = True
+
+            def __init__(self, d):
+                self.d = d
+
+            def json(self):
+                return self.d
+        orig = graph.requests.post
+        graph.requests.post = lambda url, **k: R({"Product": "x/T14/20XK/20XKS0/SN", "Warranty": [{"Start": "2024-02-03T00:00:00Z", "End": "2027-02-03"}, {"Start": "2025-01-01", "End": "2028-01-01"}]}) if "warranty" in url else R({})
+        try:
+            r = gc.lookup_lenovo("SN")
+        finally:
+            graph.requests.post = orig
+        self.assertEqual((r["warranty_start"], r["warranty_end"]), ("2024-02-03", "2028-01-01"))
+
+
 if __name__ == "__main__":
     unittest.main()
