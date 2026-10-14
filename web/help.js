@@ -498,10 +498,10 @@ const Help = {
         <p>When someone files an issue, changes its status or comments, the app tells the right people. Everyone involved in an issue (reporter, assignee, watchers) is told about status changes and comments. <b>The people listed here</b> are told about the events you tick, for <b>every</b> issue.</p>
         <ol>
           <li><b>Add a person</b>: type a name or sign-in; the list comes from Entra. Each person starts with all three events ticked: <i>New issue</i>, <i>Status change</i>, <i>New comment</i>. Untick what they do not need, then click <b>Save people</b>.</li>
-          <li><b>How the e-mail leaves the app.</b> The app does not send mail itself. Create a Power Automate flow with the trigger <i>When an HTTP request is received</i> and an action that sends an e-mail (or posts to Teams) to the addresses in the request's <code>to</code> list, using its <code>subject</code> and <code>html</code> fields. Paste the flow's address into Settings → Integrations → Notifications. The badge at the top shows whether that is set.</li>
+          <li><b>How the e-mail leaves the app.</b> An enabled division SMTP relay in Settings → General is used first. Otherwise, the app uses the platform notification webhook (Settings → Integrations) or Graph mail if already permitted. SMTP uses anonymous relay; the server must accept connections from the user's network.</li>
           <li>Click <b>Send a test</b> to send a sample to the people on the list (or to you if the list is empty).</li>
         </ol>
-        <p>No webhook and no mail permission means nothing is sent; the issue's activity log says "not sent" so you can see it. Nothing is sent in Local data mode.</p>
+        <p>No SMTP relay, webhook or mail permission means nothing is sent; the issue's activity log says "not sent" so you can see it. Nothing is sent in Local data mode.</p>
         <h5>Old reports</h5>
         <p><b>Import the old lists</b> copies the earlier per-division "Report bug / feature" items onto the board once. Items already copied are skipped.</p>`
     },

@@ -1,16 +1,20 @@
 """Who hears about an issue event, and how the message is delivered.
 
 Delivery, in order of preference:
-  1. A webhook (Settings > Integrations > Notifications > "Notification webhook"): the app POSTs JSON
+  1. The active division's SMTP relay (Settings > General > SMTP mail), when enabled.
+  2. A webhook (Settings > Integrations > Notifications > "Notification webhook"): the app POSTs JSON
      {event, to[], subject, text, html, issue{...}} and a Power Automate flow (or similar) sends the e-mail / Teams message.
      This needs NO extra Microsoft Graph permission.
-  2. Direct e-mail through Microsoft Graph (/me/sendMail) - only if the signed-in token ALREADY carries Mail.Send. The app never
+  3. Direct e-mail through Microsoft Graph (/me/sendMail) - only if the signed-in token ALREADY carries Mail.Send. The app never
      asks for that permission (it would trigger an admin-consent prompt for every user).
 If neither is available nothing is sent and the issue's history says so. Failures never raise.
 """
 from __future__ import annotations
 
 import html as _html
+from email.message import EmailMessage
+import smtplib
+import ssl
 
 import requests
 
@@ -74,6 +78,34 @@ def render(issue: dict, event: str, actor_name: str, extra: str = "") -> tuple:
     return subject, text, body
 
 
+def _send_smtp(settings: dict, emails: list, subject: str, text: str, body_html: str) -> dict:
+    msg = EmailMessage()
+    msg["From"] = settings["from_address"]
+    msg["To"] = ", ".join(emails)
+    msg["Subject"] = subject
+    msg.set_content(text)
+    msg.add_alternative(body_html, subtype="html")
+    try:
+        security = settings["security"]
+        context = ssl.create_default_context()
+        if security == "ssl":
+            client = smtplib.SMTP_SSL(settings["server"], settings["port"], timeout=15, context=context)
+        else:
+            client = smtplib.SMTP(settings["server"], settings["port"], timeout=15)
+        with client as smtp:
+            smtp.ehlo()
+            if security == "starttls":
+                smtp.starttls(context=context)
+                smtp.ehlo()
+            refused = smtp.send_message(msg, to_addrs=emails)
+        sent = len(emails) - len(refused)
+        if sent:
+            return {"sent": sent, "via": "smtp", "error": "" if not refused else f"SMTP refused {len(refused)} recipient(s)."}
+        return {"sent": 0, "via": "smtp", "error": "The SMTP server refused all recipients."}
+    except Exception as e:
+        return {"sent": 0, "via": "smtp", "error": f"SMTP could not send ({type(e).__name__}). Check server, port, security, and relay access."}
+
+
 def deliver(gc, to: list, subject: str, text: str, body_html: str, event: str, issue: dict) -> dict:
     """Send once to all `to`. Returns {"sent": n, "via": "webhook"|"mail"|"", "error": str}."""
     emails = [r["upn"] for r in to]
@@ -81,6 +113,13 @@ def deliver(gc, to: list, subject: str, text: str, body_html: str, event: str, i
         return {"sent": 0, "via": "", "error": ""}
     if getattr(gc, "data_mode", "live") == "local":
         return {"sent": 0, "via": "", "error": "Local data mode: nothing is sent."}
+    try:
+        import settings_catalog as sc
+        smtp_settings = sc.clean_smtp_settings(gc.division_prefs().get("smtp"))
+    except ValueError as e:
+        return {"sent": 0, "via": "smtp", "error": f"Invalid SMTP settings: {e}"}
+    if smtp_settings["enabled"]:
+        return _send_smtp(smtp_settings, emails, subject, text, body_html)
     try:
         import settings_catalog as sc
         url = sc.clean_url(gc.get_setting("notify_webhook_url", ""))
@@ -105,4 +144,4 @@ def deliver(gc, to: list, subject: str, text: str, body_html: str, event: str, i
             return {"sent": len(emails), "via": "mail", "error": "" if r.status_code < 300 else f"Mail answered {r.status_code}."}
     except Exception as e:
         return {"sent": 0, "via": "mail", "error": f"Mail could not be sent ({type(e).__name__})."}
-    return {"sent": 0, "via": "", "error": "No way to send e-mail is set up yet (add a notification webhook in Settings > Integrations)."}
+    return {"sent": 0, "via": "", "error": "No way to send e-mail is set up yet (configure SMTP under Settings > General, a webhook under Settings > Integrations, or grant Mail.Send)."}

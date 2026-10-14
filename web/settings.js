@@ -280,7 +280,7 @@ const Settings = {
   async general() {
     const [o, p] = await Promise.all([Backend.call("get_own_division"), Backend.call("get_division_prefs")]);
     if (!o || !o.ok) return this.pane("settings", `<div class="empty">${esc((o && o.error) || "Could not read this division.")}</div>`);
-    this.own = o; this.prefs = (p && p.ok) ? p : { timezone: "", default: "", effective: "", zones: [] };
+    this.own = o; this.prefs = (p && p.ok) ? p : { timezone: "", default: "", effective: "", zones: [], smtp: {} };
     const zl = this.prefs.zones, zlabel = id => (zl.find(z => z.id === id) || {}).label || id;
     const def = this.prefs.default ? zlabel(this.prefs.default) : "this PC's own time zone";
     const sites = (o.sites || []).map(s => `<span class="dp-chip">${esc(s.code)} <i>${esc(s.name || "")}</i></span>`).join("") || `<span class="muted">none yet</span>`;
@@ -309,6 +309,16 @@ const Settings = {
            <div id="ioDepts" style="max-width:560px"></div>
            <p class="muted" style="margin:6px 0 0;font-size:12px">These are the department groups on the Hot spares window. Press Enter after each name; click &times; to remove one.</p></div>`,
         `<button class="primary" id="ioSave" onclick="Settings.saveInv()" disabled>Save inventory options</button>`) : "") +
+      SetUI.card("SMTP mail", "Each division can use its own mail relay.",
+        `<p class="muted" style="margin:0 0 12px">Used for Issue notification emails and the test message in Settings &gt; Issue notifications. Anonymous relay; Hub stores no SMTP credentials. Prefer STARTTLS when server supports it; use None only for trusted internal relays.</p>
+         <label class="field" style="display:flex;align-items:center;gap:9px;max-width:460px"><input id="smtpEnabled" type="checkbox" style="width:auto;padding:0;border:0;background:transparent" ${this.prefs.smtp && this.prefs.smtp.enabled ? "checked" : ""} ${canEdit ? "" : "disabled"} onchange="Settings.markDirty('smtpSave')"><span>Enable this division's SMTP relay</span></label>
+         <div class="fields" style="margin-top:10px">
+           <div class="field" style="min-width:260px;flex:2"><label>SMTP server</label><input id="smtpServer" value="${attr((this.prefs.smtp || {}).server || "")}" placeholder="smtp.division.example" ${canEdit ? "" : "disabled"} oninput="Settings.markDirty('smtpSave')"></div>
+           <div class="field" style="max-width:150px"><label>Port</label><input id="smtpPort" type="number" min="1" max="65535" value="${attr((this.prefs.smtp || {}).port || 25)}" ${canEdit ? "" : "disabled"} oninput="Settings.markDirty('smtpSave')"></div>
+           <div class="field" style="min-width:190px"><label>Connection security</label>${SetUI.select("smtpSecurity", [{ id: "none", label: "None (internal relay)" }, { id: "starttls", label: "STARTTLS" }, { id: "ssl", label: "SSL/TLS" }], (this.prefs.smtp || {}).security || "none", "Settings.markDirty('smtpSave')", undefined, !canEdit)}</div>
+           <div class="field" style="min-width:260px;flex:2"><label>From address</label><input id="smtpFrom" type="email" value="${attr((this.prefs.smtp || {}).from_address || "")}" placeholder="hub-notifications@division.example" ${canEdit ? "" : "disabled"} oninput="Settings.markDirty('smtpSave')"></div>
+         </div>`,
+        canEdit ? `<button class="primary" id="smtpSave" onclick="Settings.saveSmtp()" disabled>Save SMTP settings</button>` : "") +
       SetUI.card("Project Hub", "Where the Project Hub item in the sidebar opens for " + esc(Divisions.label()) + (canEdit ? "." : ". Division admins can change it."),
         `<div class="field" style="max-width:560px"><label>Project Hub address</label>
            <input id="phUrl" value="${attr(this.prefs.project_hub_url || "")}" placeholder="${attr(this.prefs.project_hub_default)}" ${canEdit ? "" : "disabled"} oninput="Settings.markDirty('phSave')"></div>
@@ -362,6 +372,20 @@ const Settings = {
     this.dirty = false;
     await Tz.load();
     App.toast("Time zone saved.");
+    this.general();
+  },
+  async saveSmtp() {
+    const smtp = {
+      enabled: document.getElementById("smtpEnabled").checked,
+      server: document.getElementById("smtpServer").value.trim(),
+      port: document.getElementById("smtpPort").value,
+      security: document.getElementById("smtpSecurity").value,
+      from_address: document.getElementById("smtpFrom").value.trim()
+    };
+    const r = await Backend.call("save_division_prefs", null, null, null, null, smtp);
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save SMTP settings.", true);
+    this.dirty = false;
+    App.toast("SMTP settings saved for " + Divisions.label() + ".");
     this.general();
   },
 
@@ -462,10 +486,10 @@ const Settings = {
   async issueNotifyTab() {
     const r = await Backend.call("get_issue_notifications");
     if (!r || !r.ok || !r.super_admin) return this.pane("settings", `<div class="empty">${esc((r && r.error) || "Super admins only.")}</div>`);
-    this.inf = { subs: r.subscribers.map(x => ({ ...x, events: [...x.events] })), webhook: r.webhook_set, mail: r.can_mail, events: r.events };
-    const how = r.webhook_set ? SetUI.pill("ok", "Webhook set") : r.can_mail ? SetUI.pill("ok", "Direct mail available") : SetUI.pill("warn", "Nothing can send e-mail yet");
+    this.inf = { subs: r.subscribers.map(x => ({ ...x, events: [...x.events] })), webhook: r.webhook_set, smtp: r.smtp_enabled, mail: r.can_mail, events: r.events };
+    const how = r.smtp_enabled ? SetUI.pill("ok", "SMTP relay enabled for this division") : r.webhook_set ? SetUI.pill("ok", "Webhook set") : r.can_mail ? SetUI.pill("ok", "Direct mail available") : SetUI.pill("warn", "Nothing can send e-mail yet");
     this.pane("settings", SetUI.card("Issue notifications", "",
-      `<p style="margin:0 0 12px">${how}
+      `<p style="margin:0 0 12px">${how}${r.smtp_enabled ? `<span class="muted" style="margin-left:8px">SMTP takes priority for this division.</span>` : ""}
          <button class="ghost" style="margin-left:10px" onclick="Settings.open('integrations')">Set the webhook</button>
          <button class="ghost" onclick="Settings.inTest()">Send a test</button></p>
        <div id="inTable"></div>

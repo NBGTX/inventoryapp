@@ -5,6 +5,8 @@ TIMEZONES: IANA zones offered for divisions (the UI shows a dropdown, never free
 """
 from __future__ import annotations
 
+import re
+
 TIMEZONES = [
     ("America/New_York", "Eastern (US & Canada)"),
     ("America/Chicago", "Central (US & Canada)"),
@@ -39,6 +41,33 @@ def clean_url(v) -> str:
     if u.scheme != "https" or not u.hostname or "." not in u.hostname or u.username or u.password or any(c.isspace() for c in v):
         raise ValueError("Enter a web address starting with https:// (no spaces, no user name or password).")
     return u.geturl()
+
+
+def clean_smtp_settings(data) -> dict:
+    """Validate a division's anonymous SMTP relay settings."""
+    data = data if isinstance(data, dict) else {}
+    enabled = bool(data.get("enabled"))
+    host = str(data.get("server") or "").strip()
+    port_value = data.get("port", 25)
+    try:
+        port = int(port_value or 25)
+    except (TypeError, ValueError):
+        raise ValueError("SMTP port must be a number between 1 and 65535.")
+    if not 1 <= port <= 65535:
+        raise ValueError("SMTP port must be a number between 1 and 65535.")
+    security = str(data.get("security") or "none").strip().lower()
+    if security not in {"none", "starttls", "ssl"}:
+        raise ValueError("Choose None, STARTTLS, or SSL/TLS for SMTP security.")
+    sender = str(data.get("from_address") or "").strip()
+    if host and (len(host) > 253 or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?", host)):
+        raise ValueError("Enter an SMTP server host name or IPv4 address, without https://.")
+    if sender and (len(sender) > 254 or not re.fullmatch(r"[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+", sender)):
+        raise ValueError("Enter a valid From email address.")
+    if enabled and not host:
+        raise ValueError("Enter the SMTP server before enabling mail.")
+    if enabled and not sender:
+        raise ValueError("Enter a From email address before enabling mail.")
+    return {"enabled": enabled, "server": host, "port": port, "security": security, "from_address": sender}
 
 
 def zones() -> list:

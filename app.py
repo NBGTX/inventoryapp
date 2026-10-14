@@ -262,15 +262,19 @@ class Api:
                 depts = sc.clean_depts(prefs.get("hot_spare_depts"))
             except ValueError:
                 depts = []
+            try:
+                smtp = sc.clean_smtp_settings(prefs.get("smtp"))
+            except ValueError:
+                smtp = sc.clean_smtp_settings(None)
             return {"ok": True, "timezone": tz, "default": dflt, "effective": tz or dflt, "zones": sc.zones(),
                     "project_hub_url": ph, "project_hub_default": ph_def, "project_hub_effective": ph or ph_def,
                     "device_os": dos, "device_os_options": [{"id": k, "label": v} for k, v in sc.DEVICE_OS],
                     "hot_spare_depts": depts, "hot_spare_default": sc.HOT_SPARE_DEFAULT,
-                    "hot_spare_effective": (depts or sc.HOT_SPARE_DEFAULT) + ["Other"]}
+                    "hot_spare_effective": (depts or sc.HOT_SPARE_DEFAULT) + ["Other"], "smtp": smtp}
         except Exception as e:
             return self._fail(e)
 
-    def save_division_prefs(self, timezone=None, project_hub_url=None, device_os=None, hot_spare_depts=None) -> dict:
+    def save_division_prefs(self, timezone=None, project_hub_url=None, device_os=None, hot_spare_depts=None, smtp=None) -> dict:
         """Admin of the division (or super admin). Only the arguments that are given are changed;
         timezone "" / project_hub_url "" / hot_spare_depts [] mean 'use the default'."""
         try:
@@ -295,6 +299,11 @@ class Api:
             if hot_spare_depts is not None:
                 try:
                     prefs_in["hot_spare_depts"] = sc.clean_depts(hot_spare_depts)
+                except ValueError as e:
+                    return {"ok": False, "error": str(e)}
+            if smtp is not None:
+                try:
+                    prefs_in["smtp"] = sc.clean_smtp_settings(smtp)
                 except ValueError as e:
                     return {"ok": False, "error": str(e)}
             if not prefs_in:
@@ -575,8 +584,10 @@ class Api:
             if not gc.is_super_admin():
                 return {"ok": True, "super_admin": False}
             hub = self._issue_hub()
+            smtp = gc.division_prefs().get("smtp") or {}
             return {"ok": True, "super_admin": True, "subscribers": notify.subscribers_doc(hub.get_named("issue-subscribers")),
-                    "events": issues.EVENTS, "webhook_set": bool(gc.get_setting("notify_webhook_url", "")), "can_mail": gc.can_send_mail()}
+                    "events": issues.EVENTS, "webhook_set": bool(gc.get_setting("notify_webhook_url", "")),
+                    "smtp_enabled": bool(smtp.get("enabled")), "can_mail": gc.can_send_mail()}
         except Exception as e:
             return self._fail(e)
 
