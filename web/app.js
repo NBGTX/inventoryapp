@@ -1271,7 +1271,10 @@ const App = {
     if (boot.error) return "Unavailable";
     if (!boot.value) return "No data";
     const d = new Date(boot.value);
-    return Number.isNaN(d.getTime()) ? boot.value : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    if (Number.isNaN(d.getTime())) return boot.value;
+    const date = d.toLocaleDateString(undefined, { month: "numeric", day: "numeric", year: "2-digit" });
+    const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    return `${date} ${time}`;
   },
 
   observeLastRebootCells() {
