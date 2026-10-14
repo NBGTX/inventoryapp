@@ -1277,6 +1277,14 @@ const App = {
     return `${date} ${time}`;
   },
 
+  lastRebootTitle(serial) {
+    const boot = this.state.rebootBySerial[serial];
+    if (boot && boot.error) return boot.error;
+    if (!boot || !boot.value) return "Latest Intune-reported reboot time";
+    const d = new Date(boot.value);
+    return Number.isNaN(d.getTime()) ? boot.value : d.toLocaleString(undefined, { dateStyle: "full", timeStyle: "long" });
+  },
+
   observeLastRebootCells() {
     if (this.state._bootObserver) this.state._bootObserver.disconnect();
     if (!Backend.real || typeof IntersectionObserver === "undefined") return;
@@ -1310,8 +1318,7 @@ const App = {
         .find(item => item.dataset.rebootSerial === serial);
       if (cell) {
         cell.textContent = this.lastRebootDisplay(serial);
-        const boot = this.state.rebootBySerial[serial];
-        cell.title = boot && boot.error ? boot.error : "Latest Intune-reported reboot time";
+        cell.title = this.lastRebootTitle(serial);
       }
     }
   },
@@ -1566,7 +1573,7 @@ const App = {
             <td class="mono" title="${attr(r.serial)}">${esc(r.serial)}</td><td class="cell-mfr" title="${attr(r.manufacturer)}">${esc(r.manufacturer)}</td><td title="${attr(r.model)}">${esc(r.model)}</td>
             <td class="cell-user">${r.user ? `<a class="sw-user" data-user="${attr(r.user)}" title="See everything ${attr(r.user)} has installed">${esc(r.user)}</a>` : "—"}</td><td>${esc(r.site_tag)}</td><td>${warrCell(r.warranty)}</td>
             <td>${dateIn(r, "deploy")}</td><td>${dateIn(r, "mfg")}</td>
-            <td data-reboot-serial="${attr(r.serial)}" title="Latest Intune-reported reboot time">${esc(this.lastRebootDisplay(r.serial))}</td>
+            <td data-reboot-serial="${attr(r.serial)}" title="${attr(this.lastRebootTitle(r.serial))}">${esc(this.lastRebootDisplay(r.serial))}</td>
             <td>${esc(day(r.last_checkin))}${checkinBadge(r.last_checkin)}</td>
             <td style="text-align:right;white-space:nowrap">${act("✎", "editspecs", r.serial, false, "Edit CPU, RAM, storage and warranty")} ${act("⬆", "upgrade", r.serial, false, "Add to upgrade list")} ${act("✕", "remove", r.serial, true, "Remove")}</td></tr>` +
             (open ? detail(r) : "");
