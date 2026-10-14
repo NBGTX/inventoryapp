@@ -1,0 +1,139 @@
+<Window x:Class="SpPerm.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:SpPerm.App"
+        Title="SharePoint permissions manager" Width="1280" Height="840" MinWidth="1040" MinHeight="660"
+        FontFamily="Arial" FontSize="12" Background="{StaticResource WindowBrush}">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Border Background="{StaticResource DarkBrush}" Padding="16,10">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Text="{Binding VersionText}" Foreground="{StaticResource LightBrush}" VerticalAlignment="Center"/>
+                <TextBlock DockPanel.Dock="Right" Text="{Binding SignedInText}" Foreground="White" Margin="0,0,18,0" VerticalAlignment="Center"/>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE72E;" FontFamily="Segoe MDL2 Assets" Foreground="{StaticResource LightBrush}" FontSize="17" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="SharePoint permissions manager" Foreground="White" FontSize="15" VerticalAlignment="Center"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <Border Grid.Row="1" Background="{StaticResource PaleBrush}" Padding="16,10" BorderBrush="#B8C2BD" BorderThickness="0,0,0,1">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Site" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <TextBox Grid.Column="1" Text="{Binding SiteUrl, UpdateSourceTrigger=PropertyChanged}" ToolTip="For example: https://nucor.sharepoint.com/sites/YourSite">
+                    <TextBox.InputBindings>
+                        <KeyBinding Key="Enter" Command="{Binding ConnectCommand}"/>
+                    </TextBox.InputBindings>
+                </TextBox>
+                <Button Grid.Column="2" Content="Connect" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" Command="{Binding ConnectCommand}"/>
+                <Button Grid.Column="3" Content="Rescan" Margin="8,0,0,0" Command="{Binding RescanCommand}"/>
+                <Button Grid.Column="4" Content="Export to Excel" Margin="8,0,0,0" Command="{Binding ExportCommand}"/>
+                <Button Grid.Column="5" Content="Try demo data" Margin="8,0,0,0" Command="{Binding DemoCommand}"/>
+                <Button Grid.Column="6" Content="Sign out" Style="{StaticResource LinkButton}" Margin="14,0,0,0" VerticalAlignment="Center" Command="{Binding SignOutCommand}"/>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="2" Background="#FFF1D6" BorderBrush="#E0A100" BorderThickness="0,0,0,1" Padding="16,8"
+                Visibility="{Binding HasBanner, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding BannerText}" TextWrapping="Wrap" Foreground="#5C3B00"/>
+        </Border>
+
+        <Grid Grid.Row="3">
+            <Grid Visibility="{Binding HasScan, Converter={StaticResource BoolToVis}}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <Border BorderBrush="{StaticResource BorderBrushSoft}" BorderThickness="0,0,0,1" Background="White" Padding="12,0">
+                    <StackPanel Orientation="Horizontal">
+                        <RadioButton GroupName="tabs" Style="{StaticResource TabRadio}" Content="Cleanup"
+                                     IsChecked="{Binding SelectedTab, Converter={StaticResource Equals}, ConverterParameter=0, Mode=TwoWay}"/>
+                        <RadioButton GroupName="tabs" Style="{StaticResource TabRadio}" Content="Access matrix"
+                                     IsChecked="{Binding SelectedTab, Converter={StaticResource Equals}, ConverterParameter=1, Mode=TwoWay}"/>
+                    </StackPanel>
+                </Border>
+                <Grid Grid.Row="1">
+                    <Grid>
+                        <Grid.Style>
+                            <Style TargetType="Grid">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SelectedTab}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Grid.Style>
+                        <local:CleanupView DataContext="{Binding Cleanup}"/>
+                    </Grid>
+                    <Grid>
+                        <Grid.Style>
+                            <Style TargetType="Grid">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SelectedTab}" Value="1">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Grid.Style>
+                        <local:MatrixView DataContext="{Binding Matrix}"/>
+                    </Grid>
+                </Grid>
+            </Grid>
+
+            <StackPanel Visibility="{Binding HasScan, Converter={StaticResource InvBoolToVis}}" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="520">
+                <TextBlock Text="Connect to your SharePoint site" FontSize="20" Foreground="{StaticResource DarkBrush}"/>
+                <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" FontSize="13" LineHeight="20"
+                           Text="Paste your site address above and select Connect. You'll sign in with your Nucor account. The app scans for folders and files that have their own permissions, shows how each one differs from its parent, and lets you reset or change them in bulk. Nothing changes until you review and apply."/>
+                <StackPanel Orientation="Horizontal" Margin="0,18,0,0">
+                    <Button Content="Connect" Style="{StaticResource PrimaryButton}" Command="{Binding ConnectCommand}" Padding="20,8"/>
+                    <Button Content="Try demo data" Margin="10,0,0,0" Command="{Binding DemoCommand}" Padding="20,8"/>
+                </StackPanel>
+            </StackPanel>
+        </Grid>
+
+        <Border Grid.Row="4" Background="White" BorderBrush="{StaticResource BorderBrushSoft}" BorderThickness="0,1,0,0" Padding="16,10">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Content="Open change log" Style="{StaticResource LinkButton}" VerticalAlignment="Center" Margin="0,0,14,0" Command="{Binding OpenLogCommand}"/>
+                    <Button Content="Undo last batch" Margin="0,0,8,0" Command="{Binding UndoCommand}"/>
+                    <Button Content="Discard" Margin="0,0,8,0" Command="{Binding DiscardCommand}"/>
+                    <Button Content="Review and apply" Style="{StaticResource PrimaryButton}" Padding="18,7" Command="{Binding ApplyCommand}"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="Pending changes" Foreground="{StaticResource MutedBrush}" Margin="0,0,10,0"/>
+                    <TextBlock Text="{Binding PendingSummary}" FontSize="13" Foreground="{StaticResource DarkBrush}"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <Border Grid.Row="5" Background="{StaticResource PaleBrush}" Padding="16,6">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}">
+                    <ProgressBar Width="220" Height="8" Maximum="100" Value="{Binding ProgressValue, Mode=OneWay}" IsIndeterminate="{Binding IsIndeterminate, Mode=OneWay}"
+                                 Foreground="{StaticResource MediumBrush}" Background="White" BorderThickness="0" VerticalAlignment="Center"/>
+                    <Button Content="Cancel" Style="{StaticResource LinkButton}" Margin="10,0,0,0" Command="{Binding CancelCommand}"/>
+                </StackPanel>
+                <TextBlock Text="{Binding StatusText}" Foreground="{StaticResource DarkBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

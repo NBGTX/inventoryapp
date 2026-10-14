@@ -25,7 +25,7 @@ import threading
 import time
 import warnings
 import zipfile
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlsplit
 
 warnings.filterwarnings("ignore", message="Unable to find acceptable character detection")
 
@@ -220,6 +220,7 @@ class GraphClient:
         self._sign_lock = threading.Lock()   # serialize token refresh across threads
         self._app: msal.PublicClientApplication | None = None
         self._site_id: str | None = None
+        self._spm_graph_site_ids: dict[str, str] = {}
         self._list_ids: dict[str, str] = {}
         self._col_maps: dict[str, dict[str, str]] = {}
         self._resolved: dict[str, dict[str, str | None]] = {}
@@ -330,6 +331,16 @@ class GraphClient:
         me = (self.account_upn or "").strip().lower()
         if not me:
             return False
+        # Trial launcher can demote a specific account inside its isolated profile
+        # without changing the shared Master Settings list or release config.
+        if os.environ.get("NBG_HUB_TRIAL_MODE") == "1":
+            denied = {
+                value.strip().lower()
+                for value in os.environ.get("NBG_HUB_TRIAL_SUPER_ADMIN_DENY_UPN", "").split(",")
+                if value.strip()
+            }
+            if me in denied:
+                return False
         admins = {a.strip().lower() for a in (self._base_cfg.get("super_admins") or []) if isinstance(a, str)}
         raw = (self.master_settings().get("super_admins") or {}).get("value", "")
         admins |= {a.strip().lower() for a in raw.replace(";", ",").split(",") if a.strip()}
@@ -940,6 +951,101 @@ class GraphClient:
                 return self._token
             return self._acquire(interactive)
 
+    def sharepoint_permission_status(self) -> dict:
+        """Silently check whether this app/account can obtain SharePoint REST FullControl."""
+        host = (self.cfg.get("sharepoint_hostname") or "").strip().strip("/")
+        if not host:
+            return {"status": "not_configured", "error": "sharepoint_host_missing"}
+
+        try:
+            # Initialize the existing public-client app and require a cached signed-in account.
+            self.sign_in(interactive=False)
+        except GraphError:
+            return {"status": "sign_in_required"}
+
+        with self._sign_lock:
+            app = self._app
+            if app is None:
+                return {"status": "sign_in_required"}
+            accounts = app.get_accounts()
+            account = next((a for a in accounts
+                            if (a.get("username") or "").lower() == self.account_upn.lower()),
+                           accounts[0] if accounts else None)
+            if account is None:
+                return {"status": "sign_in_required"}
+
+            scope = f"https://{host}/AllSites.FullControl"
+            try:
+                result = app.acquire_token_silent_with_error([scope], account=account)
+                self._save_cache()
+            except Exception:
+                return {"status": "check_failed"}
+
+        if not result:
+            return {"status": "sign_in_required"}
+
+        token = result.get("access_token")
+        if token:
+            granted = (result.get("scope") or "").lower().split()
+            try:
+                payload = token.split(".")[1]
+                payload += "=" * (-len(payload) % 4)
+                claims = json.loads(base64.urlsafe_b64decode(payload))
+                granted = (claims.get("scp") or "").lower().split() or granted
+            except Exception:
+                pass
+            if "allsites.fullcontrol" in granted:
+                return {"status": "granted"}
+            return {"status": "not_granted", "error": "scope_not_in_token"}
+
+        error = (result.get("error") or "").lower()
+        suberror = (result.get("suberror") or "").lower()
+        description = (result.get("error_description") or "").lower()
+        if (error in ("consent_required", "invalid_scope") or suberror == "consent_required"
+                or "aadsts65001" in description):
+            return {"status": "not_granted", "error": error or suberror or "consent_required"}
+        if error in ("interaction_required", "login_required", "no_tokens_found"):
+            return {"status": "sign_in_required"}
+        return {"status": "check_failed", "error": error or "unknown"}
+
+    def sharepoint_rest_access_token(self) -> str:
+        """Return a silent SharePoint FullControl token from Hub's existing MSAL cache."""
+        host = (self.cfg.get("sharepoint_hostname") or "").strip().strip("/")
+        if not host:
+            raise GraphError("SharePoint host is not configured for this division.")
+        try:
+            self.sign_in(interactive=False)
+        except GraphError as exc:
+            raise GraphError("Sign in to NBG Hub before scanning SharePoint.") from exc
+
+        with self._sign_lock:
+            app = self._app
+            if app is None:
+                raise GraphError("Sign in to NBG Hub before scanning SharePoint.")
+            accounts = app.get_accounts()
+            account = next((a for a in accounts
+                            if (a.get("username") or "").lower() == self.account_upn.lower()),
+                           accounts[0] if accounts else None)
+            if account is None:
+                raise GraphError("Sign in to NBG Hub before scanning SharePoint.")
+            try:
+                result = app.acquire_token_silent_with_error(
+                    [f"https://{host}/AllSites.FullControl"], account=account)
+                self._save_cache()
+            except Exception as exc:
+                raise GraphError("Could not get a SharePoint token silently. Sign in again and retry.") from exc
+
+        token = (result or {}).get("access_token")
+        if token:
+            return token
+        error = ((result or {}).get("error") or "").lower()
+        description = ((result or {}).get("error_description") or "").lower()
+        if error in ("consent_required", "invalid_scope") or "aadsts65001" in description:
+            raise GraphError("Hub's SharePoint AllSites.FullControl permission is not available to this account.")
+        if error in ("interaction_required", "login_required", "no_tokens_found"):
+            raise GraphError("Sign in to NBG Hub again, then retry the SharePoint scan.")
+        raise GraphError("Hub could not get a SharePoint access token silently. Sign in again and retry.")
+
     def _acquire(self, interactive: bool) -> str:
         cache = self._cache()
         self._app = msal.PublicClientApplication(
@@ -1007,6 +1113,49 @@ class GraphClient:
             os.remove(_TOKEN_CACHE)
         except OSError:
             pass
+
+    def sharepoint_item_sharing_links(self, site_url: str, list_id: str, item_id: int) -> list[dict]:
+        """Read sensitive link details for one SharePoint list item; never creates or changes links."""
+        parsed = urlsplit(str(site_url or ""))
+        host = (parsed.hostname or "").lower()
+        if not host.endswith(".sharepoint.com") or not parsed.path:
+            raise GraphError("A valid SharePoint site URL is required to read sharing links.")
+        path = quote(unquote(parsed.path.rstrip("/")), safe="/")
+        cache_key = f"{host}{path}".lower()
+        site_id = self._spm_graph_site_ids.get(cache_key)
+        if not site_id:
+            site_id = self._get(f"{GRAPH}/sites/{host}:{path}")["id"]
+            self._spm_graph_site_ids[cache_key] = site_id
+
+        list_id = quote(str(list_id or "").strip("{}"), safe="")
+        item_id = int(item_id)
+        drive_item = self._get(
+            f"{GRAPH}/sites/{site_id}/lists/{list_id}/items/{item_id}/driveItem?$select=id,parentReference"
+        )
+        drive_id = (drive_item.get("parentReference") or {}).get("driveId")
+        drive_item_id = drive_item.get("id")
+        if not drive_id or not drive_item_id:
+            raise GraphError("Microsoft Graph did not return this file's drive reference.")
+
+        drive_id = quote(str(drive_id), safe="")
+        drive_item_id = quote(str(drive_item_id), safe="")
+        permissions = self._get_all(
+            f"{GRAPH}/drives/{drive_id}/items/{drive_item_id}/permissions"
+            "?$select=id,roles,link,expirationDateTime,grantedToV2,grantedToIdentitiesV2"
+        )
+        links = []
+        for permission in permissions:
+            link = permission.get("link")
+            if not isinstance(link, dict):
+                continue
+            links.append({
+                "type": str(link.get("type") or ""),
+                "scope": str(link.get("scope") or ""),
+                "roles": [str(role) for role in permission.get("roles") or []],
+                "web_url": str(link.get("webUrl") or ""),
+                "expiration": str(permission.get("expirationDateTime") or ""),
+            })
+        return links
 
     # ---- low-level HTTP ---------------------------------------------------
     def _headers(self) -> dict:
@@ -1168,6 +1317,7 @@ class GraphClient:
             return None
         d = hits[0]
         return {
+            "intune_id": d.get("id") or "",
             "serial": d.get("serialNumber", ""),
             "manufacturer": d.get("manufacturer", ""),
             "model": d.get("model", ""),
@@ -1184,6 +1334,23 @@ class GraphClient:
             "aad_device_id": d.get("azureADDeviceId") or "",
             "compliance": d.get("complianceState") or "",
         }
+
+    def intune_last_reboot(self, serial: str) -> str:
+        """Return latest reported Intune startup-history timestamp for a serial.
+
+        Startup history is analytics data and can be absent even when the device is
+        managed. This deliberately does not substitute lastSyncDateTime, which is
+        an Intune check-in timestamp rather than a reboot time.
+        """
+        device = self.lookup_intune(serial)
+        device_id = (device or {}).get("intune_id")
+        if not device_id:
+            return ""
+        device_id = str(device_id).replace("'", "''")
+        url = (f"{GRAPH}/deviceManagement/userExperienceAnalyticsDeviceStartupHistory"
+               f"?$filter=deviceId eq '{device_id}'&$select=deviceId,startTime")
+        records = self._get(url).get("value", [])
+        return max((str(row.get("startTime") or "") for row in records), default="")
 
     def intune_lastsync_map(self) -> dict:
         """One bulk call: {SERIAL(upper): lastSyncDateTime} for every managed device.
@@ -1336,6 +1503,27 @@ class GraphClient:
                         names.append(nm)
                 out[uid] = sorted(set(names), key=str.lower)
         return out
+
+    def entra_group_members(self, group_id: str) -> list[dict]:
+        """Return transitive user members of an Entra group using the current Graph token.
+
+        Requires Directory.Read.All, already requested by Hub as an optional scope.
+        Returns an empty list when the token lacks that grant; Graph errors remain
+        visible to the caller so an incomplete audit is never presented as complete.
+        """
+        if not self._has_dir_read:
+            raise GraphError("The current Hub sign-in token does not include Directory.Read.All.")
+        from urllib.parse import quote
+        gid = quote(str(group_id or "").strip(), safe="")
+        if not gid:
+            return []
+        url = f"{GRAPH}/groups/{gid}/transitiveMembers/microsoft.graph.user?$select=id,displayName,mail,userPrincipalName,userType&$top=999"
+        members = []
+        while url:
+            response = self._req("GET", url).json()
+            members.extend(response.get("value") or [])
+            url = response.get("@odata.nextLink") or ""
+        return members
 
     def mfa_registration_map(self, ttl: float = 1800.0) -> dict:
         """{upn_lower: {"registered": bool, "capable": bool}} for every user in the

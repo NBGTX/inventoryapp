@@ -1,0 +1,38 @@
+<Window x:Class="SpPerm.App.PickPeopleDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Add people or groups" Width="560" Height="520" MinWidth="460" MinHeight="420"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        FontFamily="Arial" FontSize="12" Background="{StaticResource WindowBrush}">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Text="Add people or groups" FontSize="17" Foreground="{StaticResource DarkBrush}"/>
+        <TextBlock x:Name="TargetText" Grid.Row="1" Margin="0,4,0,12" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="SearchBox" KeyDown="OnSearchKey" ToolTip="Name or email address"/>
+            <Button Grid.Column="1" Content="Search" Margin="8,0,0,0" Click="OnSearch"/>
+        </Grid>
+        <ListBox x:Name="Results" Grid.Row="3" Margin="0,10,0,0" DisplayMemberPath="Display" BorderBrush="{StaticResource BorderBrushSoft}"/>
+        <TextBlock x:Name="MessageText" Grid.Row="4" Margin="0,8,0,0" Foreground="#9A2A22" TextWrapping="Wrap" Visibility="Collapsed"/>
+        <StackPanel Grid.Row="5" Margin="0,12,0,0" Orientation="Horizontal">
+            <TextBlock Text="Permission level" VerticalAlignment="Center" Margin="0,0,10,0"/>
+            <ComboBox x:Name="RoleBox" DisplayMemberPath="Name" MinWidth="180"/>
+        </StackPanel>
+        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="Cancel" IsCancel="True" Margin="0,0,8,0" MinWidth="90"/>
+            <Button Content="Add to changes" Style="{StaticResource PrimaryButton}" Click="OnAdd" MinWidth="130"/>
+        </StackPanel>
+    </Grid>
+</Window>

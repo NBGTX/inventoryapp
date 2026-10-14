@@ -179,7 +179,44 @@ const SyncLine = {
 /* ---- the page ------------------------------------------------------------------------------- */
 const Settings = {
   su: false, role: "user", tab: "general", dirty: false, own: null, prefs: null,
+  THEME_KEY: "nbg_hub_theme",
+  THEMES: [
+    { id: "nbg-green", name: "NBG Green", note: "Current Hub theme" },
+    { id: "dark", name: "Dark", note: "Charcoal with blue accents" },
+    { id: "light", name: "Light", note: "Bright neutral surfaces" },
+    { id: "high-contrast", name: "High Contrast", note: "Black, white, and bold focus" },
+    { id: "catppuccin-mocha", name: "Catppuccin Mocha", note: "Soft plum and lavender" },
+    { id: "dracula", name: "Dracula", note: "Purple, cyan, and pink" },
+    { id: "github-dark", name: "GitHub Dark", note: "Deep charcoal with green and blue" },
+  ],
   RANK: { user: 1, admin: 2, super: 3 }, allowed: [],
+  currentTheme() {
+    try {
+      const stored = localStorage.getItem(this.THEME_KEY);
+      return this.THEMES.some(theme => theme.id === stored) ? stored : "nbg-green";
+    } catch (e) { return "nbg-green"; }
+  },
+  themeCard() {
+    const selected = this.currentTheme();
+    const options = this.THEMES.map(theme => `<label class="theme-option${theme.id === selected ? " selected" : ""}">
+      <input type="radio" name="hubTheme" value="${theme.id}"${theme.id === selected ? " checked" : ""} onchange="Settings.setTheme(this.value)">
+      <span class="theme-swatch ${theme.id}" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="theme-option-copy"><b>${theme.name}</b><small>${theme.note}</small></span></label>`).join("");
+    return SetUI.card("Appearance", "", `<p class="muted theme-caption">Choose colors for your Hub on this computer. Your choice does not change other users’ screens.</p><div class="theme-options" role="radiogroup" aria-label="Hub color theme">${options}</div>`);
+  },
+  setTheme(theme) {
+    if (!this.THEMES.some(option => option.id === theme)) return;
+    try {
+      if (theme === "nbg-green") localStorage.removeItem(this.THEME_KEY);
+      else localStorage.setItem(this.THEME_KEY, theme);
+    } catch (e) {}
+    if (theme === "nbg-green") delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = theme;
+    document.querySelectorAll(".theme-option").forEach(option => {
+      const input = option.querySelector("input");
+      option.classList.toggle("selected", !!input && input.value === theme);
+    });
+  },
   async refreshAccess() {
     const [r, ro] = await Promise.all([Backend.call("get_master_settings"), Backend.call("get_my_role")]);
     this.su = !!(r && r.ok && r.super_admin);
@@ -255,6 +292,7 @@ const Settings = {
       SetUI.card("About this division", this.su ? "Identity is changed under <b>Platform &rarr; Divisions</b>." : "Identity (name, Entra company, Intune category) is managed by a super admin.",
         `<div class="set-facts">${fact("Name", esc(o.name))}${fact("Id", esc(o.id))}${fact("Entra company", esc(o.company_name))}${fact("Intune category", esc(o.intune_category))}</div>
          <div style="margin-top:12px"><span class="muted" style="font-size:12px">Sites</span><div class="dp-chips" style="margin-top:6px">${sites}</div></div>`) +
+      this.themeCard() +
       (this.my.divisions.length > 1 ? SetUI.card("My default division", "The division NBG Hub opens in each time you start it. Only you see this choice.",
         `<div class="field" style="max-width:420px"><label>Open in</label>
            ${SetUI.select("mdSel", this.my.divisions.map(d => ({ id: d.id, label: d.name })), this.my.default_division, "Settings.markDirty('mdSave')", "The last division I used")}</div>`,

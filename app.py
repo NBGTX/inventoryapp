@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import threading
+import time
 import traceback
 from datetime import date, datetime
 
@@ -89,6 +90,10 @@ class Api:
         self._site_view = False  # True while the main window is showing an NBT site
         self._busy = 0           # long write operations in flight (a division switch must wait)
         self._busy_lock = threading.Lock()
+        self._spm_scans = {}
+        self._spm_scans_lock = threading.Lock()
+        self._spm_inheritance_plans = {}
+        self._spm_inheritance_lock = threading.Lock()
 
     @contextlib.contextmanager
     def _work(self):
@@ -822,7 +827,8 @@ class Api:
                     pass
             self._trace(f"get_divisions: account={gc.account_upn!r} role={gc.division_role()} visible={[d['id'] for d in vis]} active={gc.division['id']}")
             if not vis:
-                return {"ok": False, "error": "No division is available to your account. Ask a super admin for access."}
+                who = f" ({gc.account_upn})" if gc.account_upn else ""
+                return {"ok": False, "error": f"No division is available to this account{who}. Ask a super admin to check this exact sign-in in the division access list."}
             if gc.division["id"] not in [d["id"] for d in vis]:
                 gc.set_division(vis[0]["id"])      # saved choice no longer allowed
                 self._hub = None
@@ -943,6 +949,247 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    def sharepoint_permission_check(self) -> dict:
+        """Check delegated SharePoint FullControl silently; never launch a consent prompt."""
+        try:
+            return {"ok": True, **self._client().sharepoint_permission_status()}
+        except Exception as e:
+            return self._fail(e)
+
+    def sharepoint_sites_preferences_get(self) -> dict:
+        """Read this user's saved site favorites, recents, and browse cache."""
+        import json
+        import paths
+        path = os.path.join(paths.user_dir(), "sharepoint_sites.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                value = json.load(f)
+            if isinstance(value, dict):
+                return {"ok": True, **value}
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            return {"ok": False, "error": f"Could not read saved SharePoint sites: {e}"}
+        return {"ok": True, "favorites": [], "recents": [], "site_index": None}
+
+    def sharepoint_sites_preferences_save(self, data: dict) -> dict:
+        """Persist site shortcuts outside WebView storage, which runs in private mode."""
+        import json
+        import paths
+        from urllib.parse import urlsplit
+
+        def clean_sites(rows, limit):
+            clean = []
+            for item in rows if isinstance(rows, list) else []:
+                if not isinstance(item, dict):
+                    continue
+                url = str(item.get("url") or "").strip()[:1200]
+                title = str(item.get("title") or "").strip()[:200]
+                try:
+                    host = (urlsplit(url).hostname or "").lower()
+                except ValueError:
+                    continue
+                if urlsplit(url).scheme != "https" or not host.endswith(".sharepoint.com") or not title:
+                    continue
+                clean.append({"title": title, "url": url, "logo": str(item.get("logo") or "")[:2000]})
+                if len(clean) >= limit:
+                    break
+            return clean
+
+        try:
+            value = data if isinstance(data, dict) else {}
+            site_index = value.get("site_index") if isinstance(value.get("site_index"), dict) else None
+            cache = None
+            if site_index:
+                try:
+                    next_start = site_index.get("next_start")
+                    next_start = int(next_start) if next_start is not None else None
+                    total = max(0, min(1000000, int(site_index.get("total") or 0)))
+                except (TypeError, ValueError):
+                    next_start, total = None, 0
+                cache = {"sites": clean_sites(site_index.get("sites"), 500), "next_start": next_start, "total": total}
+            saved = {
+                "favorites": clean_sites(value.get("favorites"), 200),
+                "recents": clean_sites(value.get("recents"), 8),
+                "site_index": cache,
+            }
+            path = os.path.join(paths.user_dir(), "sharepoint_sites.json")
+            temp_path = path + ".tmp"
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(saved, f, ensure_ascii=False)
+            os.replace(temp_path, path)
+            return {"ok": True}
+        except Exception as e:
+            return self._fail(e)
+
+    def sharepoint_permissions_default_site(self) -> dict:
+        """Return the active division's configured SharePoint site URL for the page default."""
+        try:
+            gc = self._client()
+            division = gc.division or {}
+            host = str(division.get("sharepoint_hostname") or gc.cfg.get("sharepoint_hostname") or "").strip().strip("/")
+            path = str(division.get("site_path") or gc.cfg.get("site_path") or "").strip()
+            if not host:
+                return {"ok": False, "error": "SharePoint host is not configured for this division."}
+            return {"ok": True, "site_url": f"https://{host}/{path.lstrip('/')}" if path else f"https://{host}"}
+        except Exception as e:
+            return self._fail(e)
+
+    def sharepoint_permissions_search_sites(self, query: str = "", start: int = 0) -> dict:
+        """Search SharePoint's index for site collections under /sites on the active host."""
+        try:
+            gc = self._client()
+            host = str(gc.cfg.get("sharepoint_hostname") or "")
+            token = gc.sharepoint_rest_access_token()
+            import sharepoint_permissions
+            return {"ok": True, **sharepoint_permissions.search_sites(host, token, query, start)}
+        except Exception as e:
+            return self._fail(e)
+
+    def sharepoint_permissions_browse_content(self, site_url: str, folder_path: str = "", list_id: str = "") -> dict:
+        """Browse document libraries and immediate child folders; does not read permissions."""
+        try:
+            gc = self._client()
+            import sharepoint_permissions
+            return {"ok": True, **sharepoint_permissions.browse_content(
+                site_url, str(gc.cfg.get("sharepoint_hostname") or ""),
+                gc.sharepoint_rest_access_token(), folder_path, list_id)}
+        except Exception as e:
+            return self._fail(e)
+
+    def sharepoint_permissions_prepare_inheritance(self, site_url: str, list_id: str, parent_path: str) -> dict:
+        """Read all unique descendants and stage a reviewable inheritance plan."""
+        import time
+        import uuid
+        try:
+            with self._work():
+                gc = self._client()
+                import sharepoint_permissions
+                plan = sharepoint_permissions.prepare_inheritance_reset(
+                    site_url, str(gc.cfg.get("sharepoint_hostname") or ""),
+                    gc.sharepoint_rest_access_token(), list_id, parent_path)
+            plan_id = uuid.uuid4().hex
+            with self._spm_inheritance_lock:
+                now = time.time()
+                self._spm_inheritance_plans = {key: value for key, value in self._spm_inheritance_plans.items()
+                                               if now - value["created"] < 1800}
+                self._spm_inheritance_plans[plan_id] = {"created": now, "plan": plan}
+            preview = [{"path": target["path"], "type": target["type"],
+                        "grants": len(target["assignments"]), "sharing_links": target["sharing_links"],
+                        "access": [f"{principal.get('title') or principal.get('login')}: {principal.get('level') or 'role'}"
+                                   for principal in target["assignments"]]}
+                       for target in plan["targets"]]
+            return {"ok": True, "plan_id": plan_id, "site_url": plan["site_url"],
+                    "library_title": plan["library_title"], "parent_path": plan["parent_path"],
+                    "target_count": len(preview), "sharing_link_targets": plan["sharing_link_targets"],
+                    "principal_grants": plan["principal_grants"], "targets": preview}
+        except Exception as e:
+            return self._fail(e)
+
+    def sharepoint_permissions_apply_inheritance(self, plan_id: str, confirmed: bool = False) -> dict:
+        """Apply a previously reviewed plan only after explicit user confirmation."""
+        if confirmed is not True:
+            return {"ok": False, "error": "Confirm the reviewed inheritance plan before applying it."}
+        try:
+            with self._spm_inheritance_lock:
+                record = self._spm_inheritance_plans.pop(str(plan_id or ""), None)
+            if not record or time.time() - record["created"] >= 1800:
+                return {"ok": False, "error": "This preview expired. Build a fresh inheritance preview."}
+            gc = self._client()
+            import sharepoint_permissions
+            with self._work():
+                result = sharepoint_permissions.apply_inheritance_reset(
+                    record["plan"]["site_url"], str(gc.cfg.get("sharepoint_hostname") or ""),
+                    gc.sharepoint_rest_access_token(), record["plan"])
+            return {"ok": True, **result}
+        except Exception as e:
+            return self._fail(e)
+
+    def sharepoint_permissions_scan(self, site_url: str, scan_id: str = "", scopes=None) -> dict:
+        """Read-only scan for unique permissions on a site or selected folder trees."""
+        import uuid
+        scan_id = str(scan_id or uuid.uuid4().hex)
+        cancel_event = threading.Event()
+        state = {"scan_id": scan_id, "phase": "Starting scan", "done": False,
+                 "cancel_requested": False, "libraries_done": 0, "libraries_total": 0,
+                 "items_scanned": 0, "permissions_done": 0, "permissions_total": 0}
+        with self._spm_scans_lock:
+            for old_id in list(self._spm_scans):
+                if len(self._spm_scans) < 20:
+                    break
+                old = self._spm_scans[old_id]
+                if old["state"].get("done"):
+                    self._spm_scans.pop(old_id, None)
+            self._spm_scans[scan_id] = {"state": state, "cancel": cancel_event}
+
+        def update_progress(update):
+            with self._spm_scans_lock:
+                record = self._spm_scans.get(scan_id)
+                if record:
+                    state = record["state"]
+                    updates = dict(update)
+                    recent_items = updates.pop("recent_items", None)
+                    state.update(updates)
+                    if recent_items:
+                        rows = state.setdefault("recent_items", [])
+                        rows.extend(recent_items)
+                        # Progress polling needs a small live preview, not a second copy
+                        # of every library item. Keep only newest paths from recent pages.
+                        by_path = {}
+                        for row in rows:
+                            by_path[(row.get("library", "") + "|" + row.get("display_path", "")).casefold()] = row
+                        state["recent_items"] = list(by_path.values())[-24:]
+
+        import sharepoint_permissions
+        try:
+            gc = self._client()
+            host = str(gc.cfg.get("sharepoint_hostname") or "")
+            token = gc.sharepoint_rest_access_token()
+            result = sharepoint_permissions.scan(site_url, host, token,
+                                                 progress=update_progress, cancel_event=cancel_event,
+                                                 scopes=scopes,
+                                                 graph_group_members=gc.entra_group_members,
+                                                 graph_sharing_links=gc.sharepoint_item_sharing_links)
+            return {"ok": True, **result}
+        except sharepoint_permissions.SharePointScanCancelled:
+            return {"ok": False, "cancelled": True, "error": "SharePoint scan cancelled."}
+        except Exception as e:
+            return self._fail(e)
+        finally:
+            with self._spm_scans_lock:
+                record = self._spm_scans.get(scan_id)
+                if record:
+                    record["state"]["done"] = True
+                    record["state"]["cancelled"] = cancel_event.is_set()
+
+    def sharepoint_permissions_export_excel(self, scan_data: dict) -> dict:
+        """Create an offline XLSX report from the current SharePoint scan."""
+        try:
+            import sharepoint_permissions
+            if not isinstance(scan_data, dict) or not isinstance(scan_data.get("entries"), list):
+                raise ValueError("Scan data is missing or invalid. Run the scan again.")
+            return sharepoint_permissions.export_xlsx(scan_data)
+        except Exception as e:
+            return self._fail(e)
+
+    def sharepoint_permissions_scan_status(self, scan_id: str) -> dict:
+        with self._spm_scans_lock:
+            record = self._spm_scans.get(str(scan_id or ""))
+            if not record:
+                return {"ok": False, "error": "SharePoint scan status expired."}
+            return {"ok": True, "progress": dict(record["state"])}
+
+    def sharepoint_permissions_cancel_scan(self, scan_id: str) -> dict:
+        with self._spm_scans_lock:
+            record = self._spm_scans.get(str(scan_id or ""))
+            if not record:
+                return {"ok": False, "error": "SharePoint scan is no longer running."}
+            if record["state"].get("done"):
+                return {"ok": False, "error": "SharePoint scan has already finished."}
+            record["state"]["cancel_requested"] = True
+            record["cancel"].set()
+            return {"ok": True}
+
     def sign_out(self) -> dict:
         try:
             self._client().sign_out()
@@ -973,6 +1220,14 @@ class Api:
             return {"ok": True, "new_stock": in_stock, "in_use": in_use, "boneyard": boneyard,
                     "counts": {"new_stock": len(in_stock), "in_use": len(in_use),
                                "boneyard": len(boneyard), "total": len(in_stock) + len(in_use)}}
+        except Exception as e:
+            return self._fail(e)
+
+    def get_device_last_reboot(self, serial: str) -> dict:
+        """Read latest Intune-reported boot time when a device row is expanded."""
+        try:
+            value = self._client().intune_last_reboot(serial or "")
+            return {"ok": True, "last_reboot": value}
         except Exception as e:
             return self._fail(e)
 
@@ -3282,7 +3537,7 @@ def _long_op(fn):
     return wrapper
 
 
-for _n in ("run_sync", "enrich_inventory", "master_sync", "populate_mfa", "boneyard_sweep", "sync_all_divisions", "software_refresh", "mfa_people_refresh"):
+for _n in ("run_sync", "enrich_inventory", "master_sync", "populate_mfa", "boneyard_sweep", "sync_all_divisions", "software_refresh", "mfa_people_refresh", "sharepoint_permissions_scan", "sharepoint_permissions_search_sites"):
     setattr(Api, _n, _long_op(getattr(Api, _n)))
 
 

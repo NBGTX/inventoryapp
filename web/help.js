@@ -52,6 +52,28 @@ const Help = {
     },
 
     /* ------------------------------------------------------------------ Endpoint Provisioning */
+    "sharepoint-permissions": {
+      title: "How to scan SharePoint permissions",
+      html: `
+        <p>Choose a SharePoint site, browse its document libraries, select folders, then scan. Scans read permission assignments and compare each secured item with its parent.</p>
+        <ul>
+          <li>Use a site URL such as <b>https://nucor.sharepoint.com/sites/YourSite</b>. A page or folder URL is reduced to its site address.</li>
+          <li>This page opens on site browsing. Indexed sites under <b>/sites</b> appear as A–Z tiles. Pick a tile to open its scan page. Star tiles to save favorites; selected and scanned sites appear in Recent sites. Lists stay on this computer. Filter as you type. Site logos appear when SharePoint includes them in search results; otherwise, tiles use initials. Results may miss new or unindexed sites and depend on your access.</li>
+          <li>On the scan page, expand libraries and folders, then select one or more folders and choose <b>Scan selected folders</b>. The scan includes nested folders and files. <b>Scan whole site</b> remains available when you need a complete audit. Folder browsing lists names only; it does not scan permissions.</li>
+          <li>Choose <b>Open in browser</b> to open the selected site in your default browser, or <b>Change site</b> to return to site browsing. You can also enter a site address manually from the browse page.</li>
+          <li><b>App consent and site access are separate.</b> Hub's approved AllSites.FullControl permission lets it request SharePoint access. Your signed-in account also needs <b>Manage Permissions</b> on the target site to read permission assignments. If Hub can list files but reports permission reads denied, ask a site owner to add your Hub account to the site's <b>Owners</b> group with <b>Full Control</b>, or ask an admin to make it a Site Collection Administrator. Then scan again.</li>
+            <li>Hub also expands Entra security group membership using its existing delegated <b>Directory.Read.All</b> Graph scope when that scope is present in the current sign-in token. If expansion is denied, sign out and back in to refresh the token; ask the app administrator to verify existing consent before requesting any new permission.</li>
+          <li><b>Overview</b> shows an explainable triage index, scan coverage, and high-signal findings. The index is not a compliance verdict. Denied reads lower scan coverage and make comparisons incomplete.</li>
+          <li><b>People &amp; access</b> maps direct grants and expands native SharePoint site groups and Entra security groups when the current sign-in token allows those reads. <b>Access matrix</b> shows effective access for site, libraries, folders, and files. “Unique” marks a scope with its own grants; “Inherits” uses nearest secured parent. Filter by library, person, or path; denied reads appear as unknown.</li>
+          <li><b>Content</b> lists unique-permission scopes. Denied reads, external grants, sharing links, and differences appear first. Select a scope to compare grants with its parent, inspect last-modified details and sharing-link type, audience, and expiry, or stage a recommendation. Select <b>Reveal URL</b> or <b>Copy URL</b> to access a file or folder link; URLs stay hidden until requested and are excluded from exports.</li>
+          <li><b>Changes</b> compares scans saved on this computer for the same site. Browser storage keeps up to four scan summaries; it does not sync between Hub users.</li>
+          <li><b>Ask this scan</b> answers from the current scan data. Try external access, sharing links, changes, or a person, group, or path name.</li>
+          <li>Saved searches, review plans, and decisions stay on this computer. Download or import a JSON review plan to share it with an owner. Approval records do not apply permissions.</li>
+          <li>Large scans can take several minutes. Progress shows libraries and items read; select <b>Cancel scan</b> to stop. Scans do not change SharePoint access.</li>
+          <li><b>Export Excel</b> downloads a workbook with Summary, Unique permissions, Access detail, and By person sheets. <b>Export CSV</b> downloads the filtered entries plus scan summary and warnings. Sharing-link URLs are excluded from both. <b>Share finding</b> copies a compact finding for email or Teams.</li>
+          <li>To propagate a folder’s permissions, first set the intended access on the parent in SharePoint. Select that parent in Hub and choose <b>Preview permission propagation</b>. Review every unique descendant grant and sharing link; applying resets those descendants to inherit from their parent. Hub asks for confirmation before changing access. Sharing links and unique grants on affected items are removed.</li>
+        </ul>`
+    },
     "hub-home": {
       title: "How to use Endpoint Provisioning",
       html: `
@@ -293,7 +315,7 @@ const Help = {
     /* ------------------------------------------------------------------ BG Tools */
     bgt: {
       title: "About BG Tools",
-      html: `<p>BG Tools are small admin utilities. The list on the left is grouped: <b>Accounts &amp; access</b> (<b>Permissions Finder</b>: every group a person is in; <b>Missing Groups</b>: what a person or department lacks compared with peers; <b>Copy Permissions</b>: compare two people's AD groups and copy groups across) and <b>Data fixes</b> (<b>Timesheet Fix</b>: unlock a timesheet week; <b>Coil Cards</b>: delete a coil card with a backup, or restore one). Click a tool and it opens on the right. The page remembers your last tool, and keeps what you typed when you switch to another page and back. Each tool has its own help box.</p>`
+      html: `<p>BG Tools are small admin utilities. The list on the left is grouped: <b>Accounts &amp; access</b> (<b>Permissions Finder</b>: every group a person is in; <b>Missing Groups</b>: what a person or department lacks compared with peers; <b>Copy Permissions</b>: compare two people's AD groups and copy groups across) and <b>Data fixes</b> (<b>Timesheet Fix</b>: unlock a timesheet week; <b>Coil Cards</b>: delete a coil card with a backup, or restore one). The <b>Check SharePoint permission</b> button silently checks whether the signed-in account can obtain Hub's SharePoint <code>AllSites.FullControl</code> scope. It does not open a consent prompt or change site permissions. The page remembers your last tool, and keeps what you typed when you switch to another page and back. Each tool has its own help box.</p>`
     },
     "bgt-timesheet": {
       title: "How Timesheet Fix works",
@@ -362,6 +384,7 @@ const Help = {
       html: `
         <ul>
           <li><b>About this division</b> is read-only: name, id, Entra company, Intune device category and sites. A super admin changes these under Platform → Divisions.</li>
+          <li><b>Appearance</b> changes colors on this computer only. NBG Green stays the default; all theme choices apply immediately and are saved for your next session.</li>
           <li><b>My default division</b> (only if you can see more than one division): the division NBG Hub opens in at every start. Only you see this choice. Leave it on "The last division I used" to keep the old behaviour.</li>
           <li><b>Time zone</b>: every date and time in the app for this division is shown in this zone. "Use the default" uses the platform default, or each PC's own zone if there is none. The line under the box shows what the time is right now in the zone you pick.</li>
           <li><b>Inventory options</b> (division admins): <i>Devices to sync from Intune</i> chooses between Windows computers only (the default) and every device type. <i>Hot spare departments</i> are the department groups on the Hot spares window; "Other" is always added at the end.</li>

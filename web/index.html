@@ -6,6 +6,12 @@
 <title>NBG Hub</title>
 <link rel="icon" type="image/svg+xml" href="hub-mark.svg">
 <link rel="stylesheet" href="styles.css">
+<script>
+try {
+  const theme = localStorage.getItem("nbg_hub_theme");
+  if (["dark", "light", "high-contrast", "catppuccin-mocha", "dracula", "github-dark"].includes(theme)) document.documentElement.dataset.theme = theme;
+} catch (e) {}
+</script>
 </head>
 <body>
 <div class="shell">
@@ -37,6 +43,9 @@
       <button class="navitem" data-view="bgtools" onclick="Nav.go('bgtools')" title="BG Tools — database & admin utilities">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4l-6 6a1.4 1.4 0 0 0 2 2l6-6a4 4 0 0 0 5.4-5.4l-2.3 2.3-2-2 2.3-2.3z"/></svg>
         BG Tools</button>
+      <button class="navitem" data-view="sharepointperms" onclick="Nav.go('sharepointperms')" title="Review unique permissions on SharePoint sites">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11z"/><path d="M9 12l2 2 4-4"/></svg>
+        SharePoint Permissions</button>
       <button class="navitem" data-view="sites" onclick="Nav.go('sites')">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>
         NBT Sites</button>
@@ -318,9 +327,107 @@
     <section class="appview" id="appview-bgtools">
       <div class="pagehead">
         <div><h2>BG Tools</h2><p>Admin utilities for accounts, groups and data fixes.</p></div>
+        <div class="actions">
+          <button class="ghost" id="spPermCheckBtn" onclick="BGTools.checkSharePointPermission(this)" title="Silently check whether Hub can obtain SharePoint permission-management access">🔎 Check SharePoint permission</button>
+          <span class="sub-note" id="spPermCheckResult" aria-live="polite"></span>
+        </div>
       </div>
       <div class="help-slot" data-help="bgt"></div>
       <div id="bgtHost"><div class="empty">Loading…</div></div>
+    </section>
+
+    <!-- ---------- SHAREPOINT PERMISSIONS ---------- -->
+    <section class="appview" id="appview-sharepointperms">
+      <div class="pagehead">
+        <div><h2>SharePoint Permissions</h2><p>Find folders and files with permissions that differ from their parent.</p></div>
+      </div>
+      <div class="help-slot" data-help="sharepoint-permissions"></div>
+      <div class="panel spm-browser-panel" id="spmBrowserPage">
+        <p class="muted">Browse or filter SharePoint sites. Pick a tile to open its scan page.</p>
+        <div class="spm-site-search-form"><input id="spmSiteSearchQuery" type="search" placeholder="Filter sites by name" oninput="SharePointPermissions.scheduleSiteFilter()" onkeydown="if(event.key==='Enter') SharePointPermissions.searchSites()"><button class="primary" id="spmSiteSearchGo" onclick="SharePointPermissions.searchSites()">Filter</button><button class="ghost" id="spmSiteSearchBrowse" onclick="SharePointPermissions.browseSites()">Browse all</button></div>
+        <details class="spm-manual-site"><summary>Enter site address manually</summary><div><input id="spmManualSite" type="url" placeholder="https://nucor.sharepoint.com/sites/YourSite" autocomplete="url" onkeydown="if(event.key==='Enter') SharePointPermissions.useManualSite()"><button class="ghost" onclick="SharePointPermissions.useManualSite()">Use site</button></div></details>
+        <div id="spmSiteShortcuts"></div>
+        <div class="spm-site-search-status" id="spmSiteSearchStatus" role="status" aria-live="polite">Loading indexed sites…</div>
+        <div id="spmSiteSearchResults" class="spm-site-search-results"></div>
+        <button class="ghost hidden" id="spmSiteSearchMore" onclick="SharePointPermissions.searchSites(true)">Show next 50 sites</button>
+      </div>
+      <div id="spmScanPage" class="hidden">
+        <div class="panel spm-connect-panel">
+          <div class="tools spm-connect">
+            <label for="spmSite">SharePoint site</label>
+            <input id="spmSite" type="url" readonly placeholder="Choose a SharePoint site" autocomplete="url" onkeydown="if(event.key==='Enter') SharePointPermissions.scan()">
+            <button class="ghost" id="spmOpenSite" onclick="SharePointPermissions.openSiteInBrowser()">Open in browser</button>
+            <button class="primary" id="spmConnect" onclick="SharePointPermissions.scan(this)" disabled>Scan selected folders</button>
+            <button class="ghost" id="spmScanWholeSite" onclick="SharePointPermissions.scan(this)">Scan whole site</button>
+            <button class="ghost" onclick="SharePointPermissions.showBrowserPage()">Change site</button>
+          </div>
+          <div class="spm-safety">Scans are read-only. To fix a folder tree, first set the desired permissions on its parent in SharePoint, then preview and apply inheritance to descendants.</div>
+          <div class="spm-folder-browser">
+            <div class="spm-section-head spm-folder-browser-head"><div><h3>Browse folders</h3><p class="muted">Choose one or more folders. Scanning includes all nested folders and files.</p></div><div class="spm-folder-browser-controls"><span id="spmFolderSelectionCount" class="muted">Loading libraries…</span><button type="button" class="ghost" id="spmFolderBrowserToggle" aria-expanded="true" aria-controls="spmFolderBrowserBody" onclick="SharePointPermissions.toggleFolderBrowser()">Collapse</button></div></div>
+            <div id="spmFolderBrowserBody">
+              <div id="spmFolderBrowserStatus" class="spm-site-search-status" role="status" aria-live="polite">Loading document libraries…</div>
+              <div id="spmFolderBrowserTree" class="spm-folder-tree"></div>
+              <div class="tools spm-folder-actions"><button class="primary" id="spmPropagateButton" onclick="SharePointPermissions.prepareInheritance()" disabled>Preview permission propagation</button><span class="muted">Select exactly one parent folder. Descendant unique grants and sharing links will be shown before any change.</span></div>
+            </div>
+          </div>
+          <div class="spm-status-wrap"><div id="spmStatus" class="spm-status" role="status" aria-live="polite">Choose a site to scan.</div><button id="spmFixOpen" class="rowbtn hidden" onclick="SharePointPermissions.showFixTutorial()">Fix access</button></div>
+          <div id="spmScanProgress" class="spm-scan-progress hidden" aria-live="polite">
+            <div><span id="spmProgressText">Preparing scan…</span><button id="spmCancelScan" class="rowbtn" onclick="SharePointPermissions.cancelScan()">Cancel scan</button></div>
+            <progress id="spmProgressBar" max="100" value="0"></progress>
+          </div>
+        </div>
+        <div id="spmLiveResults" class="panel spm-live-results hidden" aria-live="polite">
+          <div class="spm-section-head"><div><h3>Live scan preview</h3><p id="spmLiveNotice" class="muted">Partial paths only. Permission findings are not final until scan completes.</p></div><span id="spmLiveCount" class="spm-live-count"></span></div>
+          <div id="spmLiveRows" class="spm-live-rows"></div>
+        </div>
+        <div id="spmResults" class="hidden">
+          <div class="stats" id="spmStats"></div>
+          <div class="spm-tabs" role="tablist" aria-label="Permission audit views">
+            <button class="spm-tab on" id="spmTabButton-overview" role="tab" aria-selected="true" onclick="SharePointPermissions.showAuditTab('overview')">Overview</button>
+            <button class="spm-tab" id="spmTabButton-people" role="tab" aria-selected="false" onclick="SharePointPermissions.showAuditTab('people')">People &amp; access</button>
+            <button class="spm-tab" id="spmTabButton-content" role="tab" aria-selected="false" onclick="SharePointPermissions.showAuditTab('content')">Content</button>
+            <button class="spm-tab" id="spmTabButton-changes" role="tab" aria-selected="false" onclick="SharePointPermissions.showAuditTab('changes')">Changes</button>
+          <span class="spm-tab-spacer"></span>
+          </div>
+          <div id="spmTab-overview" class="spm-tab-panel">
+            <div id="spmOverview"></div>
+            <div class="spm-ask panel">
+              <div><h3>Ask this scan</h3><p class="muted">Answers use current scan results only.</p></div>
+              <div class="spm-ask-form"><input id="spmAskInput" type="search" placeholder="Who outside Nucor can edit files?" onkeydown="if(event.key==='Enter') SharePointPermissions.askScan()"><button class="primary" onclick="SharePointPermissions.askScan()">Ask</button></div>
+              <div class="spm-quick-asks"><button class="rowbtn" onclick="SharePointPermissions.askPreset('external')">External access</button><button class="rowbtn" onclick="SharePointPermissions.askPreset('broad')">Broad audiences</button><button class="rowbtn" onclick="SharePointPermissions.askPreset('links')">Sharing links</button><button class="rowbtn" onclick="SharePointPermissions.askPreset('changes')">New changes</button></div>
+              <div id="spmAskAnswer" class="spm-ask-answer" aria-live="polite"></div>
+            </div>
+            <div class="spm-review panel"><div class="spm-section-head"><div><h3>Review plan</h3><p class="muted">Stage recommendations, record owner decisions, and share plan file.</p></div><div><button class="rowbtn" onclick="SharePointPermissions.importReviewPlan()">Import plan</button><button class="rowbtn" onclick="SharePointPermissions.exportReviewPlan()">Download plan</button></div></div><div id="spmReviewQueue"></div></div>
+          </div>
+          <div id="spmTab-people" class="spm-tab-panel hidden">
+            <div class="panel"><div class="spm-section-head"><div><h3>People and groups</h3><p class="muted">Shows direct grants, native SharePoint group members, and Entra security group members when Hub’s current Graph token allows the read.</p></div><div class="spm-people-controls"><div class="spm-view-switch" role="group" aria-label="People and access view"><button id="spmPeopleViewButton" class="on" aria-pressed="true" onclick="SharePointPermissions.setPeopleMode('people')">People list</button><button id="spmMatrixViewButton" aria-pressed="false" onclick="SharePointPermissions.setPeopleMode('matrix')">Access matrix</button></div><input id="spmPeopleSearch" type="search" placeholder="Find a person or group" oninput="SharePointPermissions.renderPeople()"></div></div><div id="spmPeople"></div><div id="spmMatrixPanel" class="hidden"><p class="muted">Matrix shows effective access for site, libraries, folders, and files. “Unique” marks a scope with its own grants; “Inherits” shows grants from nearest secured parent. SharePoint groups and Entra groups expand where readable. Rows load in pages to keep large sites responsive.</p><div class="spm-matrix-filters"><select id="spmMatrixLibrary" aria-label="Filter by library" onchange="SharePointPermissions.renderMatrix(true)"><option value="">All libraries</option></select><input id="spmMatrixPrincipalSearch" type="search" placeholder="Filter people or groups" oninput="SharePointPermissions.renderMatrix(true)"><input id="spmMatrixPathSearch" type="search" placeholder="Filter paths" oninput="SharePointPermissions.renderMatrix(true)"><span id="spmMatrixCount" class="muted"></span></div><div class="spm-matrix-pager"><span id="spmMatrixRowsPage" class="muted"></span><button id="spmMatrixRowsPrev" class="rowbtn" onclick="SharePointPermissions.pageMatrixRows(-1)">Previous rows</button><button id="spmMatrixRowsNext" class="rowbtn" onclick="SharePointPermissions.pageMatrixRows(1)">Next rows</button><span class="muted">People columns</span><button id="spmMatrixPrev" class="rowbtn" onclick="SharePointPermissions.pageMatrix(-1)">Previous</button><button id="spmMatrixNext" class="rowbtn" onclick="SharePointPermissions.pageMatrix(1)">Next</button></div><div id="spmMatrix" class="spm-matrix-scroll"></div></div></div>
+          </div>
+          <div id="spmTab-content" class="spm-tab-panel hidden">
+          <div class="panel">
+            <div class="tools spm-tools">
+              <input id="spmSearch" type="search" placeholder="Search path, person or group…" autocomplete="off" oninput="SharePointPermissions.renderRows()">
+              <select id="spmFilter" class="filt" onchange="SharePointPermissions.renderRows()">
+                <option value="all">All unique permissions</option>
+                <option value="differs">Differs from parent</option>
+                <option value="errors">Permission reads denied</option>
+                <option value="safe">Safe to reset</option>
+                <option value="users">Direct users</option>
+                <option value="external">External users</option>
+                <option value="broad">Broad audiences</option>
+                <option value="links">Sharing links</option>
+              </select>
+              <select id="spmSavedSearches" class="filt" aria-label="Saved searches" onchange="SharePointPermissions.applySavedSearch(this.value)"><option value="">Saved searches</option></select>
+              <span class="dev-tools-r"><span class="muted" id="spmCount"></span><button class="rowbtn" onclick="SharePointPermissions.saveSearch()">Save search</button><button class="rowbtn" onclick="SharePointPermissions.copy()">Copy list</button><button class="rowbtn" onclick="SharePointPermissions.exportExcel()" title="Download a full multi-sheet Excel audit workbook">Export Excel</button><button class="rowbtn" onclick="SharePointPermissions.exportCsv()" title="Export filtered entries and scan warnings to CSV">Export CSV</button></span>
+            </div>
+            <div class="spm-grid">
+              <div id="spmRows" class="spm-rows"></div>
+              <div id="spmDetail" class="spm-detail"><div class="empty">Select an item to compare its access with its parent.</div></div>
+            </div>
+          </div>
+          </div>
+          <div id="spmTab-changes" class="spm-tab-panel hidden"><div class="panel"><div id="spmChanges"></div></div></div>
+        </div>
+      </div>
     </section>
 
     <!-- ---------- PEOPLE & MFA ---------- -->
@@ -447,6 +554,7 @@
 <script src="app.js"></script>
 <script src="settings.js"></script>
 <script src="issues.js"></script>
+<script src="sharepoint_permissions.js"></script>
 <script src="help.js"></script>
 <script src="web-shim.js"></script>
 </body>

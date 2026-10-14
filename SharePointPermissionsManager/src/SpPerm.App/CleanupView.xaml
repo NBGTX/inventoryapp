@@ -1,0 +1,241 @@
+﻿<UserControl x:Class="SpPerm.App.CleanupView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Margin="16,12,16,12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <UniformGrid Columns="4">
+            <Border Background="White" BorderBrush="{StaticResource BorderBrushSoft}" BorderThickness="1" CornerRadius="6" Padding="12,9" Margin="0,0,8,0">
+                <StackPanel>
+                    <TextBlock Text="Items scanned" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                    <TextBlock Text="{Binding TotalItemsText}" FontSize="22" Foreground="{StaticResource DarkBrush}"/>
+                    <TextBlock Text="folders and files" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#FFF8E8" BorderBrush="#E0A100" BorderThickness="1" CornerRadius="6" Padding="12,9" Margin="0,0,8,0">
+                <StackPanel>
+                    <TextBlock Text="Own permissions" FontSize="11" Foreground="#5C3B00"/>
+                    <TextBlock Text="{Binding UniqueText}" FontSize="22" Foreground="#5C3B00"/>
+                    <TextBlock Text="{Binding UniqueSubText}" FontSize="11" Foreground="#5C3B00"/>
+                </StackPanel>
+            </Border>
+            <Border Background="White" BorderBrush="{StaticResource BorderBrushSoft}" BorderThickness="1" CornerRadius="6" Padding="12,9" Margin="0,0,8,0">
+                <StackPanel>
+                    <TextBlock Text="Direct user grants" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                    <TextBlock Text="{Binding DirectText}" FontSize="22" Foreground="{StaticResource DarkBrush}"/>
+                    <TextBlock Text="{Binding DirectSubText}" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                </StackPanel>
+            </Border>
+            <Border Background="White" BorderBrush="{StaticResource BorderBrushSoft}" BorderThickness="1" CornerRadius="6" Padding="12,9">
+                <StackPanel>
+                    <TextBlock Text="Sharing links" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                    <TextBlock Text="{Binding LinksText}" FontSize="22" Foreground="{StaticResource DarkBrush}"/>
+                    <TextBlock Text="{Binding LinksSubText}" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                </StackPanel>
+            </Border>
+        </UniformGrid>
+
+        <DockPanel Grid.Row="1" Margin="0,12,0,10">
+            <TextBox DockPanel.Dock="Right" Width="210" Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}" ToolTip="Search by folder or file name"/>
+            <TextBlock DockPanel.Dock="Right" Text="Search" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{StaticResource MutedBrush}"/>
+            <StackPanel Orientation="Horizontal">
+                <RadioButton Style="{StaticResource ChipRadio}" Content="{Binding AllLabel}" GroupName="cf"
+                             IsChecked="{Binding Filter, Converter={StaticResource Equals}, ConverterParameter=0, Mode=TwoWay}"/>
+                <RadioButton Style="{StaticResource ChipRadio}" Content="{Binding SafeLabel}" GroupName="cf"
+                             IsChecked="{Binding Filter, Converter={StaticResource Equals}, ConverterParameter=1, Mode=TwoWay}"/>
+                <RadioButton Style="{StaticResource ChipRadio}" Content="{Binding DiffersLabel}" GroupName="cf"
+                             IsChecked="{Binding Filter, Converter={StaticResource Equals}, ConverterParameter=4, Mode=TwoWay}"/>
+                <RadioButton Style="{StaticResource ChipRadio}" Content="{Binding DirectLabel}" GroupName="cf"
+                             IsChecked="{Binding Filter, Converter={StaticResource Equals}, ConverterParameter=2, Mode=TwoWay}"/>
+                <RadioButton Style="{StaticResource ChipRadio}" Content="{Binding ExternalLabel}" GroupName="cf"
+                             IsChecked="{Binding Filter, Converter={StaticResource Equals}, ConverterParameter=3, Mode=TwoWay}"/>
+                <RadioButton Style="{StaticResource ChipRadio}" Content="{Binding LinksLabel}" GroupName="cf"
+                             IsChecked="{Binding Filter, Converter={StaticResource Equals}, ConverterParameter=5, Mode=TwoWay}"/>
+            </StackPanel>
+        </DockPanel>
+
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="450"/>
+            </Grid.ColumnDefinitions>
+
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <TextBlock Text="{Binding ListHeader}" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="2,0,0,5"/>
+                <DataGrid Grid.Row="1" ItemsSource="{Binding Rows}" SelectedItem="{Binding Selected, Mode=TwoWay}" RowHeight="NaN" MinRowHeight="42">
+                    <DataGrid.Columns>
+                        <DataGridTemplateColumn Width="38">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <CheckBox IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Folder or file" Width="*">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" Margin="0,4">
+                                        <TextBlock Text="{Binding Glyph}" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="{StaticResource MediumBrush}" VerticalAlignment="Center" Margin="0,0,9,0"/>
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding Leaf}" ToolTip="{Binding Path}" TextTrimming="CharacterEllipsis" MaxWidth="230"/>
+                                                <TextBlock Text="{Binding Location}" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="8,2,0,0" TextTrimming="CharacterEllipsis" MaxWidth="140"/>
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding Subtext}" FontSize="11" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" MaxWidth="330"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Differs from parent" Width="1.1*">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <ItemsControl ItemsSource="{Binding Chips}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Background="{Binding Background}" CornerRadius="3" Padding="6,1" Margin="0,2,5,2">
+                                                    <TextBlock Text="{Binding Text}" Foreground="{Binding Foreground}" FontSize="11"/>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Last changed" Width="185">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding LastChanged}" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Pending" Width="80">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding PendingText}" Foreground="#8A5A00"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Grid>
+
+            <Border Grid.Column="1" Margin="12,0,0,0" Background="White" BorderBrush="{StaticResource BorderBrushSoft}" BorderThickness="1" CornerRadius="6" Padding="14">
+                <Grid>
+                    <TextBlock Text="Select a folder or file to see who has access and how it differs from its parent." TextWrapping="Wrap"
+                               Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" TextAlignment="Center" Margin="20">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Visible"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasDetail}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <Grid Visibility="{Binding HasDetail, Converter={StaticResource BoolToVis}}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="{Binding DetailTitle}" FontSize="14" Foreground="{StaticResource DarkBrush}" TextWrapping="Wrap"/>
+                        <TextBlock Grid.Row="1" Text="{Binding DetailSubtitle}" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,3,0,10" TextWrapping="Wrap"/>
+                        <Border Grid.Row="2" Background="#FFF1D6" BorderBrush="#E0A100" BorderThickness="1" CornerRadius="6" Padding="10,8" Margin="0,0,0,10">
+                            <TextBlock Text="{Binding DetailBanner}" Foreground="#5C3B00" TextWrapping="Wrap"/>
+                        </Border>
+                        <WrapPanel Grid.Row="3" Margin="0,0,0,10">
+                            <Button Content="Reset to inherit" Style="{StaticResource PrimaryButton}" Margin="0,0,8,6" Command="{Binding ResetThisCommand}"/>
+                            <Button Content="Add people" Margin="0,0,8,6" Command="{Binding AddPeopleHereCommand}"/>
+                        </WrapPanel>
+                        <DataGrid Grid.Row="4" ItemsSource="{Binding DetailRows}" RowHeight="NaN" MinRowHeight="40" SelectionMode="Single">
+                            <DataGrid.Columns>
+                                <DataGridTemplateColumn Header="Name" Width="*">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="0,3">
+                                                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsStruck}" Value="True">
+                                                                    <Setter Property="TextDecorations" Value="Strikethrough"/>
+                                                                    <Setter Property="Foreground" Value="#7A4A47"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                                <TextBlock Text="{Binding KindText}" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="Level" Width="88">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Level}" TextWrapping="Wrap"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="Vs. parent" Width="112">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding StatusText}" Foreground="{Binding StatusBrush}" FontSize="11" TextWrapping="Wrap"/>
+                                                <TextBlock Text="{Binding PendingText}" Foreground="#8A5A00" FontSize="11" TextWrapping="Wrap"
+                                                           Visibility="{Binding HasPending, Converter={StaticResource BoolToVis}}"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Width="68">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Button Content="Remove" Style="{StaticResource DangerButton}" Padding="6,2" FontSize="11" Command="{Binding RemoveCommand}"
+                                                    Visibility="{Binding CanRemove, Converter={StaticResource BoolToVis}}"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="3" Margin="0,10,0,0" Background="{StaticResource DarkBrush}" CornerRadius="6" Padding="12,8">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Content="Select all safe to reset" Style="{StaticResource BarButton}" Margin="0,0,8,0" Command="{Binding SelectSafeCommand}"/>
+                    <Button Content="Clear selection" Style="{StaticResource BarButton}" Command="{Binding ClearSelectionCommand}"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding BarText}" Foreground="White" VerticalAlignment="Center" Margin="0,0,16,0" MinWidth="150"/>
+                    <Button Content="Reset to inherit" Style="{StaticResource BarPrimaryButton}" Margin="0,0,8,0" Command="{Binding ResetSelectedCommand}"/>
+                    <Button Content="Add people" Style="{StaticResource BarButton}" Margin="0,0,8,0" Command="{Binding AddPeopleCommand}"/>
+                    <Button Content="Remove user" Style="{StaticResource BarButton}" Command="{Binding RemoveUserCommand}"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+    </Grid>
+</UserControl>
+

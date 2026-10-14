@@ -1,0 +1,9 @@
+﻿<Project>
+  <PropertyGroup>
+    <ArtifactsPath>$(LOCALAPPDATA)\SpPermManager\artifacts</ArtifactsPath>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Version>2026.10.12.1</Version>
+  </PropertyGroup>
+</Project>

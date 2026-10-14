@@ -12,13 +12,17 @@ const attr = s => (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/"
 const Busy = {
   n: 0, timer: null,
   WRITE: /^(bulk_|device_dates_set|save_|set_|add_|hub_bulk|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|coil_card_delete|coil_card_restore|switch_|register_|reserve_|complete_|start_|issue_(create|comment|update|delete|vote|watch|notify)|issues_import)/,
-  LONG: /^(run_sync|enrich_inventory|sync_all_divisions|master_sync|populate_mfa|boneyard_sweep|software_refresh|mfa_people_refresh|pull_prod_snapshot|set_data_mode)$/,
+  LONG: /^(run_sync|enrich_inventory|sync_all_divisions|master_sync|populate_mfa|boneyard_sweep|software_refresh|mfa_people_refresh|pull_prod_snapshot|set_data_mode|sharepoint_permissions_scan|sharepoint_permissions_search_sites)$/,
   watches(method) { return this.WRITE.test(method) && !this.LONG.test(method); },
   /* Long jobs keep running when you move to another page (the work is in the backend); this shows them in the sidebar
      so you can see they are still going, and stops a division switch from pulling the rug out from under them. */
   JOBS: { run_sync: "Syncing with Intune", enrich_inventory: "Filling in specs", sync_all_divisions: "Syncing all divisions",
           master_sync: "Master sync", populate_mfa: "Populating MFA", boneyard_sweep: "Checking the boneyard",
-          software_refresh: "Pulling software inventory", mfa_people_refresh: "Refreshing MFA", pull_prod_snapshot: "Copying production data" },
+          software_refresh: "Pulling software inventory", mfa_people_refresh: "Refreshing MFA", pull_prod_snapshot: "Copying production data",
+          sharepoint_permissions_scan: "Scanning SharePoint permissions",
+          sharepoint_permissions_search_sites: "Searching SharePoint sites",
+          sharepoint_permissions_prepare_inheritance: "Preparing permission preview",
+          sharepoint_permissions_apply_inheritance: "Propagating SharePoint permissions" },
   jobs: new Map(), _jobSeq: 0,
   jobStart(method) {
     const id = ++this._jobSeq;
@@ -159,9 +163,18 @@ const Mock = {
   },
   async get_status() { return { ok: true, signed_in: true, account: "Demo User (mock data)", upn: "demo.user@nucor.com" }; },
   async sign_in() { return { ok: true, account: "Demo User (mock data)" }; },
+  async sharepoint_permission_check() { return { ok: true, status: "mock" }; },
+  async sharepoint_permissions_default_site() { return { ok: false, error: "Open NBG Hub desktop app to load the active division site." }; },
+  async sharepoint_permissions_search_sites() { return { ok: false, error: "Site search needs the signed-in NBG Hub desktop app." }; },
+  async sharepoint_permissions_browse_content() { return { ok: false, error: "SharePoint folder browse needs the signed-in NBG Hub desktop app." }; },
+  async sharepoint_permissions_scan() { return { ok: false, error: "SharePoint scans need the signed-in NBG Hub desktop app." }; },
+  async sharepoint_permissions_scan_status() { return { ok: false, error: "SharePoint scan progress needs the signed-in NBG Hub desktop app." }; },
+  async sharepoint_permissions_cancel_scan() { return { ok: false, error: "SharePoint scan cancellation needs the signed-in NBG Hub desktop app." }; },
+  async sharepoint_permissions_prepare_inheritance() { return { ok: false, error: "Permission propagation needs the signed-in NBG Hub desktop app." }; },
+  async sharepoint_permissions_apply_inheritance() { return { ok: false, error: "Permission propagation needs the signed-in NBG Hub desktop app." }; },
   async sign_out() { return { ok: true }; },
-  async app_version() { return { ok: true, version: "2026.10.05.2" }; },
-  async register_client() { return { ok: true, version: "2026.10.05.2" }; },
+  async app_version() { return { ok: true, version: "2026.10.14" }; },
+  async register_client() { return { ok: true, version: "2026.10.14" }; },
   async get_clients() {
     return { ok: true, clients: [
       { machine: "BGPF5MDA4B", user: "blake.stevenson", version: "2026.09.29", last_seen: "2026-09-28T15:40:00Z" },
@@ -794,6 +807,8 @@ const App = {
     tab: "stock", stock: [], use: [], boneyard: [], account: null, siteTags: ["LTR", "BRI"],
     sort: { stock: { key: "date_added", dir: -1 }, use: { key: "serial", dir: 1 }, boneyard: { key: "moved_at", dir: -1 } },
     expanded: new Set(),
+    rebootBySerial: {}, rebootLoading: new Set(),
+    _bootObserver: null,
     userFilter: null,                            // Set of lower-case user names, from the Teammates page ("Show devices")
     sel: new Set(),                              // serials ticked for a bulk action (only ever the rows currently shown)
   },
@@ -832,7 +847,9 @@ const App = {
     const st = st0 || await Backend.call("get_status");
     if (st && st.signed_in) {
       this.state.account = st.account; this.state.upn = st.upn || "";
-      document.getElementById("acct").textContent = st.account || "Signed in";
+      const acct = document.getElementById("acct");
+      acct.textContent = st.upn || st.account || "Signed in";
+      acct.title = st.account ? `${st.account} · ${st.upn || ""}` : (st.upn || "");
       document.getElementById("signout").classList.remove("hidden");
       await this.startup();
     } else {
@@ -846,6 +863,7 @@ const App = {
     document.getElementById("signinBtn").classList.remove("hidden");
     document.getElementById("signout").classList.add("hidden");
     document.getElementById("acct").textContent = "Not signed in";
+    document.getElementById("acct").title = "";
     const e = document.getElementById("gateErr"); if (e) e.textContent = why || "";
     this.setBusy(true);
   },
@@ -1246,6 +1264,55 @@ const App = {
     this.render();
   },
 
+  lastRebootDisplay(serial) {
+    const boot = this.state.rebootBySerial[serial];
+    if (!Backend.real) return "Live only";
+    if (this.state.rebootLoading.has(serial) || !boot) return "Loading…";
+    if (boot.error) return "Unavailable";
+    if (!boot.value) return "No data";
+    const d = new Date(boot.value);
+    return Number.isNaN(d.getTime()) ? boot.value : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  },
+
+  observeLastRebootCells() {
+    if (this.state._bootObserver) this.state._bootObserver.disconnect();
+    if (!Backend.real || typeof IntersectionObserver === "undefined") return;
+    const cells = document.querySelectorAll("#tableWrap td[data-reboot-serial]");
+    if (!cells.length) return;
+    const observer = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        observer.unobserve(entry.target);
+        this.loadLastReboot(entry.target.dataset.rebootSerial);
+      }
+    }, { rootMargin: "180px 0px" });
+    this.state._bootObserver = observer;
+    cells.forEach(cell => this.state._bootObserver.observe(cell));
+  },
+
+  async loadLastReboot(serial) {
+    if (!Backend.real || Object.prototype.hasOwnProperty.call(this.state.rebootBySerial, serial) || this.state.rebootLoading.has(serial)) return;
+    this.state.rebootLoading.add(serial);
+    this.render();
+    try {
+      const res = await Backend.call("get_device_last_reboot", serial);
+      this.state.rebootBySerial[serial] = res && res.ok
+        ? { value: res.last_reboot || "" }
+        : { error: (res && res.error) || "Intune startup history is unavailable." };
+    } catch (e) {
+      this.state.rebootBySerial[serial] = { error: String((e && e.message) || e) };
+    } finally {
+      this.state.rebootLoading.delete(serial);
+      const cell = Array.from(document.querySelectorAll("#tableWrap td[data-reboot-serial]"))
+        .find(item => item.dataset.rebootSerial === serial);
+      if (cell) {
+        cell.textContent = this.lastRebootDisplay(serial);
+        const boot = this.state.rebootBySerial[serial];
+        cell.title = boot && boot.error ? boot.error : "Latest Intune-reported reboot time";
+      }
+    }
+  },
+
   async setSite(serial, site) {
     const r = await Backend.call("set_site", serial, site);
     if (!r || !r.ok) return this.error((r && r.error) || "Could not update site.");
@@ -1469,7 +1536,7 @@ const App = {
         : v === "No"
         ? '<span style="color:#ff6b6b;font-weight:600">No</span>'
         : '<span style="color:var(--muted)" title="MFA status unavailable — needs AuditLog.Read.All consent">—</span>';
-      const detail = r => `<tr><td></td><td colspan="10" class="detailcell" style="padding:0 18px 14px;">
+      const detail = r => `<tr><td></td><td colspan="11" class="detailcell" style="padding:0 18px 14px;">
         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 24px;background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:14px 16px;">
           ${dl("Device name", r.device_name)}${dl("Serial number", r.serial)}${dl("Primary user", r.user)}
           ${dl("Manufacturer", r.manufacturer)}${dl("Model", r.model)}${dl("Site tag", r.site_tag)}
@@ -1482,12 +1549,12 @@ const App = {
           <button class="rowbtn" onclick="App.moveToStock('${attr(r.serial)}')" title="Move back to In Stock (clears the assigned user)">📦 In Stock</button>
         </div></td></tr>`;
       wrap.innerHTML = `<table class="fit">` +
-        `<colgroup><col style="width:42px"><col style="width:9%"><col style="width:9%"><col style="width:11%"><col style="width:17%"><col style="width:6%"><col style="width:8%"><col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:96px"></colgroup>` +
+        `<colgroup><col style="width:42px"><col style="width:9%"><col style="width:9%"><col style="width:11%"><col style="width:17%"><col style="width:6%"><col style="width:8%"><col style="width:10%"><col style="width:10%"><col style="width:9%"><col style="width:9%"><col style="width:96px"></colgroup>` +
         `<thead><tr>` +
         `<th></th>` +
         th("Serial number", "serial") + th("Manufacturer", "manufacturer") + th("Model", "model") +
         th("Assigned user", "user") + th("Site", "site_tag") + th("Warranty", "warranty", dcol) + th("Deployed", "deploy_date", dcol) + th("Manufactured", "mfg_date", dcol) +
-        th("Last check-in", "last_checkin", dcol) +
+        `<th>Last reboot</th>` + th("Last check-in", "last_checkin", dcol) +
         `<th style="text-align:right">Actions</th></tr></thead><tbody>` +
         rows.map(r => {
           const open = exp.has(r.serial);
@@ -1496,11 +1563,13 @@ const App = {
             <td class="mono" title="${attr(r.serial)}">${esc(r.serial)}</td><td class="cell-mfr" title="${attr(r.manufacturer)}">${esc(r.manufacturer)}</td><td title="${attr(r.model)}">${esc(r.model)}</td>
             <td class="cell-user">${r.user ? `<a class="sw-user" data-user="${attr(r.user)}" title="See everything ${attr(r.user)} has installed">${esc(r.user)}</a>` : "—"}</td><td>${esc(r.site_tag)}</td><td>${warrCell(r.warranty)}</td>
             <td>${dateIn(r, "deploy")}</td><td>${dateIn(r, "mfg")}</td>
+            <td data-reboot-serial="${attr(r.serial)}" title="Latest Intune-reported reboot time">${esc(this.lastRebootDisplay(r.serial))}</td>
             <td>${esc(day(r.last_checkin))}${checkinBadge(r.last_checkin)}</td>
             <td style="text-align:right;white-space:nowrap">${act("✎", "editspecs", r.serial, false, "Edit CPU, RAM, storage and warranty")} ${act("⬆", "upgrade", r.serial, false, "Add to upgrade list")} ${act("✕", "remove", r.serial, true, "Remove")}</td></tr>` +
             (open ? detail(r) : "");
         }).join("") +
         `</tbody></table>`;
+      this.observeLastRebootCells();
     }
   },
 
@@ -2316,6 +2385,7 @@ const Nav = {
     if (view === "people") People.load();
     if (view === "projecthub") ProjectHub.load();
     if (view === "bgtools") BGTools.load();
+    if (view === "sharepointperms") SharePointPermissions.enter();
     if (view === "settings") Settings.load();
     if (view === "issues") { Issues.load(); Badges.seenIssues(); }
     if (view === "activity") Activity.load();
@@ -3737,6 +3807,26 @@ const BGTools = {
     else if (id === "coilcard") this._renderCoilTool(p);
     else if (id === "missing") this._renderMissing(p);
     else if (id === "copyperms") CopyPerms.render(p);
+  },
+  async checkSharePointPermission(button) {
+    const out = document.getElementById("spPermCheckResult");
+    if (!out || !button) return;
+    button.disabled = true;
+    out.textContent = "Checking…";
+    try {
+      const r = await Backend.call("sharepoint_permission_check");
+      if (!r.ok) out.textContent = r.error || "Could not check permission.";
+      else if (r.status === "granted") out.textContent = "Granted: Hub obtained SharePoint AllSites.FullControl.";
+      else if (r.status === "not_granted") out.textContent = `Not granted: ${r.error || "scope unavailable"}. Check Hub app registration permissions and consent.`;
+      else if (r.status === "sign_in_required") out.textContent = "Sign in to Hub, then check again.";
+      else if (r.status === "not_configured") out.textContent = "SharePoint host isn't configured in Hub.";
+      else if (r.status === "mock") out.textContent = "Live permission check needs signed-in NBG Hub.";
+      else out.textContent = `Could not verify silently (${r.error || "unknown error"}).`;
+    } catch (e) {
+      out.textContent = e?.message || "Could not check permission.";
+    } finally {
+      button.disabled = false;
+    }
   },
   _renderTimesheet(p) {
     this._emp = null; this._weeks = []; this._sel = null;
