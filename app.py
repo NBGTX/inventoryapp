@@ -132,6 +132,10 @@ class Api:
                     self._hub = self._build_hub()
         return self._hub
 
+    def trial_mode(self) -> dict:
+        """Tell the UI whether this launch is the isolated trial copy."""
+        return {"ok": True, "enabled": os.environ.get("NBG_HUB_TRIAL_MODE") == "1"}
+
     def _build_hub(self):
         from hub import hub_for
         return hub_for(self._client())
@@ -1339,6 +1343,58 @@ class Api:
                 except Exception:
                     plat = []
             return {"ok": True, "platform": sa, **activity.build(inv, div, plat, int(days or 0))}
+        except Exception as e:
+            return self._fail(e)
+
+    # ---- in-use device ownership classification: shared metadata keyed by serial ----
+    def device_classifications_get(self) -> dict:
+        try:
+            gc = self._client()
+            doc = self._hubc().get_named("device-classifications") or {}
+            return {"ok": True, "data": doc.get("classifications") or {},
+                    "can_edit": gc.division_role() in ("super", "admin")}
+        except Exception as e:
+            return self._fail(e)
+
+    def device_classification_set(self, serial: str, classification: str) -> dict:
+        """Mark an unassigned in-use device as shared, or return it to Needs owner."""
+        try:
+            gc = self._client()
+            gc.require_division_admin()
+            serial = str(serial or "").strip()
+            classification = str(classification or "").strip().lower()
+            if not serial or len(serial) > 100:
+                return {"ok": False, "error": "Choose a valid device."}
+            if classification not in ("shared", "needs_owner"):
+                return {"ok": False, "error": "Choose Shared machine or Needs owner."}
+            item = gc.find_by_serial("in_use", serial)
+            if not item:
+                return {"ok": False, "error": "Device is no longer in the In Use list. Refresh and try again."}
+            row = gc._row(item["fields"], "in_use", in_use=True)
+            if (row.get("user") or "").strip():
+                return {"ok": False, "error": "This device now has a primary user. Refresh and try again."}
+
+            h = self._hubc()
+            for attempt in range(3):
+                try:
+                    doc = h.get_named("device-classifications") or {}
+                    classifications = dict(doc.get("classifications") or {})
+                    key = serial.lower()
+                    if classification == "shared":
+                        classifications[key] = "shared"
+                    else:
+                        classifications.pop(key, None)  # blank / missing owner defaults to Needs owner
+                    h.put_named("device-classifications", {"classifications": classifications})
+                    break
+                except Exception as ce:
+                    if ce.__class__.__name__ != "HubConflict" or attempt == 2:
+                        raise
+            label = "Shared machine" if classification == "shared" else "Needs owner"
+            try:
+                h._change("Device classification", f"{self._actor() or 'NBG Hub'}: {serial} marked {label}.")
+            except Exception:
+                pass
+            return {"ok": True, "classification": classification, "data": classifications}
         except Exception as e:
             return self._fail(e)
 
@@ -3383,6 +3439,11 @@ class Api:
                               if (r.get("status") or "").strip().lower() != "boneyard"]
             new_stock = new_stock_full
             in_use = gc.get_in_use()
+            try:
+                owner_classifications = (self._hubc().get_named("device-classifications") or {}).get("classifications") or {}
+            except Exception:
+                owner_classifications = {}
+            is_shared_machine = lambda r: owner_classifications.get((r.get("serial") or "").strip().lower()) == "shared"
             # Devices reserved by an in-flight computer setup OR logged as hot spares are
             # held out of the deployable "in stock" rollups (count / by-site / by-dept)
             # so the dashboard shows what's genuinely available. They still appear in
@@ -3420,7 +3481,7 @@ class Api:
             # "" (not yet resolved) is not counted as "no MFA".
             no_mfa = [{"serial": r.get("serial", ""), "device_name": r.get("device_name", ""),
                        "model": r.get("model", ""), "user": r.get("user", ""), "source": "In Use"}
-                      for r in in_use if r.get("mfa") == "No"]
+                      for r in in_use if r.get("mfa") == "No" and (r.get("user") or "").strip()]
             by_site = {}
             for r in in_use:
                 t = (r.get("site_tag") or "—")
@@ -3454,14 +3515,18 @@ class Api:
             not_nbgw, by_office = [], {}
             for r in in_use:
                 site = (r.get("site_tag") or "").strip()
-                if site and site.upper() not in nbgw_sites:
+                if (r.get("user") or "").strip() and site and site.upper() not in nbgw_sites:
                     not_nbgw.append({"serial": r.get("serial", ""), "model": r.get("model", ""),
                                      "user": r.get("user", ""), "office": site})
                     by_office[site] = by_office.get(site, 0) + 1
-            # in-use devices missing a primary user (drill-down)
+            # Blank primary users split into action-needed owners and intentional shared machines.
+            # Both remain in the inventory totals.
             no_upn = [{"serial": r.get("serial", ""), "device_name": r.get("device_name", ""),
-                       "model": r.get("model", ""), "site": r.get("site_tag", ""), "source": "In Use"}
+                       "model": r.get("model", ""), "site": r.get("site_tag", ""), "source": "In Use",
+                       "classification": "Shared machine" if is_shared_machine(r) else "Needs owner"}
                       for r in in_use if not (r.get("user") or "").strip()]
+            needs_owner = [r for r in no_upn if r["classification"] == "Needs owner"]
+            shared_machines = [r for r in no_upn if r["classification"] == "Shared machine"]
             # tag each device with the SharePoint list it lives in, so drills that span
             # both lists can show a Source column ("which system was it found in").
             tagged = [(r, "In Use") for r in in_use] + [(r, "In Stock") for r in new_stock]
@@ -3513,6 +3578,11 @@ class Api:
                 "not_nbgw_count": len(not_nbgw),
                 "not_nbgw": not_nbgw,
                 "not_nbgw_by_office": by_office,
+                "needs_owner_count": len(needs_owner),
+                "needs_owner": needs_owner,
+                "shared_machine_count": len(shared_machines),
+                "shared_machines": shared_machines,
+                # Keep factual no-UPN fields for older UI builds; new owner-gap UI uses fields above.
                 "no_upn_count": len(no_upn),
                 "no_upn": no_upn,
                 "warranty_soon": warranty_soon,

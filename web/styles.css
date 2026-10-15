@@ -147,6 +147,14 @@ tr:hover td{background:var(--rowh);}
 .modal-head{padding:18px 22px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;}
 .modal-head h3{margin:0;font-size:16px;}
 .modal-head button{background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;}
+.feedback-head-actions{display:flex;align-items:center;gap:8px;}
+.feedback-head-actions .feedback-minimize{width:30px;height:30px;border:1px solid var(--border);border-radius:7px;font-size:21px;line-height:1;color:var(--text);}
+.feedback-head-actions .feedback-minimize:hover,.feedback-restore .feedback-dismiss:hover{background:var(--rowh);color:var(--text);}
+.feedback-hidden{display:none!important;}
+.feedback-restore{position:fixed;right:20px;bottom:20px;z-index:21;display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.35);color:var(--text);font-size:13px;}
+.feedback-restore #mfbRestoreTitle{max-width:min(42vw,420px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.feedback-restore[hidden]{display:none!important;}
+.feedback-restore .feedback-dismiss{width:30px;height:30px;border:1px solid var(--border);border-radius:7px;background:transparent;color:var(--muted);font-size:19px;cursor:pointer;}
 .modal-body{padding:22px;}
 .modal-foot{padding:16px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;}
 .steps{display:flex;gap:6px;margin-bottom:20px;}
@@ -207,8 +215,11 @@ tr:hover td{background:var(--rowh);}
 #tableWrap table.fit{table-layout:fixed;width:100%;}
 #tableWrap table.fit th,#tableWrap table.fit td{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 #tableWrap table.fit td.detailcell{white-space:normal;overflow:visible;}
-/* the narrow expand (+) column: tighter padding + never clip the button */
+/* the narrow expand column: tighter padding + never clip the button */
 #tableWrap table.fit td:first-child,#tableWrap table.fit th:first-child{padding-left:12px;padding-right:2px;overflow:visible;}
+#tableWrap .detail-toggle{width:24px;height:24px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:16px;line-height:1;border:0;background:transparent;color:var(--muted);}
+#tableWrap .detail-toggle:hover{color:var(--text);background:var(--row);}
+.demo-device-badge{display:inline-block;margin-left:4px;padding:1px 5px;border:1px solid var(--amber);border-radius:8px;color:var(--amber);font-size:9px;line-height:1.4;vertical-align:1px;}
 /* the Actions column: tighter padding + never clip the row buttons (⬆ / ✕) */
 #tableWrap table.fit td:last-child,#tableWrap table.fit th:last-child{padding-left:4px;padding-right:12px;overflow:visible;}
 #tableWrap table.fit td:last-child .rowbtn{padding:5px 8px;}
@@ -1122,6 +1133,11 @@ select.filt.hidden + .fsel{display:none;}
 .fsel-item:hover{background:rgba(255,255,255,.08);}.fsel-item.sel{color:var(--amber);font-weight:600;}
 .fsel-none{padding:8px 10px;color:var(--muted);font-size:13px;}
 .dt-in{background:var(--darker);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:13px;margin-top:2px;color-scheme:dark;}
+.owner-classification{max-width:150px;background:var(--darker);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px;}
+.owner-classification:focus{outline:none;border-color:var(--light);}
+.owner-state{font-size:12px;font-weight:600;white-space:nowrap;}
+.owner-state.needs_owner{color:var(--amber);}
+.owner-state.shared{color:var(--light);}
 .modal input[type=date]{background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:14px;color-scheme:dark;}
 
 /* waiting indicator inside the Mandatory apps window */

@@ -243,10 +243,13 @@ const Issues = {
 
 /* The sidebar's "Report bug / feature" button: a small form that files an issue on the board */
 const Feedback = {
-  open(type) {
+  minimized: false,
+  async open(type) {
+    const savedDraft = await this.loadDraft().catch(() => null);
+    this.minimized = false;
     document.getElementById("modalRoot").innerHTML =
-      `<div class="overlay"><div class="modal" style="width:560px;max-width:94vw;">
-        <div class="modal-head"><h3>New issue</h3><button onclick="Feedback.close()">&times;</button></div>
+      `<div id="mfbOverlay" class="overlay"><div class="modal" style="width:560px;max-width:94vw;">
+        <div class="modal-head"><h3>New issue</h3><div class="feedback-head-actions"><button type="button" class="feedback-minimize" onclick="Feedback.minimize()" title="Minimize to capture screenshots" aria-label="Minimize">&minus;</button><button type="button" onclick="Feedback.close()" title="Close" aria-label="Close">&times;</button></div></div>
         <div class="modal-body">
           <div class="field"><label>What is it?</label>
             <div class="iss-seg" id="mfbType" role="radiogroup">
@@ -259,14 +262,112 @@ const Feedback = {
           <div class="field"><label>Pictures and files <span class="muted">(optional)</span></label><div id="mfbAtt"></div></div>
           <p class="muted" style="font-size:12px;margin:0">Everyone using NBG Hub can see and comment on this. You cannot edit it after you submit (you can add comments), so check it first. Do not paste passwords or personal data.</p>
         </div>
-        <div class="modal-foot"><button class="ghost" id="mfbCancel" onclick="Feedback.close()">Cancel</button><button class="primary" id="mfbSubmit" onclick="Feedback.submit()">Submit</button></div>
-      </div></div>`;
+        <div class="modal-foot"><button class="ghost" id="mfbSaveDraft" onclick="Feedback.saveDraft()">Save draft</button><button class="ghost" id="mfbCancel" onclick="Feedback.close()">Cancel</button><button class="primary" id="mfbSubmit" onclick="Feedback.submit()">Submit</button></div>
+      </div></div><div id="mfbRestore" class="feedback-restore" hidden><span id="mfbRestoreTitle">New issue draft</span><button type="button" class="primary" onclick="Feedback.restore()">Restore</button><button type="button" class="feedback-dismiss" onclick="Feedback.close()" title="Discard draft" aria-label="Discard draft">&times;</button></div>`;
     Attach.mount("new", "mfbAtt", ["mfbDetail", "mfbTitle"]);
+    const title = document.getElementById("mfbTitle");
+    if (title) title.addEventListener("input", () => this.updateRestoreTitle());
     this.kind("bug");
     if (type) { const r = document.querySelector(`input[name=mfbKind][value=${type === "feature" ? "feature" : "bug"}]`); if (r) { r.checked = true; this.kind(r.value); } }
+    if (savedDraft) {
+      const savedType = savedDraft.type === "feature" ? "feature" : "bug";
+      const radio = document.querySelector(`input[name=mfbKind][value=${savedType}]`);
+      if (radio) { radio.checked = true; this.kind(savedType); }
+      if (title) title.value = savedDraft.title || "";
+      const detail = document.getElementById("mfbDetail"); if (detail) detail.value = savedDraft.detail || "";
+      Attach.forms.new.files = Array.isArray(savedDraft.files) ? savedDraft.files : [];
+      Attach.draw("new", "mfbAtt");
+      this.updateRestoreTitle();
+      App.toast("Saved issue draft restored from this computer.");
+    }
     setTimeout(() => { const t = document.getElementById("mfbTitle"); if (t) t.focus(); }, 30);
   },
-  close() { document.getElementById("modalRoot").innerHTML = ""; },
+  minimize() {
+    const overlay = document.getElementById("mfbOverlay"), restore = document.getElementById("mfbRestore");
+    if (!overlay || !restore) return;
+    this.minimized = true;
+    this.updateRestoreTitle();
+    overlay.classList.add("feedback-hidden");
+    restore.hidden = false;
+  },
+  restore() {
+    const overlay = document.getElementById("mfbOverlay"), restore = document.getElementById("mfbRestore");
+    if (!overlay || !restore) return;
+    this.minimized = false;
+    overlay.classList.remove("feedback-hidden");
+    restore.hidden = true;
+  },
+  close(submitted = false) {
+    const title = (document.getElementById("mfbTitle")?.value || "").trim();
+    const detail = (document.getElementById("mfbDetail")?.value || "").trim();
+    const hasAttachments = Attach.payload("new").length > 0;
+    if (!submitted && (title || detail || hasAttachments) && !window.confirm("Discard this issue draft? Your title, details, and attachments will be lost.")) return false;
+    if (!submitted) this.deleteDraft().catch(() => {});
+    this.minimized = false;
+    document.getElementById("modalRoot").innerHTML = "";
+    return true;
+  },
+  updateRestoreTitle() {
+    const input = document.getElementById("mfbTitle"), label = document.getElementById("mfbRestoreTitle");
+    if (!input || !label) return;
+    const title = input.value.trim();
+    label.textContent = title || "New issue draft";
+    label.title = title;
+  },
+  async openDraftDb() {
+    return await new Promise((resolve, reject) => {
+      const request = window.indexedDB.open("NBGHubIssueDrafts", 1);
+      request.onupgradeneeded = () => request.result.createObjectStore("drafts");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error("Could not open local draft storage."));
+    });
+  },
+  async loadDraft() {
+    const db = await this.openDraftDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction("drafts", "readonly"), request = tx.objectStore("drafts").get("new-issue");
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error || new Error("Could not read saved draft."));
+      tx.oncomplete = () => db.close();
+      tx.onerror = () => { db.close(); reject(tx.error || new Error("Could not read saved draft.")); };
+    });
+  },
+  async saveDraftRecord(draft) {
+    const db = await this.openDraftDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction("drafts", "readwrite");
+      tx.objectStore("drafts").put(draft, "new-issue");
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); reject(tx.error || new Error("Could not save draft.")); };
+      tx.onabort = () => { db.close(); reject(tx.error || new Error("Could not save draft.")); };
+    });
+  },
+  async deleteDraft() {
+    const db = await this.openDraftDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction("drafts", "readwrite");
+      tx.objectStore("drafts").delete("new-issue");
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); reject(tx.error || new Error("Could not remove saved draft.")); };
+    });
+  },
+  async saveDraft() {
+    const title = (document.getElementById("mfbTitle")?.value || "").trim();
+    const detail = (document.getElementById("mfbDetail")?.value || "").trim();
+    const files = Attach.payload("new");
+    if (!title && !detail && !files.length) return App.toast("Add a title, details, or attachment before saving a draft.", true);
+    const kind = (document.querySelector("input[name=mfbKind]:checked") || {}).value || "bug";
+    const button = document.getElementById("mfbSaveDraft");
+    if (button) { button.disabled = true; button.textContent = "Saving…"; }
+    try {
+      await this.saveDraftRecord({ type: kind, title, detail, files: Attach.forms.new.files, savedAt: new Date().toISOString() });
+      this.close(true);
+      App.toast("Draft saved on this computer. It will reopen when you start a new issue.");
+    } catch (error) {
+      App.toast("Could not save draft on this computer: " + (error.message || "local storage unavailable."), true);
+      if (button) { button.disabled = false; button.textContent = "Save draft"; }
+    }
+  },
   HINTS: {
     bug: { title: "Short summary, e.g. Hot spares window shows the wrong site",
            detail: `What did you do? What did you expect? What happened instead?
@@ -293,7 +394,8 @@ How do you imagine it working? Paste a sketch or an example with Ctrl+V.` },
     const ok = await Ui.working(btn, label, async () => {
       const r = await Backend.call("issue_create", (document.querySelector("input[name=mfbKind]:checked") || {}).value || "bug", title, (document.getElementById("mfbDetail").value || "").trim(), files);
       if (!r || !r.ok) { App.toast((r && r.error) || "Could not submit.", true); return false; }
-      this.close();
+      await this.deleteDraft().catch(() => {});
+      this.close(true);
       App.toast("Thanks: filed as " + r.issue.short + ". Find it under Issues.");
       if (document.getElementById("appview-issues").classList.contains("active")) Issues.load();
       return true;

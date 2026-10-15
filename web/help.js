@@ -19,7 +19,7 @@ const Help = {
         <ul>
           <li><b>Machines in use / in stock</b>: opens the Devices page on that tab.</li>
           <li><b>Hot spares</b>: imaged, ready-to-deploy loaners. Click for the full list by site and department. A warning sign means a spare is stale or out of compliance.</li>
-          <li><b>No UPN set</b>: devices with no primary user.</li>
+          <li><b>Needs owner</b>: in-use devices with no primary user that are not marked Shared machine. Intentional shared devices appear separately.</li>
           <li><b>Warranties ≤ 90 days</b>: warranty ends within 90 days (or already expired).</li>
           <li><b>Upgrade Forecast</b>: devices that meet the upgrade rules (a processor older than a set number of years, and/or a warranty that ended a set number of months ago; a super admin sets these under Platform → Integrations → Upgrades). Click for the list with the reason for each; the Upgrade list page queues them.</li>
           <li><b>Missing specs</b> (appears when there are any): devices with no CPU, RAM or warranty date recorded. This happens for makers whose lookup is not available yet (Dell and HP need an API key). Click it, then <b>Edit specs</b> on a row, or <b>Fill them one by one</b> to step through the list with <b>Save &amp; next</b>. When other devices of the same model lack the same data, one tick fills their processor, RAM and storage too (warranty stays per device). Values count immediately toward the upgrade rules. Virtual machines are left out.</li>
@@ -163,8 +163,8 @@ const Help = {
           <li>Type in the search box to filter the current tab. It matches serial, hostname, user, model, OS and site.</li>
           <li><b>⋯ More &rarr; Fill deploy dates from Intune</b> (admins) gives every In use device that has no deploy date its Intune enrollment date; existing dates are never changed. <b>Import dates</b> takes a pasted Excel range or CSV (serial, manufacture date, optional deploy date), shows what will change, then applies it.</li>
           <li>Every filter box is <b>searchable</b>: click it and type part of a name (for example a model) to narrow the list, then click or press Enter. <b>Manufacturer</b> merges names like "Dell" and "Dell Inc.".</li>
-          <li><b>Site</b>, <b>manufacturer</b> and <b>warranty</b> filters work on every tab. On <b>In use</b> there are also model, CPU, RAM, last check-in and MFA filters. <b>Clear filters</b> removes them all. The line at the right shows how many rows match.</li>
-          <li>Click a column heading to sort. Click anywhere on a row (or its <b>+</b>) to see its full details.</li>
+          <li><b>Site</b>, <b>manufacturer</b> and <b>warranty</b> filters work on every tab. On <b>In use</b> there are also model, CPU, RAM, last check-in, MFA, and primary-user filters. A blank primary user defaults to <b>Needs owner</b>; division admins can mark it <b>Shared machine</b>. These labels are saved per division and stay with the serial through syncs. Dashboard owner-gap and shared-machine cards use same labels. <b>Clear filters</b> removes all filters. The line at the right shows matching rows and both counts.</li>
+          <li>Click a column heading to sort. Click anywhere on a row (or its arrow) to see its full details.</li>
           <li><b>Copy list</b> copies the rows you see (after search and filters) so you can paste them into Excel or a message.</li>
           <li>Warranty dates show <span style="color:var(--red)">red</span> when expired and <span style="color:var(--amber)">amber</span> when they end within 90 days.</li>
           <li>On <b>In use</b>, click a user's name to see everything installed for that person on the Software page.</li>
@@ -227,7 +227,7 @@ const Help = {
       html: `
         <p>A <b>hot spare</b> is an imaged, ready-to-deploy machine kept for emergency swaps or loaners. The window groups them by site and department and shows live details from Intune (specs, OS install date, last check-in, compliance) joined by serial number.</p>
         <ul>
-          <li><b>+</b> expands an entry to its full detail. A ⚠ marks a spare that is stale or non-compliant, so it may not be ready.</li>
+          <li>The arrow beside a row expands its full detail. A ⚠ marks a spare that is stale or non-compliant, so it may not be ready.</li>
           <li>Use the add button to register a spare (serial, site, department, notes about where it is held). Edit or remove entries with their buttons; every change is logged.</li>
           <li>The department groups are set per division in Settings → General → Inventory options.</li>
         </ul>`

@@ -11,7 +11,7 @@ const attr = s => (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/"
    must NOT lock the screen, so they are excluded. */
 const Busy = {
   n: 0, timer: null,
-  WRITE: /^(bulk_|device_dates_set|save_|set_|add_|hub_bulk|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|coil_card_delete|coil_card_restore|switch_|register_|reserve_|complete_|start_|issue_(create|comment|update|delete|vote|watch|notify)|issues_import)/,
+  WRITE: /^(bulk_|device_dates_set|device_classification_set|save_|set_|add_|hub_bulk|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|coil_card_delete|coil_card_restore|switch_|register_|reserve_|complete_|start_|issue_(create|comment|update|delete|vote|watch|notify)|issues_import)/,
   LONG: /^(run_sync|enrich_inventory|sync_all_divisions|master_sync|populate_mfa|boneyard_sweep|software_refresh|mfa_people_refresh|pull_prod_snapshot|set_data_mode|sharepoint_permissions_scan|sharepoint_permissions_search_sites)$/,
   watches(method) { return this.WRITE.test(method) && !this.LONG.test(method); },
   /* Long jobs keep running when you move to another page (the work is in the backend); this shows them in the sidebar
@@ -162,6 +162,7 @@ const Mock = {
     this._log.unshift({ when: new Date().toISOString(), action, serial, model, actor: "Demo User (mock data)", details });
   },
   async get_status() { return { ok: true, signed_in: true, account: "Demo User (mock data)", upn: "demo.user@nucor.com" }; },
+  async trial_mode() { return { ok: true, enabled: true }; },
   async sign_in() { return { ok: true, account: "Demo User (mock data)" }; },
   async sharepoint_permission_check() { return { ok: true, status: "mock" }; },
   async sharepoint_permissions_default_site() { return { ok: false, error: "Open NBG Hub desktop app to load the active division site." }; },
@@ -652,6 +653,40 @@ const DeviceDates = {
   },
 };
 
+/* Explicit reason for an in-use device having no primary user. Stored per division in Hub. */
+const DeviceClassifications = {
+  map: {}, canEdit: false, trialMode: false,
+  async overlay() {
+    try {
+      const [r, trial] = await Promise.all([Backend.call("device_classifications_get"), Backend.call("trial_mode")]);
+      this.map = (r && r.ok && r.data) || {};
+      this.trialMode = !!(trial && trial.ok && trial.enabled);
+      if (this.trialMode) {
+        try { this.map["demo-owner-001"] = localStorage.getItem("nbg_trial_demo_owner") === "shared" ? "shared" : ""; } catch (e) {}
+      }
+      this.canEdit = this.trialMode || !!(r && r.ok && r.can_edit);
+    } catch (e) { this.map = {}; this.canEdit = false; this.trialMode = false; }
+  },
+  status(r) {
+    if ((r.user || "").trim()) return "assigned";
+    return this.map[(r.serial || "").toLowerCase()] === "shared" ? "shared" : "needs_owner";
+  },
+  async set(serial, classification) {
+    if (this.trialMode && String(serial).toLowerCase() === "demo-owner-001") {
+      try {
+        if (classification === "shared") localStorage.setItem("nbg_trial_demo_owner", "shared");
+        else localStorage.removeItem("nbg_trial_demo_owner");
+      } catch (e) { return { ok: false, error: "Could not save this demo choice on this computer." }; }
+      if (classification === "shared") this.map["demo-owner-001"] = "shared";
+      else delete this.map["demo-owner-001"];
+      return { ok: true, classification, data: this.map };
+    }
+    const r = await Backend.call("device_classification_set", serial, classification);
+    if (r && r.ok) this.map = r.data || {};
+    return r;
+  },
+};
+
 /* ---- Devices > More: fill deploy dates from Intune, import dates from a list ---- */
 const DateTools = {
   async backfill() {
@@ -825,6 +860,7 @@ const App = {
       const t = e.target;
       if (t.id === "selAll") App.selAll(t.checked);
       else if (t.classList && t.classList.contains("rowsel")) App.selToggle(t.dataset.serial, t.checked);
+      else if (t.classList && t.classList.contains("owner-classification")) App.setDeviceClassification(t.dataset.serial, t.value);
     });
     document.getElementById("tableWrap").addEventListener("click", e => {
       const ua = e.target.closest("a.sw-user");
@@ -1030,9 +1066,15 @@ const App = {
     this.state.stock = inv.new_stock || [];
     this.state.use = inv.in_use || [];
     this.state.boneyard = inv.boneyard || [];
-    await People.overlay(this.state.use);
-    await DeviceDates.overlay(this.state.stock, this.state.use, this.state.boneyard);
-    this.setCounts(inv.counts);
+    await Promise.all([
+      People.overlay(this.state.use),
+      DeviceDates.overlay(this.state.stock, this.state.use, this.state.boneyard),
+      DeviceClassifications.overlay(),
+    ]);
+    if (DeviceClassifications.trialMode && !this.state.use.some(r => r.serial === "DEMO-OWNER-001")) {
+      this.state.use.push({ serial: "DEMO-OWNER-001", device_name: "DEMO OWNER TEST", manufacturer: "NBG Hub Demo", model: "Demo only — owner classification", user: "", site_tag: "DEMO", cpu: "Demo data", ram: "—", storage: "—", warranty: "", os_version: "Demo data", os_install: "", last_checkin: "", mfa: "—", is_demo: true });
+    }
+    this.setCounts({ ...inv.counts, in_use: (inv.counts.in_use || 0) + (this.state.use.some(r => r.is_demo) ? 1 : 0), total: (inv.counts.total || 0) + (this.state.use.some(r => r.is_demo) ? 1 : 0) });
     try { localStorage.setItem(Divisions.invKey(), JSON.stringify(inv)); } catch (e) { /* quota */ }
     this.setBusy(false);
     this.populateFilters();
@@ -1117,6 +1159,16 @@ const App = {
     this.toast(value ? `${which === "deploy" ? "Deploy" : "Manufacture"} date saved for ${serial}.` : "Date cleared.");
     this.render();
   },
+  async setDeviceClassification(serial, classification) {
+    const r = await DeviceClassifications.set(serial, classification);
+    if (!r || !r.ok) {
+      this.toast((r && r.error) || "Could not save device classification.", true);
+      await DeviceClassifications.overlay();
+    } else {
+      this.toast(classification === "shared" ? `${serial} marked as a shared machine.` : `${serial} marked as needing an owner.`);
+    }
+    this.render();
+  },
   /* the quick "Deploy" button on the In stock list */
   deployPrompt(serial) {
     const r = (this.state.stock || []).find(x => x.serial === serial) || (this.state.use || []).find(x => x.serial === serial) || { serial };
@@ -1142,7 +1194,7 @@ const App = {
   clearUserFilter() { this.state.userFilter = null; this.render(); },
   clearFilters() {
     this.state.userFilter = null;
-    ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fSite", "fMfr", "fWarr", "fAge"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+    ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fOwner", "fSite", "fMfr", "fWarr", "fAge"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
     const s = document.getElementById("search"); if (s) s.value = "";
     this.render();
   },
@@ -1164,11 +1216,18 @@ const App = {
   _count(rows, total) {
     this._shown = rows;
     const el = document.getElementById("devCount");
-    if (el) el.textContent = rows.length === total ? `${total} ${total === 1 ? "device" : "devices"}` : `Showing ${rows.length} of ${total}`;
+    if (el) {
+      const shown = rows.length === total ? `${total} ${total === 1 ? "device" : "devices"}` : `Showing ${rows.length} of ${total}`;
+      if (this.state.tab === "use") {
+        const need = this.state.use.filter(r => DeviceClassifications.status(r) === "needs_owner").length;
+        const shared = this.state.use.filter(r => DeviceClassifications.status(r) === "shared").length;
+        el.textContent = `${shown} · ${need} need owner · ${shared} shared`;
+      } else el.textContent = shown;
+    }
     const q = (document.getElementById("search") || {}).value;
     const uf = this.state.userFilter, chip = document.getElementById("ufChip");
     if (chip) { chip.classList.toggle("hidden", !uf); chip.innerHTML = uf ? `Teammates: ${uf.size} <a onclick="App.clearUserFilter()" title="Show everyone again">&times;</a>` : ""; }
-    const any = !!uf || !!(q && q.trim()) || ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fSite", "fMfr", "fWarr", "fAge"].some(id => { const e = document.getElementById(id); return e && e.value && !e.classList.contains("hidden"); });
+    const any = !!uf || !!(q && q.trim()) || ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fOwner", "fSite", "fMfr", "fWarr", "fAge"].some(id => { const e = document.getElementById(id); return e && e.value && !e.classList.contains("hidden"); });
     const c = document.getElementById("fClear"); if (c) c.classList.toggle("hidden", !any);
   },
   /* ---- bulk select ---- */
@@ -1211,7 +1270,7 @@ const App = {
 
   /* ---- remember the Devices view (tab, search, filters, sort) for each division ---- */
   _viewKey() { return "nbg_dev_view_" + (Divisions.current || "x"); },
-  _FILTER_IDS: ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fSite", "fMfr", "fWarr", "fAge"],
+  _FILTER_IDS: ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fOwner", "fSite", "fMfr", "fWarr", "fAge"],
   _restoreView() {
     const key = this._viewKey();
     if (this._restored === key) return;
@@ -1242,7 +1301,7 @@ const App = {
     const rows = this._shown || [], tab = this.state.tab, day = v => (v || "").slice(0, 10);
     const cols = {
       stock: [["Serial", r => r.serial], ["Manufacturer", r => r.manufacturer], ["Model", r => r.model], ["CPU", r => r.cpu], ["RAM", r => r.ram], ["Storage", r => r.storage], ["Site", r => r.site_tag], ["Warranty", r => day(r.warranty)], ["Added", r => day(r.date_added)], ["Deployed", r => r.deploy_date], ["Manufactured", r => r.mfg_date]],
-      use: [["Serial", r => r.serial], ["Device", r => r.device_name], ["User", r => r.user], ["Manufacturer", r => r.manufacturer], ["Model", r => r.model], ["CPU", r => r.cpu], ["RAM", r => r.ram], ["Storage", r => r.storage], ["MFA", r => r.mfa], ["Site", r => r.site_tag], ["Warranty", r => day(r.warranty)], ["Deployed", r => r.deploy_date], ["Manufactured", r => r.mfg_date], ["Last check-in", r => day(r.last_checkin)], ["OS", r => winOsLabel(r.os_version)]],
+      use: [["Serial", r => r.serial], ["Device", r => r.device_name], ["User", r => r.user], ["Owner status", r => DeviceClassifications.status(r) === "assigned" ? "Assigned" : DeviceClassifications.status(r) === "shared" ? "Shared machine" : "Needs owner"], ["Manufacturer", r => r.manufacturer], ["Model", r => r.model], ["CPU", r => r.cpu], ["RAM", r => r.ram], ["Storage", r => r.storage], ["MFA", r => r.mfa], ["Site", r => r.site_tag], ["Warranty", r => day(r.warranty)], ["Deployed", r => r.deploy_date], ["Manufactured", r => r.mfg_date], ["Last check-in", r => day(r.last_checkin)], ["OS", r => winOsLabel(r.os_version)]],
       boneyard: [["Serial", r => r.serial], ["Former hostname", r => r.device_name], ["Model", r => r.model], ["Last user", r => r.user], ["Retired", r => day(r.moved_at)], ["Reason", r => r.reason]],
     }[tab] || [];
     const cell = v => String(v == null ? "" : v).replace(/[\t\r\n]+/g, " ");
@@ -1387,13 +1446,14 @@ const App = {
     const isUse = this.state.tab === "use";
     const isStock = this.state.tab === "stock";
     const fa = document.getElementById("fAge"); if (fa) fa.classList.toggle("hidden", !isStock);
-    ["fModel", "fCpu", "fRam", "fCheckin", "fMfa"].forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle("hidden", !isUse); });
+    ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fOwner"].forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle("hidden", !isUse); });
     const val = id => { const el = document.getElementById(id); return el ? (el.value || "") : ""; };
     const fm = isUse ? val("fModel") : "";
     const fc = isUse ? val("fCpu") : "";
     const fr = isUse ? val("fRam") : "";
     const fk = isUse ? val("fCheckin") : "";
     const fmfa = isUse ? val("fMfa") : "";
+    const fowner = isUse ? val("fOwner") : "";
     const fsite = val("fSite"), fmfr = val("fMfr"), fwarr = val("fWarr"), fage = isStock ? val("fAge") : "";
     const ageOk = r => {                         // how long a machine has sat in stock (days since it was added)
       if (!fage) return true;
@@ -1438,6 +1498,7 @@ const App = {
       if (fmfa === "unknown") return m === "";
       return m === fmfa;   // "Yes" | "No"
     };
+    const ownerOk = r => !fowner || DeviceClassifications.status(r) === fowner;
     // search matches ANY detail: serial, hostname, user, model, specs, site,
     // warranty, MFA, dates, and the Windows edition ("Windows 11" etc.)
     const hay = r => [
@@ -1447,7 +1508,7 @@ const App = {
     ].map(v => (v == null ? "" : String(v)).toLowerCase()).join(" ");
     const match = r => (!q || hay(r).includes(q))
       && (!fm || (r.model || "") === fm) && (!fc || (r.cpu || "") === fc) && (!fr || (r.ram || "") === fr) && checkinOk(r) && mfaOk(r)
-      && (!fsite || (r.site_tag || "") === fsite) && (!fmfr || this.mfrName(r.manufacturer) === fmfr) && (!fwarr || warrState(r.warranty) === fwarr) && ageOk(r)
+      && ownerOk(r) && (!fsite || (r.site_tag || "") === fsite) && (!fmfr || this.mfrName(r.manufacturer) === fmfr) && (!fwarr || warrState(r.warranty) === fwarr) && ageOk(r)
       && (!this.state.userFilter || this.state.userFilter.has((r.user || "").toLowerCase()));
     const wrap = document.getElementById("tableWrap");
     const dcol = "white-space:nowrap";  // keep dates on one line
@@ -1501,7 +1562,7 @@ const App = {
         rows.map(r => {
           const open = exp.has(r.serial);
           return `<tr>
-          <td><button class="rowbtn" data-action="expand" data-serial="${attr(r.serial)}" style="padding:2px 8px;line-height:1" title="Show all specs / assign site">${open ? "−" : "+"}</button></td>
+          <td>${this.detailToggle(r, open, "Show all specs / assign site")}</td>
           <td class="mono" title="${attr(r.serial)}">${esc(r.serial)}</td><td title="${attr(r.manufacturer)}">${esc(r.manufacturer)}</td><td title="${attr(r.model)}">${esc(r.model)}</td>
           <td title="${attr([r.cpu, r.ram, r.storage].filter(Boolean).join(" · "))}">${esc([r.cpu, r.ram, r.storage].filter(Boolean).join(" · "))}</td>
           <td>${esc(r.site_tag)}</td><td>${warrCell(r.warranty)}</td><td>${esc(day(r.date_added))}</td>
@@ -1530,7 +1591,7 @@ const App = {
         rows.map(r => {
           const open = exp.has(r.serial);
           return `<tr>
-          <td><button class="rowbtn" data-action="expand" data-serial="${attr(r.serial)}" style="padding:2px 8px;line-height:1" title="Show details">${open ? "−" : "+"}</button></td>
+          <td>${this.detailToggle(r, open, "Show details")}</td>
           <td class="mono" title="${attr(r.serial)}">${esc(r.serial)}</td><td title="${attr(r.device_name)}">${esc(r.device_name || "—")}</td><td title="${attr(r.model)}">${esc(r.model)}</td>
           <td title="${attr(r.user)}">${esc(r.user || "—")}</td><td>${esc(day(r.moved_at))}</td>
           <td style="text-align:right;white-space:nowrap">${act("↩ Restore", "restoreboneyard", r.serial, false, "Restore to Stock")}</td></tr>` +
@@ -1546,18 +1607,24 @@ const App = {
         : v === "No"
         ? '<span style="color:#ff6b6b;font-weight:600">No</span>'
         : '<span style="color:var(--muted)" title="MFA status unavailable — needs AuditLog.Read.All consent">—</span>';
+      const ownerCell = r => {
+        if ((r.user || "").trim()) return `<a class="sw-user" data-user="${attr(r.user)}" title="See everything ${attr(r.user)} has installed">${esc(r.user)}</a>`;
+        const status = DeviceClassifications.status(r);
+        if (!DeviceClassifications.canEdit) return `<span class="owner-state ${status}" title="${status === "shared" ? "Shared machine" : "No primary user; owner not confirmed"}">${status === "shared" ? "Shared machine" : "Needs owner"}</span>`;
+        return `<select class="owner-classification" data-serial="${attr(r.serial)}" aria-label="Classify ${attr(r.serial)}" title="Choose Shared machine when no individual owner is expected"><option value="needs_owner" ${status === "needs_owner" ? "selected" : ""}>Needs owner</option><option value="shared" ${status === "shared" ? "selected" : ""}>Shared machine</option></select>`;
+      };
       const detail = r => `<tr><td></td><td colspan="11" class="detailcell" style="padding:0 18px 14px;">
         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 24px;background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:14px 16px;">
           ${dl("Device name", r.device_name)}${dl("Serial number", r.serial)}${dl("Primary user", r.user)}
           ${dl("Manufacturer", r.manufacturer)}${dl("Model", r.model)}${dl("Site tag", r.site_tag)}
           ${dl("CPU", r.cpu)}${dl("RAM", r.ram)}${dl("Storage", r.storage)}
           ${dl("OS version", winOsLabel(r.os_version))}${dl("OS install date", day(r.os_install))}${dl("Warranty", r.warranty)}
-          ${dl("MFA registered", r.mfa || "—")}${dateEd(r, "deploy")}${dateEd(r, "mfg")}
+          ${dl("MFA registered", r.mfa || "—")}${r.is_demo ? dl("Deploy date", "Demo only") : dateEd(r, "deploy")}${r.is_demo ? dl("Manufacture date", "Demo only") : dateEd(r, "mfg")}
         </div>
-        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">
+        ${r.is_demo ? `<p class="muted" style="margin:10px 0 0">Demo row only. Classification is saved on this computer and does not change inventory.</p>` : `<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">
           <button class="rowbtn" onclick="HotSpares.openMove('${attr(r.serial)}')" title="Move back to In Stock and log as a ready hot spare (held out of the stock count)">🔥 Hot Spare</button>
           <button class="rowbtn" onclick="App.moveToStock('${attr(r.serial)}')" title="Move back to In Stock (clears the assigned user)">📦 In Stock</button>
-        </div></td></tr>`;
+        </div>`}</td></tr>`;
       wrap.innerHTML = `<table class="fit">` +
         `<colgroup><col style="width:42px"><col style="width:9%"><col style="width:9%"><col style="width:11%"><col style="width:17%"><col style="width:6%"><col style="width:8%"><col style="width:10%"><col style="width:10%"><col style="width:9%"><col style="width:9%"><col style="width:96px"></colgroup>` +
         `<thead><tr>` +
@@ -1569,18 +1636,22 @@ const App = {
         rows.map(r => {
           const open = exp.has(r.serial);
           return `<tr>
-            <td><button class="rowbtn" data-action="expand" data-serial="${attr(r.serial)}" style="padding:2px 8px;line-height:1" title="Show all specs">${open ? "−" : "+"}</button></td>
-            <td class="mono" title="${attr(r.serial)}">${esc(r.serial)}</td><td class="cell-mfr" title="${attr(r.manufacturer)}">${esc(r.manufacturer)}</td><td title="${attr(r.model)}">${esc(r.model)}</td>
-            <td class="cell-user">${r.user ? `<a class="sw-user" data-user="${attr(r.user)}" title="See everything ${attr(r.user)} has installed">${esc(r.user)}</a>` : "—"}</td><td>${esc(r.site_tag)}</td><td>${warrCell(r.warranty)}</td>
-            <td>${dateIn(r, "deploy")}</td><td>${dateIn(r, "mfg")}</td>
-            <td data-reboot-serial="${attr(r.serial)}" title="${attr(this.lastRebootTitle(r.serial))}">${esc(this.lastRebootDisplay(r.serial))}</td>
-            <td>${esc(day(r.last_checkin))}${checkinBadge(r.last_checkin)}</td>
-            <td style="text-align:right;white-space:nowrap">${act("✎", "editspecs", r.serial, false, "Edit CPU, RAM, storage and warranty")} ${act("⬆", "upgrade", r.serial, false, "Add to upgrade list")} ${act("✕", "remove", r.serial, true, "Remove")}</td></tr>` +
+            <td>${this.detailToggle(r, open, "Show all specs")}</td>
+            <td class="mono" title="${attr(r.serial)}">${esc(r.serial)}${r.is_demo ? ` <span class="demo-device-badge">DEMO</span>` : ""}</td><td class="cell-mfr" title="${attr(r.manufacturer)}">${esc(r.manufacturer)}</td><td title="${attr(r.model)}">${esc(r.model)}</td>
+            <td class="cell-user">${ownerCell(r)}</td><td>${esc(r.site_tag)}</td><td>${warrCell(r.warranty)}</td>
+            <td>${r.is_demo ? "—" : dateIn(r, "deploy")}</td><td>${r.is_demo ? "—" : dateIn(r, "mfg")}</td>
+            <td ${r.is_demo ? "" : `data-reboot-serial="${attr(r.serial)}" title="${attr(this.lastRebootTitle(r.serial))}"`}>${r.is_demo ? "Demo only" : esc(this.lastRebootDisplay(r.serial))}</td>
+            <td>${r.is_demo ? "—" : `${esc(day(r.last_checkin))}${checkinBadge(r.last_checkin)}`}</td>
+            <td style="text-align:right;white-space:nowrap">${r.is_demo ? `<span class="demo-device-badge">Demo only</span>` : `${act("✎", "editspecs", r.serial, false, "Edit CPU, RAM, storage and warranty")} ${act("⬆", "upgrade", r.serial, false, "Add to upgrade list")} ${act("✕", "remove", r.serial, true, "Remove")}`}</td></tr>` +
             (open ? detail(r) : "");
         }).join("") +
         `</tbody></table>`;
       this.observeLastRebootCells();
     }
+  },
+
+  detailToggle(r, open, label) {
+    return `<button class="rowbtn detail-toggle" data-action="expand" data-serial="${attr(r.serial)}" aria-expanded="${open}" aria-label="${open ? "Hide" : "Show"} details for ${attr(r.serial)}" title="${open ? "Hide" : label}">${open ? "▾" : "▸"}</button>`;
   },
 
   async runSync() {
@@ -2927,7 +2998,8 @@ const Dashboard = {
       ${inv ? cstat(inv.in_use, "Machines in use", "Dashboard.goDevices('use')") : stat("–", "Machines in use")}
       ${inv ? cstat(inv.new_stock, "Machines in stock", "Dashboard.goDevices('stock')") : stat("–", "Machines in stock")}
       ${inv ? HotSpares.tileHtml(inv) : ""}
-      ${inv ? cstat(inv.no_upn_count || 0, "No UPN set", "Dashboard.drillNoUpn()", (inv.no_upn_count ? "warn" : "")) : stat("–", "No UPN set")}
+      ${inv ? cstat(inv.needs_owner_count ?? inv.no_upn_count ?? 0, "Needs owner", "Dashboard.drillNoUpn()", ((inv.needs_owner_count ?? inv.no_upn_count) ? "warn" : "")) : stat("–", "Needs owner")}
+      ${inv && (inv.shared_machine_count || 0) ? cstat(inv.shared_machine_count, "Shared machines", "Dashboard.drillSharedMachines()") : ""}
       ${w ? cstat(w.expiring_90, "Warranties ≤90 days", "Dashboard.drillWarranty()", w.expired ? "danger" : (w.expiring_90 ? "warn" : "")) : stat("–", "Warranties ≤90 days")}
       ${inv ? cstat(inv.needs_upgrade_count || 0, "Upgrade Forecast", "Dashboard.upgradePlan()", (inv.needs_upgrade_count ? "danger" : "")) : stat("–", "Upgrade Forecast")}
       ${inv ? cstat(inv.stale_checkin_count || 0, "No check-in " + (inv.stale_days || 30) + "+ days", "Dashboard.drillStale()", (inv.stale_checkin_count ? "warn" : "")) : stat("–", "No check-in " + ((inv && inv.stale_days) || 30) + "+ days")}
@@ -3154,10 +3226,17 @@ const Dashboard = {
   },
 
   drillNoUpn() {
-    Drill.open("Devices without a UPN", this._inv().no_upn || [], [
+    const inv = this._inv();
+    Drill.open("Devices needing an owner", inv.needs_owner || inv.no_upn || [], [
       { label: "Serial", get: r => r.serial, mono: 1, w: "20%" }, { label: "Device name", get: r => r.device_name, w: "26%" },
       { label: "Model", get: r => r.model, w: "26%" }, { label: "Site", get: r => r.site, w: "16%" }],
-      { empty: "Every in-use device has a primary user." });
+      { empty: "Every in-use device has an owner or is marked Shared machine." });
+  },
+  drillSharedMachines() {
+    Drill.open("Shared machines without an assigned owner", this._inv().shared_machines || [], [
+      { label: "Serial", get: r => r.serial, mono: 1, w: "20%" }, { label: "Device name", get: r => r.device_name, w: "26%" },
+      { label: "Model", get: r => r.model, w: "26%" }, { label: "Site", get: r => r.site, w: "16%" }],
+      { empty: "No unassigned devices are marked Shared machine." });
   },
   drillWarranty() {
     Drill.open("Warranties expiring ≤90 days (or expired)", this._inv().warranty_soon || [], [
@@ -6902,6 +6981,14 @@ Object.assign(Mock, {
       this._deviceDates[k] = cur; });
     return { ok: true, data: this._deviceDates };
   },
+  _deviceClassifications: {},
+  async device_classifications_get() { return { ok: true, data: this._deviceClassifications, can_edit: true }; },
+  async device_classification_set(serial, classification) {
+    const key = String(serial || "").toLowerCase();
+    if (classification === "shared") this._deviceClassifications[key] = "shared";
+    else delete this._deviceClassifications[key];
+    return { ok: true, classification, data: this._deviceClassifications };
+  },
   async open_mailto(to, subject, body) { console.log("mailto", to, subject); return { ok: true }; },
   async issue_counts() { return { ok: true, new: this._issues.filter(d => d.status === "new").length, updates: 1, triage: true }; },
   async get_update_info() { return { ok: true, current: "2026.10.01", latest: "", min: "", update_available: false, update_required: false }; },
@@ -7155,11 +7242,14 @@ Object.assign(Mock, {
     up.sort((a, b) => a.days - b.days);
     wb.expiring_90 = wb.d0_30 + wb.d31_90; wb.upcoming = up.slice(0, 6);
     const NBGW = new Set(["LTR", "BRI"]);
-    const notNbgw = this._use.filter(r => { const s = (r.site_tag || "").trim(); return s && !NBGW.has(s.toUpperCase()); })
+    const notNbgw = this._use.filter(r => { const s = (r.site_tag || "").trim(); return (r.user || "").trim() && s && !NBGW.has(s.toUpperCase()); })
       .map(r => ({ serial: r.serial, model: r.model, user: r.user, office: r.site_tag }));
     const byOffice = notNbgw.reduce((m, r) => { m[r.office] = (m[r.office] || 0) + 1; return m; }, {});
-    const noUpn = this._use.filter(r => !(r.user || "").trim())
-      .map(r => ({ serial: r.serial, device_name: r.device_name || "", model: r.model, site: r.site_tag || "", source: "In Use" }));
+    const unassigned = this._use.filter(r => !(r.user || "").trim())
+      .map(r => ({ serial: r.serial, device_name: r.device_name || "", model: r.model, site: r.site_tag || "", source: "In Use",
+        classification: this._deviceClassifications[(r.serial || "").toLowerCase()] === "shared" ? "Shared machine" : "Needs owner" }));
+    const needsOwner = unassigned.filter(r => r.classification === "Needs owner");
+    const sharedMachines = unassigned.filter(r => r.classification === "Shared machine");
     // tag each machine with the list it lives in, so drills spanning both show Source
     const tagged = _stock.map(m => ({ m, src: "In Stock" })).concat(this._use.map(m => ({ m, src: "In Use" })));
     const warrantySoon = tagged.map(t => ({ ...t, v: (t.m.warranty || "").slice(0, 10) }))
@@ -7179,7 +7269,7 @@ Object.assign(Mock, {
       .filter(x => x.days > 30)
       .map(x => ({ serial: x.m.serial, device_name: x.m.device_name || "", model: x.m.model, user: x.m.user || "", last_checkin: x.d, days: x.days, source: x.src }))
       .sort((a, b) => b.days - a.days);
-    const noMfa = this._use.filter(r => r.mfa === "No")
+    const noMfa = this._use.filter(r => r.mfa === "No" && (r.user || "").trim())
       .map(r => ({ serial: r.serial, device_name: r.device_name || "", model: r.model, user: r.user || "", source: "In Use" }));
     return { ok: true, signed_in: true, account: "Demo User (mock)",
       setups: { total, complete, in_progress: total - complete,
@@ -7197,7 +7287,9 @@ Object.assign(Mock, {
         }, {}),
         warranty: wb,
         not_nbgw_count: notNbgw.length, not_nbgw: notNbgw, not_nbgw_by_office: byOffice,
-        no_upn_count: noUpn.length, no_upn: noUpn, warranty_soon: warrantySoon,
+        needs_owner_count: needsOwner.length, needs_owner: needsOwner,
+        shared_machine_count: sharedMachines.length, shared_machines: sharedMachines,
+        no_upn_count: unassigned.length, no_upn: unassigned, warranty_soon: warrantySoon,
         needs_upgrade_count: needsUp.length, needs_upgrade: needsUp.map(d => ({ ...d, reasons: ["processor released " + d.year + " (" + d.age + " yrs old)"], priority: Math.max(1, Math.min(5, d.age - 3)) })),
         upgrade_rules: { cpu_years: 5, warranty_months: 0 },
         missing_specs_count: _missing.length, missing_specs: _missing,

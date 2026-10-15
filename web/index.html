@@ -288,6 +288,11 @@ try {
             <option value="Yes">MFA: registered</option>
             <option value="unknown">MFA: unknown</option>
           </select>
+          <select id="fOwner" class="filt hidden" onchange="App.render()">
+            <option value="">All primary-user states</option>
+            <option value="needs_owner">Needs owner</option>
+            <option value="shared">Shared machine</option>
+          </select>
           <span id="ufChip" class="uf-chip hidden"></span>
           <button id="fClear" class="rowbtn hidden" onclick="App.clearFilters()">Clear filters</button>
           <span class="dev-tools-r"><span class="muted" id="devCount"></span><button class="rowbtn" onclick="App.copyList()" title="Copy the rows shown, ready to paste into Excel">Copy list</button></span>
