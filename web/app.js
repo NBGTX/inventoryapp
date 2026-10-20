@@ -11,18 +11,22 @@ const attr = s => (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/"
    must NOT lock the screen, so they are excluded. */
 const Busy = {
   n: 0, timer: null,
-  WRITE: /^(bulk_|device_dates_set|device_classification_set|save_|set_|add_|hub_bulk|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|coil_card_delete|coil_card_restore|switch_|register_|reserve_|complete_|start_|issue_(create|comment|update|delete|vote|watch|notify)|issues_import)/,
-  LONG: /^(run_sync|enrich_inventory|sync_all_divisions|master_sync|populate_mfa|boneyard_sweep|software_refresh|mfa_people_refresh|pull_prod_snapshot|set_data_mode|sharepoint_permissions_scan|sharepoint_permissions_search_sites)$/,
+  WRITE: /^(bulk_|device_dates_set|device_classification_set|device_checkout|device_return|saved_reports_save|sharepoint_review_save|ot_(asset_(save|delete)|assets_(import|send_reminders)|device_types_save)|save_|set_|add_|hub_bulk|delete_|remove_|update_|move_|restore_|hub_save|hub_add|hub_delete|hub_remove|perm_save|ts_unlock|coil_card_delete|coil_card_restore|switch_|register_|reserve_|complete_|start_|issue_(create|comment|update|delete|vote|watch|notify)|issues_import|sharepoint_permissions_apply_(copy|remove_links))/,
+  LONG: /^(run_sync|enrich_inventory|sync_all_divisions|master_sync|populate_mfa|boneyard_sweep|software_refresh|mfa_people_refresh|windows_updates_refresh|pull_prod_snapshot|set_data_mode|sharepoint_permissions_scan|sharepoint_permissions_search_sites|sharepoint_permissions_prepare_(copy|remove_links)|sharepoint_permissions_apply_(copy|remove_links))$/,
   watches(method) { return this.WRITE.test(method) && !this.LONG.test(method); },
   /* Long jobs keep running when you move to another page (the work is in the backend); this shows them in the sidebar
      so you can see they are still going, and stops a division switch from pulling the rug out from under them. */
   JOBS: { run_sync: "Syncing with Intune", enrich_inventory: "Filling in specs", sync_all_divisions: "Syncing all divisions",
           master_sync: "Master sync", populate_mfa: "Populating MFA", boneyard_sweep: "Checking the boneyard",
-          software_refresh: "Pulling software inventory", mfa_people_refresh: "Refreshing MFA", pull_prod_snapshot: "Copying production data",
+          software_refresh: "Pulling software inventory", mfa_people_refresh: "Refreshing MFA", windows_updates_refresh: "Checking Windows updates", pull_prod_snapshot: "Copying production data",
           sharepoint_permissions_scan: "Scanning SharePoint permissions",
           sharepoint_permissions_search_sites: "Searching SharePoint sites",
           sharepoint_permissions_prepare_inheritance: "Preparing permission preview",
-          sharepoint_permissions_apply_inheritance: "Propagating SharePoint permissions" },
+          sharepoint_permissions_apply_inheritance: "Propagating SharePoint permissions",
+          sharepoint_permissions_prepare_copy: "Preparing permission-copy preview",
+          sharepoint_permissions_apply_copy: "Copying SharePoint permissions",
+          sharepoint_permissions_prepare_remove_links: "Preparing link removal preview",
+          sharepoint_permissions_apply_remove_links: "Removing SharePoint links" },
   jobs: new Map(), _jobSeq: 0,
   jobStart(method) {
     const id = ++this._jobSeq;
@@ -161,7 +165,7 @@ const Mock = {
   _logIt(action, serial, model, details) {
     this._log.unshift({ when: new Date().toISOString(), action, serial, model, actor: "Demo User (mock data)", details });
   },
-  async get_status() { return { ok: true, signed_in: true, account: "Demo User (mock data)", upn: "demo.user@nucor.com" }; },
+  async get_status() { return { ok: true, signed_in: true, account: "Demo User (mock data)", upn: "demo.user@nucor.com", role: "super", super_admin: true, division: "NBG - Terrell", division_id: "nbgtx", object_id: "demo-object-id", tenant_id: "demo-tenant-id" }; },
   async trial_mode() { return { ok: true, enabled: true }; },
   async sign_in() { return { ok: true, account: "Demo User (mock data)" }; },
   async sharepoint_permission_check() { return { ok: true, status: "mock" }; },
@@ -173,9 +177,13 @@ const Mock = {
   async sharepoint_permissions_cancel_scan() { return { ok: false, error: "SharePoint scan cancellation needs the signed-in NBG Hub desktop app." }; },
   async sharepoint_permissions_prepare_inheritance() { return { ok: false, error: "Permission propagation needs the signed-in NBG Hub desktop app." }; },
   async sharepoint_permissions_apply_inheritance() { return { ok: false, error: "Permission propagation needs the signed-in NBG Hub desktop app." }; },
+  async sharepoint_permissions_prepare_copy() { return { ok: false, error: "Permission copy needs the signed-in NBG Hub desktop app." }; },
+  async sharepoint_permissions_apply_copy() { return { ok: false, error: "Permission copy needs the signed-in NBG Hub desktop app." }; },
+  async sharepoint_permissions_prepare_remove_links() { return { ok: false, error: "Sharing-link removal needs the signed-in NBG Hub desktop app." }; },
+  async sharepoint_permissions_apply_remove_links() { return { ok: false, error: "Sharing-link removal needs the signed-in NBG Hub desktop app." }; },
   async sign_out() { return { ok: true }; },
-  async app_version() { return { ok: true, version: "2026.10.15" }; },
-  async register_client() { return { ok: true, version: "2026.10.15" }; },
+  async app_version() { return { ok: true, version: "2026.10.20" }; },
+  async register_client() { return { ok: true, version: "2026.10.20" }; },
   async get_clients() {
     return { ok: true, clients: [
       { machine: "BGPF5MDA4B", user: "blake.stevenson", version: "2026.09.29", last_seen: "2026-09-28T15:40:00Z" },
@@ -516,7 +524,7 @@ const Divisions = {
   codes() { return this.sites.map(s => String(s.code).toUpperCase()); },
   invKey() { return this.current === "nbgw" ? "nbgw_inv" : "nbg_inv_" + this.current; },
   draftKey() { return this.current === "nbgw" ? "nbgw_hub_draft_v2" : "nbg_hub_draft_v2_" + this.current; },
-  cur() { return this.list.find(x => x.id === this.current) || { id: this.current, name: "", company_name: "" }; },
+  cur() { return this.list.find(x => x.id === this.current) || { id: this.current, name: "", company_name: "", company_names: [] }; },
   /* "NBGW - Nucor Buildings Group West" -> "NBGW" (short code form); "NBG - Terrell" stays whole (its first part is not the id) */
   label() {
     const c = this.cur(), n = (c.name || "").trim();
@@ -550,7 +558,156 @@ const Divisions = {
     }
     const r = await Backend.call("switch_division", id);
     if (!r || !r.ok) { App.toast((r && r.error) || "Could not switch division.", true); this.renderSwitcher(); return; }
+    GlobalSearch.invalidate();
     Resume.reload();
+  },
+};
+
+/* ---- App-wide search: current-division records, loaded lazily and cached briefly ---- */
+const GlobalSearch = {
+  _index: null, _division: "", _loadedAt: 0, _pending: null, _shown: [], _active: -1, _timer: null, _seq: 0, _bound: false,
+  init() {
+    if (this._bound) return; this._bound = true;
+    document.addEventListener("click", e => { if (!e.target.closest("#globalSearchWrap")) this.hide(); });
+    document.addEventListener("keydown", e => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k" && !document.body.classList.contains("signed-out")) {
+        e.preventDefault(); const input = document.getElementById("globalSearchInput"); if (input) { input.focus(); input.select(); }
+      }
+    });
+  },
+  invalidate() { this._index = null; this._division = ""; this._loadedAt = 0; },
+  typed(value) {
+    const q = String(value || "").trim(); clearTimeout(this._timer);
+    if (q.length < 2) { this._shown = []; this._active = -1; this.hide(); return; }
+    const seq = ++this._seq; this.show(`<div class="global-search-status">Searching this division…</div>`);
+    this._timer = setTimeout(() => this.search(q, seq), 180);
+  },
+  async _loadIndex() {
+    const division = Divisions.current || "";
+    if (this._index && this._division === division && Date.now() - this._loadedAt < 45000) return this._index;
+    if (this._pending && this._division === division) return this._pending;
+    this._division = division;
+    const safe = promise => Promise.resolve(promise).catch(() => null);
+    this._pending = Promise.all([
+      safe(Backend.call("ot_assets_get")), safe(Backend.call("mfa_people_get")), safe(Backend.call("software_get")),
+      safe(Backend.call("issues_list")), safe(Backend.call("hub_get_upgrades")),
+    ]).then(([ot, people, software, issues, upgrades]) => {
+      const pdata = people && people.ok && people.data || {};
+      const sdata = software && software.ok && software.data || {};
+      const mergedPeople = new Map();
+      (pdata.people || []).forEach(p => {
+        const user = String(p.user || p.upn || "").trim(); if (user) mergedPeople.set(user.toLowerCase(), { ...p, user });
+      });
+      (sdata.users || []).forEach(p => {
+        const user = String(p.user || p.upn || "").trim();
+        if (user && !mergedPeople.has(user.toLowerCase())) mergedPeople.set(user.toLowerCase(), { ...p, user, _softwareOnly: true });
+      });
+      const appsByName = new Map();
+      (sdata.apps || []).forEach(a => {
+        const name = String(a.name || "").trim(), key = name.toLowerCase(); if (!key) return;
+        const g = appsByName.get(key) || { name, publisher: a.publisher || "", versions: new Set(), installs: new Map() };
+        if (a.version) g.versions.add(String(a.version));
+        (a.installs || []).forEach(i => g.installs.set([i.serial, i.device, i.user].join("|").toLowerCase(), i));
+        if (!g.publisher && a.publisher) g.publisher = a.publisher;
+        appsByName.set(key, g);
+      });
+      const apps = [...appsByName.values()].map(a => ({ ...a, version: [...a.versions].join(", "), installs: [...a.installs.values()] }));
+      const updata = upgrades && upgrades.ok && upgrades.data || {};
+      const result = {
+        ot: ot && ot.ok ? ot.assets || [] : [], people: [...mergedPeople.values()],
+        apps, issues: issues && issues.ok ? issues.issues || [] : [],
+        upgrades: updata.items || [],
+      };
+      if (this._division === division) { this._index = result; this._loadedAt = Date.now(); }
+      return result;
+    }).finally(() => { this._pending = null; });
+    return this._pending;
+  },
+  _record(type, title, detail, search, extra = {}) { return { type, title: String(title || ""), detail: String(detail || ""), search: String(search || title || ""), ...extra }; },
+  _results(index, q) {
+    const query = q.toLocaleLowerCase(), terms = query.split(/\s+/).filter(Boolean), out = [];
+    const add = (item, fields) => {
+      const text = fields.filter(Boolean).join(" ").toLocaleLowerCase();
+      if (terms.some(t => !text.includes(t))) return;
+      const exact = text.startsWith(query) || String(item.title).toLocaleLowerCase().startsWith(query);
+      out.push({ ...item, score: (exact ? 20 : 0) + terms.reduce((n, t) => n + (String(item.title).toLocaleLowerCase().includes(t) ? 3 : 0), 0) });
+    };
+    const devices = [...(App.state.stock || []).map(r => ({ row: r, tab: "stock" })), ...(App.state.use || []).map(r => ({ row: r, tab: "use" })), ...(App.state.boneyard || []).map(r => ({ row: r, tab: "boneyard" }))];
+    devices.forEach(({ row: d, tab }) => {
+      const name = d.device_name || d.hostname || d.serial;
+      add(this._record("device", name, [d.serial, d.model, d.user, d.site_tag, tab === "stock" ? "In stock" : tab === "boneyard" ? "Boneyard" : "In use"].filter(Boolean).join(" · "), d.serial, { serial: d.serial, tab }),
+        [name, d.serial, d.model, d.user, d.site_tag, d.manufacturer, d.cpu, d.os_version]);
+    });
+    index.people.forEach(p => add(this._record("person", p.name || p.user, [p.user, `${(p.devices || []).length} devices`].filter(Boolean).join(" · "), p.name || p.user, { user: p.user, softwareOnly: !!p._softwareOnly }),
+      [p.name, p.user, ...(p.devices || []).flatMap(d => [d.name, d.serial])]));
+    index.ot.forEach(d => add(this._record("ot", d.name, [d.type, d.ip_address, d.site, d.area, d.line].filter(Boolean).join(" · "), d.name, { name: d.name }),
+      [d.name, ...((OTDevices.FIELDS || []).map(([key]) => d[key]))]));
+    index.apps.forEach(a => add(this._record("software", a.name, [a.publisher, a.version, `${(a.installs || []).length} installs`].filter(Boolean).join(" · "), a.name, { name: a.name }),
+      [a.name, a.publisher, a.version]));
+    index.issues.forEach(i => add(this._record("issue", i.title, [i.id, i.status, (i.division || {}).name].filter(Boolean).join(" · "), i.title, { id: i.id }),
+      [i.title, i.short, i.id, (i.reporter || {}).name, (i.division || {}).name]));
+    index.upgrades.forEach(u => add(this._record("upgrade", u.device_name || u.serial, [u.serial, u.user, u.model, u.site, u.notes].filter(Boolean).join(" · "), u.serial || u.device_name, { serial: u.serial, site: u.site }),
+      [u.serial, u.device_name, u.user, u.model, u.site, u.notes]));
+    const order = { device: 0, person: 1, ot: 2, software: 3, issue: 4, upgrade: 5 };
+    return out.sort((a, b) => b.score - a.score || order[a.type] - order[b.type] || a.title.localeCompare(b.title)).slice(0, 18);
+  },
+  async search(q, seq) {
+    let index;
+    try { index = await this._loadIndex(); } catch (_) { index = null; }
+    if (seq !== this._seq) return;
+    this._shown = index ? this._results(index, q) : []; this._active = this._shown.length ? 0 : -1;
+    this.render(q);
+  },
+  show(html) {
+    const box = document.getElementById("globalSearchResults"), input = document.getElementById("globalSearchInput");
+    if (!box) return; box.innerHTML = html; box.classList.remove("hidden"); if (input) input.setAttribute("aria-expanded", "true");
+  },
+  hide() {
+    const box = document.getElementById("globalSearchResults"), input = document.getElementById("globalSearchInput");
+    if (box) box.classList.add("hidden"); if (input) input.setAttribute("aria-expanded", "false");
+  },
+  render(q) {
+    const box = document.getElementById("globalSearchResults"); if (!box) return;
+    if (!this._shown.length) return this.show(`<div class="global-search-status">No matches in ${esc(Divisions.cur().name || "this division")}.</div>`);
+    const labels = { device: "Device", person: "Teammate", ot: "OT device", software: "Software", issue: "Issue", upgrade: "Upgrade" };
+    this.show(`<div class="global-search-hint">Results in ${esc(Divisions.cur().name || "this division")} · select to open matching screen</div>` + this._shown.map((r, i) =>
+      `<button type="button" class="global-search-result${i === this._active ? " active" : ""}" role="option" aria-selected="${i === this._active}" onclick="GlobalSearch.open(${i})"><span class="global-search-result-main"><b>${esc(r.title)}</b><small>${esc(r.detail)}</small></span><span class="global-search-kind">${labels[r.type]}</span></button>`).join(""));
+  },
+  keydown(e) {
+    const box = document.getElementById("globalSearchResults");
+    if (e.key === "Escape") { this.hide(); return; }
+    if (!box || box.classList.contains("hidden")) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault(); const n = this._shown.length; if (!n) return;
+      this._active = (this._active + (e.key === "ArrowDown" ? 1 : -1) + n) % n;
+      this.render((document.getElementById("globalSearchInput") || {}).value || "");
+      const active = box.querySelector(".global-search-result.active"); if (active) active.scrollIntoView({ block: "nearest" });
+    } else if (e.key === "Enter" && this._active >= 0) { e.preventDefault(); this.open(this._active); }
+  },
+  open(i) {
+    const r = this._shown[i]; if (!r) return;
+    this.hide(); const input = document.getElementById("globalSearchInput"); if (input) input.value = "";
+    if (r.type === "device") {
+      App._restored = App._viewKey();
+      if (!Nav.go("inventory")) return;
+      App.showTab(r.tab); const q = document.getElementById("search"); if (q) q.value = r.serial; App.render();
+      setTimeout(() => App.toggleExpand(r.serial), 0);
+    } else if (r.type === "person") {
+      if (r.softwareOnly) {
+        Software._restored = Software._viewKey(); Software._mode = "people";
+        if (!Nav.go("software")) return; const q = document.getElementById("swSearch"); if (q) { q.value = r.user; Software.render(); }
+      } else { People._restored = People._viewKey(); People.f.q = r.user; if (!Nav.go("people")) return; }
+    } else if (r.type === "ot") {
+      if (!Nav.go("otdevices")) return; const q = document.getElementById("otSearch"); if (q) q.value = r.name; OTDevices.render();
+    } else if (r.type === "software") {
+      Software._restored = Software._viewKey(); if (!Nav.go("software")) return; const q = document.getElementById("swSearch"); if (q) { q.value = r.name; Software.render(); }
+    } else if (r.type === "issue") {
+      if (!Nav.go("issues")) return; Issues.open(r.id);
+    } else if (r.type === "upgrade") {
+      Upgrade._restored = Upgrade._viewKey(); Upgrade.f.q = r.search;
+      if (r.site) Upgrade.activeTab = Upgrade.siteKey(r.site);
+      if (!Nav.go("upgrades")) return; const q = document.getElementById("upQ"); if (q) { q.value = r.search; Upgrade.render(); }
+    }
   },
 };
 
@@ -560,30 +717,54 @@ const DirPicker = {
   mount(hostId, kind, onPick, placeholder) {
     const host = document.getElementById(hostId);
     if (!host) return;
-    host.innerHTML = `<div class="dp"><input class="dp-in" autocomplete="off" placeholder="${attr(placeholder || (kind === "group" ? "Search groups…" : "Search people (name or sign-in)…"))}"><div class="dp-list hidden"></div></div>`;
+    const prompt = placeholder || (kind === "group" ? "Search groups…" : "Search people (name or sign-in)…");
+    const listId = `dp-list-${hostId}`;
+    host.innerHTML = `<div class="dp"><input class="dp-in" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${attr(listId)}" aria-label="${attr(prompt)}" placeholder="${attr(prompt)}"><div class="dp-list hidden" id="${attr(listId)}" role="listbox"></div></div>`;
     const inp = host.querySelector(".dp-in"), list = host.querySelector(".dp-list");
-    let timer = null, seq = 0, items = [];
-    const hide = () => list.classList.add("hidden");
+    let timer = null, seq = 0, items = [], activeIndex = -1;
+    const hide = () => { list.classList.add("hidden"); inp.setAttribute("aria-expanded", "false"); inp.removeAttribute("aria-activedescendant"); activeIndex = -1; };
+    const draw = () => {
+      list.innerHTML = items.length
+        ? items.map((x, i) => `<div class="dp-item${i === activeIndex ? " sel" : ""}" id="${attr(listId)}-${i}" role="option" aria-selected="${i === activeIndex}" data-i="${i}"><b>${esc(x.name || x.upn)}</b><span>${esc(x.kind === "group" ? (x.detail || "group") : x.kind === "company" ? (x.detail || "") : ((x.upn || "") + (x.detail ? " · " + x.detail : "")))}</span></div>`).join("")
+        : `<div class="dp-none" role="status">No match</div>`;
+      inp.setAttribute("aria-expanded", "true");
+      if (activeIndex >= 0 && items[activeIndex]) inp.setAttribute("aria-activedescendant", `${listId}-${activeIndex}`);
+      else inp.removeAttribute("aria-activedescendant");
+      list.classList.remove("hidden");
+    };
+    const pick = index => {
+      const item = items[index]; if (!item) return;
+      inp.value = ""; hide(); onPick(item);
+    };
     const run = async () => {
       const q = inp.value.trim(), my = ++seq;
       if (q.length < 2) return hide();
       const r = await Backend.call("user_lookup", q, kind);
       if (my !== seq) return;                       // a newer keystroke superseded this answer
       items = (r && r.ok && r.results) || [];
-      list.innerHTML = items.length
-        ? items.map((x, i) => `<div class="dp-item" data-i="${i}"><b>${esc(x.name || x.upn)}</b><span>${esc(x.kind === "group" ? (x.detail || "group") : x.kind === "company" ? (x.detail || "") : ((x.upn || "") + (x.detail ? " · " + x.detail : "")))}</span></div>`).join("")
-        : `<div class="dp-none">No match</div>`;
-      list.classList.remove("hidden");
+      activeIndex = items.length ? 0 : -1;
+      draw();
     };
-    inp.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(run, 250); });
+    inp.addEventListener("input", () => { ++seq; items = []; activeIndex = -1; hide(); clearTimeout(timer); timer = setTimeout(run, 250); });
     inp.addEventListener("blur", () => setTimeout(hide, 180));
+    inp.addEventListener("keydown", async e => {
+      if (e.key === "Escape") { if (!list.classList.contains("hidden")) { e.preventDefault(); hide(); } return; }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        const wasHidden = list.classList.contains("hidden");
+        if (wasHidden) await run();
+        if (!items.length) return;
+        e.preventDefault();
+        activeIndex = wasHidden || activeIndex < 0 ? (e.key === "ArrowDown" ? 0 : items.length - 1) : (activeIndex + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+        draw(); list.querySelector(`[data-i="${activeIndex}"]`)?.scrollIntoView({ block: "nearest" });
+      } else if (e.key === "Enter" && !list.classList.contains("hidden") && activeIndex >= 0) {
+        e.preventDefault(); pick(activeIndex);
+      }
+    });
     list.addEventListener("mousedown", e => {
       const el = e.target.closest(".dp-item");
       if (!el) return;
       e.preventDefault();
-      const it = items[+el.dataset.i];
-      inp.value = ""; hide();
-      if (it) onPick(it);
+      pick(+el.dataset.i);
     });
   },
 };
@@ -837,6 +1018,87 @@ const Combo = {
   },
 };
 
+/* Release history is cumulative from the last packaged installer baseline. The installer build
+   updates APP_LAST_INSTALLER_VERSION from the latest previously packaged release. */
+const APP_LAST_INSTALLER_VERSION = "2026.10.19.2";
+const APP_RELEASE_NOTES = {
+  "2026.10.20": [
+    { title: "Windows Update Watch", detail: "Review Windows security update status by device using Microsoft’s update catalog. Critical or actively exploited updates are due within 72 hours; other security updates are due within 14 days, with a warning after day 7. Devices without a recent Intune check-in are marked unknown or stale. Filter by status or site and export the report." },
+  ],
+  "2026.10.19.2": [
+    { title: "Division admins — manage site matching", detail: "Division admins with Sites access can now update Entra company names and Intune device categories for each site. Changes affect matching on the next sync." },
+  ],
+  "2026.10.19": [
+    { title: "Search from any screen", detail: "Use the header search or Ctrl+K to find devices, teammates, software, OT assets, issues, and upgrades across the active division, then jump straight to the matching record." },
+  ],
+  "2026.10.16.16": [
+    { title: "Division settings — per-site Entra and Intune scopes", detail: "Assign multiple Entra company names and Intune device categories to each site. People lookup and device sync use the configured site scopes; existing single-value settings carry forward during migration." },
+  ],
+  "2026.10.16.15": [
+    { title: "OT devices — add import values to division choices", detail: "New Area, Line / process, Panel / cabinet, and Owner / team values are added to the division's choices during import. Approve fuzzy matches to use an existing choice; unmatched site text stays as entered." },
+    { title: "OT devices — save CSV exports", detail: "Sample CSV and Export CSV now open a Save As dialog so you can choose the file name and location." },
+  ],
+  "2026.10.16.14": [
+    { title: "OT devices — import Excel workbooks", detail: "Import .xlsx files directly, choose a worksheet, review matched columns, and import Excel date cells without converting the workbook to CSV." },
+  ],
+  "2026.10.16.13": [
+    { title: "Division settings — grouped sections", detail: "General, inventory, email and alerts, and integrations now live in separate tabs to reduce scrolling and clutter." },
+  ],
+  "2026.10.16.12": [
+    { title: "OT devices — review CSV dropdown matches", detail: "CSV import now suggests close matches for division Sites, areas, lines, panels, and owners. Approve each suggested value before import; unapproved text stays unchanged." },
+  ],
+  "2026.10.16.11": [
+    { title: "OT devices — verify records from list", detail: "Confirm device details are still current with one row-level action; verification date updates immediately and the stale marker refreshes." },
+    { title: "OT devices — division stale period", detail: "Choose 3, 6, 12, or 24 months before device information is marked stale. OT reminder emails and list filters use the same period." },
+  ],
+  "2026.10.16.10": [
+    { title: "OT devices — division dropdowns", detail: "Choose Sites from your division's configured Sites. Standardize area, line/process, panel/cabinet, and owner/team values in division settings; older saved values remain available when editing." },
+    { title: "Issue notifications — refreshed email design", detail: "Platform issue alerts now use a branded layout with issue, division, reporter, status, and event details." },
+  ],
+  "2026.10.16.9": [
+    { title: "OT devices — freshness and data quality", detail: "See when each record was last updated; filter stale updates and missing key details. Send review reminders to division recipients enabled in Settings." },
+    { title: "OT devices — CSV import and sample", detail: "Download sample CSV, import with automatic column matching, review mappings, and choose date format. Matching serial numbers or asset tags update existing records." },
+    { title: "OT devices — configurable types", detail: "Super admins can maintain device types in Platform settings. OT entry form now groups fields into Device, Network, and Operations tabs." },
+  ],
+  "2026.10.16.8": [
+    { title: "OT devices — shared asset register", detail: "Track Windows systems, PLCs, HMIs, network devices, sensors, and other OT assets with network, vendor, version, site, criticality, and verification details. Filter and export the division list to CSV." },
+  ],
+  "2026.10.16.7": [
+    { title: "Devices — checkout and custody history", detail: "Record loans from stock or in-use inventory, due dates, returns, and notes separately from Intune primary users." },
+    { title: "Devices — Intune change history", detail: "Keep per-device snapshots when Intune facts change, so asset changes can be reviewed over time." },
+    { title: "Dashboard — data quality center", detail: "Review and export missing device details, missing owners, stale check-ins, and warranty gaps." },
+    { title: "Inventory — division alerts", detail: "Opt-in recipients can get alerts for low available stock, stale check-ins, expired warranties, and overdue device returns." },
+    { title: "Endpoint provisioning — offboarding checklist", detail: "Track teammate offboarding tasks and handoffs alongside computer and new-user setup." },
+    { title: "SharePoint — access review plan", detail: "Stage findings with reviewer, due date, and decision; plans are shared for the division without changing SharePoint access." },
+    { title: "Devices — saved reports", detail: "Save and reopen shared device-list searches and filters for the division." },
+  ],
+  "2026.10.16.6": [
+    { title: "Updates — full installer change list", detail: "The What's new window now includes every release note since the previous installer." },
+  ],
+  "2026.10.16.5": [
+    { title: "Email — sample every notification type", detail: "Division settings let you send one selected sample or all six: issue, status, comment, Boneyard, SharePoint, and Not allowed software." },
+  ],
+  "2026.10.16.4": [
+    { title: "Email — division notification lists", detail: "Division admins can choose recipients for issue, Boneyard, SharePoint permission, and Not allowed software policy emails." },
+    { title: "Email — branded messages and test", detail: "Notification emails have a clear NBG Hub layout, useful context, and plain-text fallback. Send a test to yourself from Division settings > General." },
+    { title: "SharePoint — permission activity and alerts", detail: "Permission propagation, copy, and sharing-link revocation appear in Activity and can notify opted-in division recipients." },
+    { title: "Boneyard — safer automatic checks", detail: "Incomplete Intune, Entra, or AD lookups and missing device identity now stop automatic moves; a recent known device must validate AD results." },
+    { title: "Sign-in — identity details", detail: "Hover over signed-in account in sidebar to see the account, division role, tenant ID, and object ID." },
+  ],
+  "2026.10.16.3": [
+    { title: "Software — flag not allowed apps", detail: "Flag apps for this division and review where they are installed." },
+    { title: "Software — export full report", detail: "Save one CSV with every flagged app and its installed devices, users, versions, sites, and departments. The Windows Save As dialog lets you choose where it goes." },
+    { title: "Teammates — show software flags", detail: "Teammate badges open a list of disallowed apps and the machines they are installed on." },
+    { title: "Teammates — filter software", detail: "The teammate software view can show only apps flagged Not allowed." },
+    { title: "SharePoint — copy or propagate permissions", detail: "Copy grants between folders or libraries, or make a destination's descendants inherit its access. Review affected items before applying." },
+    { title: "SharePoint — revoke sharing links", detail: "Remove one link, selected links, or links across a fully scanned library or site, with a review before changes apply." },
+    { title: "SharePoint — scan selected folders", detail: "Browse libraries before scanning, choose folders, and scan their nested folders and files with visible progress." },
+    { title: "Devices — missing primary user", detail: "Classify devices as shared or needing an owner, with a filter and counts for reviewing both groups." },
+    { title: "Devices — last reboot", detail: "See last reboot date and time in the device list; hover to view the full timestamp." },
+    { title: "Issues — protect drafts", detail: "Minimize and restore an unfinished issue with its title, save it without submitting, and confirm before closing and discarding it." },
+  ],
+};
+
 const App = {
   state: {
     tab: "stock", stock: [], use: [], boneyard: [], account: null, siteTags: ["LTR", "BRI"],
@@ -850,6 +1112,7 @@ const App = {
 
   async init(real, st0) {
     Backend.real = real;
+    GlobalSearch.init();
     this.loadVersion();
     if (!Divisions.list.length) await Divisions.load();
     DataMode.refresh();
@@ -879,13 +1142,14 @@ const App = {
       else if (b.dataset.action === "editstock") App.editStock(b.dataset.serial);
       else if (b.dataset.action === "restoreboneyard") App.restoreBoneyard(b.dataset.serial);
       else if (b.dataset.action === "deploy") App.deployPrompt(b.dataset.serial);
+      else if (b.dataset.action === "lifecycle") DeviceLifecycle.open(b.dataset.serial);
     });
     const st = st0 || await Backend.call("get_status");
     if (st && st.signed_in) {
       this.state.account = st.account; this.state.upn = st.upn || "";
       const acct = document.getElementById("acct");
       acct.textContent = st.upn || st.account || "Signed in";
-      acct.title = st.account ? `${st.account} · ${st.upn || ""}` : (st.upn || "");
+      acct.title = [st.account, st.upn, st.super_admin ? "Platform super admin" : `Division role: ${st.role || "none"}`, st.division ? `Division: ${st.division}` : "", st.object_id ? `Object ID: ${st.object_id}` : "", st.tenant_id ? `Tenant ID: ${st.tenant_id}` : ""].filter(Boolean).join(" · ");
       document.getElementById("signout").classList.remove("hidden");
       await this.startup();
     } else {
@@ -917,6 +1181,7 @@ const App = {
     this.checkUpdate();
     this.renderCached();       // 1) instant: show last-known data from local cache
     await this.reload();       // 2) fast: re-read the SharePoint lists and repaint
+    await this.showWhatsNewIfNeeded();
     SyncLine.refresh();
     // 3) background: Intune sync (moves + backfill). Deferred a few seconds so it
     // doesn't hammer Graph alongside the dashboard/devices reads during first paint.
@@ -934,6 +1199,52 @@ const App = {
       if (el) { el.style.color = r.update_required ? "var(--red)" : "var(--amber)"; el.title = (r.update_required ? "Update required: this build is older than " + r.min : "Update available: " + r.latest) + ". Ask your admin for the new installer."; }
       this.toast(r.update_required ? "NBG Hub update required (this build is older than " + r.min + ")." : "NBG Hub update available: " + r.latest + ".", !!r.update_required);
     } catch (e) {}
+  },
+
+  async showWhatsNewIfNeeded() {
+    try {
+      const r = await Backend.call("app_version"), version = r && r.ok ? String(r.version || "") : "";
+      if (!version || !this.releaseNotesThrough(version).length) return;
+      const key = "nbg_whats_new_seen_" + version;
+      try { if (localStorage.getItem(key) === "1") return; }
+      catch (e) { if (this._releaseSeen === version) return; }
+      this.showReleaseNotes(version);
+    } catch (e) { /* don't delay app startup if release info is unavailable */ }
+  },
+  async showReleaseNotes(version) {
+    if (!version) {
+      try { const r = await Backend.call("app_version"); version = r && r.ok ? String(r.version || "") : ""; }
+      catch (e) { version = ""; }
+    }
+    const releases = this.releaseNotesThrough(version);
+    const notes = releases.flatMap(release => release.notes.map(note => ({ ...note, releaseVersion: release.version })));
+    if (!notes.length) return this.toast("Release notes are not available for this version.", true);
+    const items = releases.map(release => `<li class="whats-new-version">v${esc(release.version)}</li>` +
+      release.notes.map(n => `<li><b>${esc(n.title)}</b><span>${esc(n.detail)}</span></li>`).join("")).join("");
+    document.getElementById("modalRoot").innerHTML =
+      `<div class="overlay"><div class="modal whats-new-modal" role="dialog" aria-modal="true" aria-labelledby="whatsNewTitle">
+        <div class="modal-head"><h3 id="whatsNewTitle">What’s new in NBG Hub <span class="muted">v${esc(version)}</span></h3><button aria-label="Close" onclick="App.closeReleaseNotes('${attr(version)}')">&times;</button></div>
+        <div class="modal-body"><p class="sub-note" style="margin:0 0 14px">All updates from v${esc(APP_LAST_INSTALLER_VERSION)} through v${esc(version)}:</p><ul class="whats-new-list">${items}</ul></div>
+        <div class="modal-foot"><button class="primary" onclick="App.closeReleaseNotes('${attr(version)}')">Got it</button></div>
+      </div></div>`;
+  },
+  releaseNotesThrough(version) {
+    const compare = (a, b) => {
+      const av = String(a).split(".").map(Number), bv = String(b).split(".").map(Number);
+      for (let i = 0; i < Math.max(av.length, bv.length); i++) {
+        const delta = (av[i] || 0) - (bv[i] || 0);
+        if (delta) return delta;
+      }
+      return 0;
+    };
+    return Object.keys(APP_RELEASE_NOTES).filter(release => compare(release, APP_LAST_INSTALLER_VERSION) >= 0 && compare(release, version) <= 0)
+      .sort(compare).map(release => ({ version: release, notes: APP_RELEASE_NOTES[release] || [] }));
+  },
+  closeReleaseNotes(version) {
+    const key = "nbg_whats_new_seen_" + String(version || "");
+    try { localStorage.setItem(key, "1"); } catch (e) { this._releaseSeen = String(version || ""); }
+    this._releaseSeen = String(version || "");
+    this._closeModal();
   },
 
   renderCached() {
@@ -1055,6 +1366,7 @@ const App = {
           <div class="modal-head"><h3>Versions in use — ${list.length} machine${list.length === 1 ? "" : "s"}</h3><button onclick="App._closeModal()">&times;</button></div>
           <div class="modal-body"><table class="drill-tbl"><colgroup><col style="width:28%"><col style="width:30%"><col style="width:16%"><col style="width:26%"></colgroup>
             <thead><tr><th>Machine</th><th>User</th><th>Version</th><th>Last seen</th></tr></thead><tbody>${rows}</tbody></table></div>
+          <div class="modal-foot"><button class="ghost" onclick="App.showReleaseNotes()">What’s new</button><button class="primary" onclick="App._closeModal()">Close</button></div>
         </div></div>`;
     });
   },
@@ -1070,6 +1382,7 @@ const App = {
       People.overlay(this.state.use),
       DeviceDates.overlay(this.state.stock, this.state.use, this.state.boneyard),
       DeviceClassifications.overlay(),
+      DeviceLifecycle.refreshIndex(),
     ]);
     if (DeviceClassifications.trialMode && !this.state.use.some(r => r.serial === "DEMO-OWNER-001")) {
       this.state.use.push({ serial: "DEMO-OWNER-001", device_name: "DEMO OWNER TEST", manufacturer: "NBG Hub Demo", model: "Demo only — owner classification", user: "", site_tag: "DEMO", cpu: "Demo data", ram: "—", storage: "—", warranty: "", os_version: "Demo data", os_install: "", last_checkin: "", mfa: "—", is_demo: true });
@@ -1434,6 +1747,7 @@ const App = {
   },
 
   render() {
+    SavedReports.refresh();
     this._restoreView();
     this._renderCore();
     this._decorateSel();
@@ -1563,10 +1877,10 @@ const App = {
           const open = exp.has(r.serial);
           return `<tr>
           <td>${this.detailToggle(r, open, "Show all specs / assign site")}</td>
-          <td class="mono" title="${attr(r.serial)}">${esc(r.serial)}</td><td title="${attr(r.manufacturer)}">${esc(r.manufacturer)}</td><td title="${attr(r.model)}">${esc(r.model)}</td>
+          <td class="mono" title="${attr(r.serial)}">${esc(r.serial)} ${DeviceLifecycle.badge(r.serial)}</td><td title="${attr(r.manufacturer)}">${esc(r.manufacturer)}</td><td title="${attr(r.model)}">${esc(r.model)}</td>
           <td title="${attr([r.cpu, r.ram, r.storage].filter(Boolean).join(" · "))}">${esc([r.cpu, r.ram, r.storage].filter(Boolean).join(" · "))}</td>
           <td>${esc(r.site_tag)}</td><td>${warrCell(r.warranty)}</td><td>${esc(day(r.date_added))}</td>
-          <td style="text-align:right;white-space:nowrap">${act("🚀 Deploy", "deploy", r.serial, false, r.deploy_date ? "Deployed " + r.deploy_date + " - click to change" : "Record the date this machine was deployed")} ${act("✎", "editstock", r.serial, false, "Edit device")} ${act("✕", "remove", r.serial, true, "Remove")}</td></tr>` +
+          <td style="text-align:right;white-space:nowrap">${act("↔", "lifecycle", r.serial, false, "Checkout, return, and view device history")} ${act("🚀 Deploy", "deploy", r.serial, false, r.deploy_date ? "Deployed " + r.deploy_date + " - click to change" : "Record the date this machine was deployed")} ${act("✎", "editstock", r.serial, false, "Edit device")} ${act("✕", "remove", r.serial, true, "Remove")}</td></tr>` +
           (open ? detail(r) : "");
         }).join("") +
         `</tbody></table>`;
@@ -1608,10 +1922,10 @@ const App = {
         ? '<span style="color:#ff6b6b;font-weight:600">No</span>'
         : '<span style="color:var(--muted)" title="MFA status unavailable — needs AuditLog.Read.All consent">—</span>';
       const ownerCell = r => {
-        if ((r.user || "").trim()) return `<a class="sw-user" data-user="${attr(r.user)}" title="See everything ${attr(r.user)} has installed">${esc(r.user)}</a>`;
+        if ((r.user || "").trim()) return `<a class="sw-user" data-user="${attr(r.user)}" title="See everything ${attr(r.user)} has installed">${esc(r.user)}</a> ${DeviceLifecycle.badge(r.serial)}`;
         const status = DeviceClassifications.status(r);
-        if (!DeviceClassifications.canEdit) return `<span class="owner-state ${status}" title="${status === "shared" ? "Shared machine" : "No primary user; owner not confirmed"}">${status === "shared" ? "Shared machine" : "Needs owner"}</span>`;
-        return `<select class="owner-classification" data-serial="${attr(r.serial)}" aria-label="Classify ${attr(r.serial)}" title="Choose Shared machine when no individual owner is expected"><option value="needs_owner" ${status === "needs_owner" ? "selected" : ""}>Needs owner</option><option value="shared" ${status === "shared" ? "selected" : ""}>Shared machine</option></select>`;
+        if (!DeviceClassifications.canEdit) return `<span class="owner-state ${status}" title="${status === "shared" ? "Shared machine" : "No primary user; owner not confirmed"}">${status === "shared" ? "Shared machine" : "Needs owner"}</span> ${DeviceLifecycle.badge(r.serial)}`;
+        return `<select class="owner-classification" data-serial="${attr(r.serial)}" aria-label="Classify ${attr(r.serial)}" title="Choose Shared machine when no individual owner is expected"><option value="needs_owner" ${status === "needs_owner" ? "selected" : ""}>Needs owner</option><option value="shared" ${status === "shared" ? "selected" : ""}>Shared machine</option></select> ${DeviceLifecycle.badge(r.serial)}`;
       };
       const detail = r => `<tr><td></td><td colspan="11" class="detailcell" style="padding:0 18px 14px;">
         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 24px;background:var(--darker);border:1px solid var(--border);border-radius:8px;padding:14px 16px;">
@@ -1642,7 +1956,7 @@ const App = {
             <td>${r.is_demo ? "—" : dateIn(r, "deploy")}</td><td>${r.is_demo ? "—" : dateIn(r, "mfg")}</td>
             <td ${r.is_demo ? "" : `data-reboot-serial="${attr(r.serial)}" title="${attr(this.lastRebootTitle(r.serial))}"`}>${r.is_demo ? "Demo only" : esc(this.lastRebootDisplay(r.serial))}</td>
             <td>${r.is_demo ? "—" : `${esc(day(r.last_checkin))}${checkinBadge(r.last_checkin)}`}</td>
-            <td style="text-align:right;white-space:nowrap">${r.is_demo ? `<span class="demo-device-badge">Demo only</span>` : `${act("✎", "editspecs", r.serial, false, "Edit CPU, RAM, storage and warranty")} ${act("⬆", "upgrade", r.serial, false, "Add to upgrade list")} ${act("✕", "remove", r.serial, true, "Remove")}`}</td></tr>` +
+            <td style="text-align:right;white-space:nowrap">${r.is_demo ? `<span class="demo-device-badge">Demo only</span>` : `${act("↔", "lifecycle", r.serial, false, "Checkout, return, and view device history")} ${act("✎", "editspecs", r.serial, false, "Edit CPU, RAM, storage and warranty")} ${act("⬆", "upgrade", r.serial, false, "Add to upgrade list")} ${act("✕", "remove", r.serial, true, "Remove")}`}</td></tr>` +
             (open ? detail(r) : "");
         }).join("") +
         `</tbody></table>`;
@@ -1735,6 +2049,107 @@ const App = {
     document.getElementById("toasts").appendChild(t);
     setTimeout(() => t.remove(), 4200);
   },
+};
+
+const DeviceLifecycle = {
+  index: {},
+  async refreshIndex() { try { const r = await Backend.call("device_lifecycle_get"); this.index = r && r.ok ? (r.devices || {}) : {}; } catch (e) { this.index = {}; } },
+  badge(serial) { const state = this.index[String(serial || "").toLowerCase()]; return state && state.status === "checked_out" ? `<span class="owner-state shared" title="Checked out to ${attr(state.custodian || "")}${state.due_date ? " · due " + attr(state.due_date) : ""}">Checked out</span>` : ""; },
+  async open(serial) {
+    const root = document.getElementById("modalRoot");
+    root.innerHTML = `<div class="overlay"><div class="modal" style="max-width:720px;width:94vw"><div class="modal-head"><h3>Device checkout and history · ${esc(serial)}</h3><button onclick="App._closeModal()" aria-label="Close">×</button></div><div class="modal-body"><div class="empty"><span class="busy-spin"></span> Loading device history…</div></div></div></div>`;
+    const r = await Backend.call("device_lifecycle_get", serial);
+    const body = root.querySelector(".modal-body"); if (!body) return;
+    if (!r || !r.ok) { body.innerHTML = `<p class="empty">${esc((r && r.error) || "Could not load history.")}</p>`; return; }
+    this.serial = serial; this.device = r.device || {};
+    const current = this.device.status === "checked_out";
+    const rows = (this.device.history || []).slice().reverse().map(x => {
+      const changes = x.snapshot ? Object.entries(x.snapshot).map(([k, v]) => `${k.replaceAll("_", " ")}: ${v || "—"}`).join(" · ") : "";
+      return `<tr><td>${esc(new Date(x.at).toLocaleString())}</td><td>${esc(x.action || "")}</td><td>${esc(x.custodian || x.by || "")}</td><td>${esc(x.due_date || "")}</td><td>${esc(x.notes || changes)}</td></tr>`;
+    }).join("");
+    body.innerHTML = `${current ? `<div class="notice warn"><b>Checked out to ${esc(this.device.custodian || "")}</b>${this.device.due_date ? ` · Due ${esc(this.device.due_date)}` : " · No due date"}</div><button class="primary" style="margin:10px 0" onclick="DeviceLifecycle.returnDevice()">Record return</button>` : `<div class="fields"><div class="field"><label>Checked out to</label><input id="lifeCustodian" placeholder="Name or email"></div><div class="field"><label>Expected return</label><input id="lifeDue" type="date"></div><div class="field" style="flex:1"><label>Notes</label><input id="lifeNotes" placeholder="Optional checkout note"></div></div><button class="primary" style="margin:10px 0" onclick="DeviceLifecycle.checkout()">Record checkout</button>`}<p class="muted">Custody record is separate from Intune primary user. Intune changes are included in history when sync updates this device.</p><h4>History</h4><div class="table-wrap"><table class="fit"><thead><tr><th>When</th><th>Event</th><th>Person</th><th>Due</th><th>Notes</th></tr></thead><tbody>${rows || `<tr><td colspan="5" class="muted">No history recorded yet.</td></tr>`}</tbody></table></div>`;
+  },
+  async checkout() {
+    const r = await Backend.call("device_checkout", this.serial, document.getElementById("lifeCustodian").value,
+      document.getElementById("lifeDue").value, document.getElementById("lifeNotes").value);
+    if (!r || !r.ok) return App.toast((r && r.error) || "Checkout could not be saved.", true);
+    this.index[String(this.serial).toLowerCase()] = { status: "checked_out", custodian: r.device.custodian, due_date: r.device.due_date };
+    App._closeModal(); App.toast("Checkout recorded.");
+    App.render();
+  },
+  async returnDevice() {
+    const r = await Backend.call("device_return", this.serial, "");
+    if (!r || !r.ok) return App.toast((r && r.error) || "Return could not be saved.", true);
+    this.index[String(this.serial).toLowerCase()] = { status: "available" };
+    App._closeModal(); App.toast("Return recorded.");
+    App.render();
+  }
+};
+
+const SavedReports = {
+  reports: [], loadedFor: "",
+  async refresh(force = false) {
+    const key = Divisions.current || "";
+    if (!force && this.loadedFor === key) return;
+    const r = await Backend.call("saved_reports_get");
+    if (!r || !r.ok) return;
+    this.loadedFor = key; this.reports = r.reports || [];
+    const sel = document.getElementById("savedReports"); if (!sel) return;
+    sel.innerHTML = `<option value="">Saved reports</option>` + this.reports.map(x => `<option value="${attr(x.id)}">${esc(x.name)}</option>`).join("");
+  },
+  filters() {
+    const f = {}; ["fModel", "fCpu", "fRam", "fCheckin", "fMfa", "fOwner", "fSite", "fMfr", "fWarr", "fAge"].forEach(id => { const e = document.getElementById(id); if (e && e.value) f[id] = e.value; });
+    return { tab: App.state.tab, q: (document.getElementById("search") || {}).value || "", f };
+  },
+  async saveCurrent() {
+    const name = (prompt("Name this device report:") || "").trim(); if (!name) return;
+    await this.refresh();
+    const reports = this.reports.filter(x => x.name.toLowerCase() !== name.toLowerCase());
+    reports.unshift({ id: "report-" + Date.now().toString(36), name, filters: this.filters() });
+    const r = await Backend.call("saved_reports_save", reports.slice(0, 50));
+    if (!r || !r.ok) return App.toast((r && r.error) || "Report could not be saved.", true);
+    this.reports = r.reports || reports; this.loadedFor = ""; await this.refresh(true);
+    App.toast("Saved report is available to this division.");
+  },
+  apply(id) {
+    const report = this.reports.find(x => x.id === id); if (!report) return;
+    const f = report.filters || {};
+    if (["stock", "use", "boneyard"].includes(f.tab)) App.showTab(f.tab);
+    const q = document.getElementById("search"); if (q) q.value = f.q || "";
+    Object.entries(f.f || {}).forEach(([key, value]) => { const el = document.getElementById(key); if (el && [...el.options].some(o => o.value === value)) { el.value = value; if (el._sync) el._sync(); } });
+    App.render();
+  }
+};
+
+const DataQuality = {
+  rows() {
+    const out = [], now = Date.now(), staleDays = Number(Dashboard._inv().stale_days || 30), lists = [["In use", App.state.use || []], ["In stock", App.state.stock || []]];
+    lists.forEach(([bucket, list]) => list.forEach(r => {
+      const push = (issue, detail) => out.push({ issue, serial: r.serial || "", device: r.device_name || "", user: r.user || "", site: r.site_tag || "", detail, bucket });
+      if (!r.serial) push("Missing serial", "No serial number");
+      if (!r.model) push("Missing model", "Device model is blank");
+      if (!r.cpu || !r.ram) push("Missing specifications", [!r.cpu && "CPU", !r.ram && "RAM"].filter(Boolean).join(" and ") + " missing");
+      if (bucket === "In use" && !(r.user || "").trim() && DeviceClassifications.status(r) === "needs_owner") push("Needs owner", "No Intune primary user or shared-device classification");
+      const checkin = Date.parse(r.last_checkin || "");
+      if (Number.isFinite(checkin) && now - checkin > staleDays * 86400000) push("Stale Intune check-in", `${Math.floor((now - checkin) / 86400000)} days since check-in`);
+      const warranty = Date.parse(r.warranty || "");
+      if (r.warranty && Number.isFinite(warranty) && warranty < now) push("Expired warranty", String(r.warranty).slice(0, 10));
+      else if (!r.warranty) push("No warranty date", "Warranty end date is not recorded");
+    }));
+    return out;
+  },
+  open() {
+    const rows = this.rows();
+    document.getElementById("modalRoot").innerHTML = `<div class="overlay"><div class="modal" style="width:min(980px,96vw)"><div class="modal-head"><h3>Data quality · ${rows.length} findings</h3><button onclick="App._closeModal()" aria-label="Close">×</button></div><div class="modal-body"><p class="muted">Review missing ownership or specifications, stale Intune check-ins, and warranty gaps.</p><div class="table-wrap" style="max-height:60vh;overflow:auto"><table class="fit"><thead><tr><th>Finding</th><th>Device</th><th>Serial</th><th>User</th><th>Site</th><th>Details</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.issue)}</td><td>${esc(r.device)}</td><td class="mono">${esc(r.serial)}</td><td>${esc(r.user)}</td><td>${esc(r.site)}</td><td>${esc(r.detail)}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">No data quality findings.</td></tr>`}</tbody></table></div></div><div class="modal-foot"><button class="ghost" onclick="App._closeModal()">Close</button><button class="primary" onclick="DataQuality.exportCsv()">Export CSV</button></div></div></div>`;
+    this._rows = rows;
+  },
+  exportCsv() {
+    const rows = this._rows || this.rows(), fields = ["issue", "serial", "device", "user", "site", "bucket", "detail"];
+    const quote = v => `"${String(v || "").replace(/"/g, '""')}"`;
+    const text = [fields.join(","), ...rows.map(r => fields.map(k => quote(r[k])).join(","))].join("\r\n");
+    const a = document.createElement("a"), url = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
+    a.href = url; a.download = `device-data-quality-${new Date().toISOString().slice(0, 10)}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 };
 
 /* ---- add-machine wizard -------------------------------------------------- */
@@ -2119,7 +2534,7 @@ const Activity = {
 
 /* ---- Teammates: one row per person with MFA (MFA is the person's, not the device's) ---- */
 const People = {
-  doc: null, f: { q: "", mfa: "all" }, sort: { key: "user", dir: 1 }, sel: new Set(),
+  doc: null, f: { q: "", mfa: "all" }, sort: { key: "user", dir: 1 }, sel: new Set(), notAllowedByUser: new Map(), notAllowedInventoryAt: "",
   METHODS: { microsoftAuthenticatorPush: "Authenticator app", microsoftAuthenticatorPasswordless: "Authenticator (passwordless)", mobilePhone: "Phone", alternateMobilePhone: "Alt phone",
              officePhone: "Office phone", softwareOneTimePasscode: "Authenticator code", hardwareOneTimePasscode: "Hardware code", fido2: "Security key", windowsHelloForBusiness: "Windows Hello",
              email: "Email", temporaryAccessPass: "Temp access pass", passKeyDeviceBound: "Passkey", passKeyDeviceBoundAuthenticator: "Passkey", passKeySynced: "Passkey" },
@@ -2137,8 +2552,49 @@ const People = {
     this._restoreView();
     const r = await Backend.call("mfa_people_get");
     this.doc = (r && r.ok && r.data) || null;
+    this.notAllowedByUser = new Map();
+    this.notAllowedInventoryAt = "";
     this.render();
+    // Load the last cached Intune inventory in the background; don't hold the teammate list open.
+    Backend.call("software_get").then(sr => {
+      const data = sr && sr.ok && sr.data, rules = sr && sr.ok && sr.rules;
+      if (!data || !Array.isArray(data.apps) || !rules || !Array.isArray(rules.not_allowed)) return;
+      const flagged = new Set(rules.not_allowed.map(n => String(n || "").trim().toLowerCase()).filter(Boolean));
+      const byUser = new Map();
+      data.apps.forEach(app => {
+        const appName = String(app.name || "").trim();
+        if (!flagged.has(appName.toLowerCase())) return;
+        (app.installs || []).forEach(install => {
+          const user = String(install.user || "").trim().toLowerCase();
+          if (!user) return;
+          const apps = byUser.get(user) || new Map();
+          const entry = apps.get(appName.toLowerCase()) || { name: appName, machines: new Set() };
+          entry.machines.add(String(install.device || install.device_name || install.serial || "Machine name unavailable").trim());
+          apps.set(appName.toLowerCase(), entry); byUser.set(user, apps);
+        });
+      });
+      this.notAllowedByUser = new Map([...byUser].map(([user, apps]) => [user, [...apps.values()]
+        .map(app => ({ name: app.name, machines: [...app.machines].sort((a, b) => a.localeCompare(b)) }))
+        .sort((a, b) => a.name.localeCompare(b.name))]));
+      this.notAllowedInventoryAt = String(data.generated_at || "");
+      this.render();
+    }).catch(() => { /* software report is optional for the teammate list */ });
   },
+  notAllowedFor(user) { return this.notAllowedByUser.get(String(user || "").trim().toLowerCase()) || []; },
+  openNotAllowed(user) {
+    const p = this._byUser(user), findings = this.notAllowedFor(user);
+    if (!p || !findings.length) return;
+    const machineCount = new Set(findings.flatMap(app => app.machines)).size;
+    const updated = this.notAllowedInventoryAt ? `Inventory refreshed ${esc(this.notAllowedInventoryAt.slice(0, 16).replace("T", " "))}.` : "Inventory refresh time unavailable.";
+    document.getElementById("modalRoot").innerHTML =
+      `<div class="overlay" onclick="if(event.target===this)People.closeNotAllowed()"><div class="modal" style="width:760px;max-width:96vw" role="dialog" aria-modal="true" aria-labelledby="pplNotAllowedTitle">
+        <div class="modal-head"><div><h3 id="pplNotAllowedTitle">Not allowed software</h3><div class="muted" style="font-size:12px;margin-top:3px">${esc(p.name || p.user)} · ${findings.length} app${findings.length === 1 ? "" : "s"} · ${machineCount} machine${machineCount === 1 ? "" : "s"}</div></div><button aria-label="Close" onclick="People.closeNotAllowed()">&times;</button></div>
+        <div class="modal-body"><p class="sub-note" style="margin:0 0 12px">${updated} This is a report flag; it does not block installation.</p>
+          <table class="fit"><thead><tr><th>Disallowed software</th><th>Machine names</th></tr></thead><tbody>${findings.map(app => `<tr><td><b>${esc(app.name)}</b></td><td>${app.machines.map(machine => esc(machine)).join("<br>")}</td></tr>`).join("")}</tbody></table>
+        </div><div class="modal-foot"><button class="primary" onclick="People.closeNotAllowed()">Close</button></div>
+      </div></div>`;
+  },
+  closeNotAllowed() { document.getElementById("modalRoot").innerHTML = ""; },
   /* Devices page: show each device's person MFA state from this list (read-only overlay, nothing is written to device rows) */
   async overlay(rows) {
     try {
@@ -2197,7 +2653,7 @@ const People = {
           <thead><tr><th><input type="checkbox" id="pplAll" title="Select everyone shown" ${rows.length && this.sel.size === rows.length ? "checked" : ""} onchange="People.pickAll(this.checked)"></th>${th("Person", "user")}${th("MFA", "mfa")}<th>Sign-in methods</th>${th("Devices", "devices")}${th("Updated", "updated")}</tr></thead><tbody>` +
         rows.map(p => `<tr class="ppl-row" data-u="${attr((p.user || "").toLowerCase())}" onclick="if(!event.target.closest('input,a,button'))People.openOne(this.dataset.u)" title="Click for details">
           <td><input type="checkbox" class="rowsel" data-u="${attr((p.user || "").toLowerCase())}" ${this.sel.has((p.user || "").toLowerCase()) ? "checked" : ""} onchange="People.pick(this.dataset.u,this.checked)"></td>
-          <td><b>${esc(p.name || p.user)}</b>${p.name ? `<div class="muted" style="font-size:12px">${esc(p.user)}</div>` : ""}</td>
+          <td><b>${esc(p.name || p.user)}</b>${this.notAllowedFor(p.user).length ? ` <button type="button" class="sw-block-tag" aria-label="Show disallowed software for ${attr(p.name || p.user)}" onclick="event.stopPropagation();People.openNotAllowed('${attr(p.user)}')">Not allowed software (${this.notAllowedFor(p.user).length})</button>` : ""}${p.name ? `<div class="muted" style="font-size:12px">${esc(p.user)}</div>` : ""}</td>
           <td>${mfaCell(p.mfa)}</td>
           <td>${(p.methods || []).length ? (p.methods || []).map(m => `<span class="md-tag${m === p.default ? " you" : ""}" title="${m === p.default ? "Default method" : ""}">${esc(this.label(m))}</span>`).join(" ") : '<span class="muted">—</span>'}</td>
           <td>${(p.devices || []).map(x => `<a class="sw-user" data-user="${attr(p.user)}" onclick="People.toDevices(this.dataset.user)">${esc(x.name || x.serial)}</a>`).join(", ")}</td>
@@ -2210,20 +2666,22 @@ const People = {
   _byUser(u) { return (this.doc && this.doc.people || []).find(x => (x.user || "").toLowerCase() === String(u || "").toLowerCase()); },
   openOne(u) {
     const p = this._byUser(u); if (!p) return;
-    this._one = { p, tab: "devices", q: "", sw: null };
+    this._one = { p, tab: "devices", q: "", sw: null, onlyNotAllowed: false };
     this._oneRender();
   },
   _devsOf(p) { return (App.state.use || []).filter(r => (r.user || "").toLowerCase() === (p.user || "").toLowerCase()); },
   async _oneSoftware(p) {
     // what is installed on this person's machines, from the cached software inventory (no Intune call)
     let d = Software.data && Software.data.apps && Software.data.apps.length ? Software.data : null;
-    if (!d) { const r = await Backend.call("software_get"); d = (r && r.ok && r.data) || { apps: [], users: [] }; }
+    let notAllowed = Software.notAllowed || [];
+    if (!d) { const r = await Backend.call("software_get"); d = (r && r.ok && r.data) || { apps: [], users: [] }; notAllowed = (r && r.ok && r.rules && r.rules.not_allowed) || []; }
+    const flagged = new Set(notAllowed.map(n => String(n || "").trim().toLowerCase()));
     const me = (p.user || "").toLowerCase(), by = {};
     (d.apps || []).forEach(a => (a.installs || []).forEach(i => {
       if ((i.user || "").toLowerCase() === me) (by[a.name] = by[a.name] || []).push({ version: a.version || "", device: i.device || "", publisher: a.publisher || "" });
     }));
     const dept = ((d.users || []).find(u => (u.user || "").toLowerCase() === me) || {}).dept || "";
-    return { apps: Object.entries(by).map(([name, v]) => ({ name, rows: v })).sort((a, b) => a.name.localeCompare(b.name)), dept, have: !!(d.apps || []).length };
+    return { apps: Object.entries(by).map(([name, v]) => ({ name, rows: v, notAllowed: flagged.has(name.trim().toLowerCase()) })).sort((a, b) => a.name.localeCompare(b.name)), dept, have: !!(d.apps || []).length };
   },
   async _oneTab(t) {
     this._one.tab = t;
@@ -2247,13 +2705,15 @@ const People = {
       if (!sw) body = `<div class="empty"><span class="busy-spin"></span> Reading the software inventory…</div>`;
       else if (!sw.have) body = `<div class="empty">No software inventory yet. Open the Software page and click <b>Refresh from Intune</b>.</div>`;
       else {
-        const q = (o.q || "").toLowerCase(), apps = sw.apps.filter(a => !q || a.name.toLowerCase().includes(q));
+        const q = (o.q || "").toLowerCase(), flaggedCount = sw.apps.filter(a => a.notAllowed).length;
+        const apps = sw.apps.filter(a => (!o.onlyNotAllowed || a.notAllowed) && (!q || a.name.toLowerCase().includes(q)));
         body = `<div class="drill-tools"><input id="pplOneQ" type="search" placeholder="Filter this person's software…" value="${attr(o.q || "")}" oninput="People._oneQ(this.value)" autocomplete="off">
             <span class="muted">${apps.length === sw.apps.length ? sw.apps.length + " apps" : apps.length + " of " + sw.apps.length}</span>
+            <label class="ppl-sw-filter"><input type="checkbox" ${o.onlyNotAllowed ? "checked" : ""} onchange="People._oneNotAllowedOnly(this.checked)">Not allowed only (${flaggedCount})</label>
             <button class="ghost" style="margin-left:auto" onclick="People._oneClose();App.userSoftware('${attr(p.user)}')">Open on the Software page</button></div>` +
           (apps.length ? `<table class="fit"><thead><tr><th>App</th><th style="width:160px">Version</th><th style="width:170px">On</th></tr></thead><tbody>` +
-            apps.map(a => `<tr><td>${esc(a.name)}</td><td class="mono">${esc(a.rows.map(r => r.version || "—").filter((v, i, x) => x.indexOf(v) === i).join(", "))}</td><td class="muted">${esc(a.rows.map(r => r.device).filter((v, i, x) => v && x.indexOf(v) === i).join(", "))}</td></tr>`).join("") + `</tbody></table>`
-            : `<div class="empty">${sw.apps.length ? "Nothing matches that." : "Nothing was found for this person in the software inventory."}</div>`);
+            apps.map(a => `<tr><td>${esc(a.name)}${a.notAllowed ? ' <span class="sw-block-tag">Not allowed</span>' : ""}</td><td class="mono">${esc(a.rows.map(r => r.version || "—").filter((v, i, x) => x.indexOf(v) === i).join(", "))}</td><td class="muted">${esc(a.rows.map(r => r.device).filter((v, i, x) => v && x.indexOf(v) === i).join(", "))}</td></tr>`).join("") + `</tbody></table>`
+            : `<div class="empty">${o.onlyNotAllowed ? (flaggedCount ? "No disallowed apps match that filter." : "This teammate has no disallowed software in the latest inventory.") : sw.apps.length ? "Nothing matches that." : "Nothing was found for this person in the software inventory."}</div>`);
       }
     } else {
       body = `<div class="one-grid">
@@ -2277,6 +2737,7 @@ const People = {
     if (o.tab === "software" && o.q) { const e = document.getElementById("pplOneQ"); if (e) { e.focus(); e.setSelectionRange(e.value.length, e.value.length); } }
   },
   _oneQ(v) { this._one.q = v; this._oneRender(); },
+  _oneNotAllowedOnly(on) { this._one.onlyNotAllowed = !!on; this._oneRender(); },
   _oneClose() { document.getElementById("modalRoot").innerHTML = ""; this._one = null; },
   _oneMail() { const p = this._one && this._one.p; if (p) this.email([p]); },
   _oneTeams() { const p = this._one && this._one.p; if (!p) return; Backend.call("open_external", "https://teams.microsoft.com/l/chat/0/0?users=" + encodeURIComponent(p.user)).then(r => { if (!r || !r.ok) App.toast((r && r.error) || "Could not open Teams.", true); }); },
@@ -2447,6 +2908,8 @@ const Tz = {
 const Nav = {
   _cur: null,
   go(view, opts) {
+    if (view === this._cur) return true;
+    if (this._cur === "settings" && typeof Settings !== "undefined" && !Settings.confirmLeave()) return false;
     if (!(opts && opts.pop) && view !== this._cur) { try { history.pushState({ view }, "", "#" + view); } catch (e) { /* file:// quirks */ } }
     this._cur = view;
     if (view !== "hub" && typeof Hub !== "undefined" && Hub.templateMode) {
@@ -2461,6 +2924,8 @@ const Nav = {
     window.scrollTo(0, 0);
     if (view === "dashboard") Dashboard.load();
     if (view === "inventory") App.render();
+    if (view === "windowsupdates") WindowsUpdates.load();
+    if (view === "otdevices") OTDevices.load();
     if (view === "upgrades") Upgrade.load();
     if (view === "software") Software.load();
     if (view === "people") People.load();
@@ -2480,6 +2945,10 @@ const Nav = {
     const v = ev.state && ev.state.view;
     if (!v || document.body.classList.contains("signed-out")) return;
     if (!document.getElementById("appview-" + v)) return;
+    if (Nav._cur === "settings" && v !== "settings" && typeof Settings !== "undefined" && !Settings.confirmLeave()) {
+      try { history.pushState({ view: Nav._cur }, "", "#" + Nav._cur); } catch (e) {}
+      return;
+    }
     const m = document.getElementById("modalRoot"); if (m) m.innerHTML = "";
     Nav.go(v, { pop: true });
   });
@@ -2977,6 +3446,7 @@ const Dashboard = {
     }
     if (!d || !d.ok) { host.innerHTML = `<div class="empty">Could not load dashboard.<div style="margin-top:10px"><button class="rowbtn" onclick="Dashboard.load()">↻ Retry</button></div></div>`; return; }
     this._data = d;
+    try { const prefs = await Backend.call("get_division_prefs"); this._hotSpareMinimum = prefs && prefs.ok ? Number(prefs.hot_spare_minimum || 0) : 0; } catch (e) { this._hotSpareMinimum = 0; }
     setTimeout(() => Badges.refresh(), 0);
     try { const ur = await Backend.call("hub_get_upgrades"); this._upgrades = (ur && ur.ok && ur.data && Array.isArray(ur.data.items)) ? ur.data.items : []; }
     catch (e) { this._upgrades = []; }
@@ -2997,6 +3467,8 @@ const Dashboard = {
     let html = `<div class="dash-stats">
       ${inv ? cstat(inv.in_use, "Machines in use", "Dashboard.goDevices('use')") : stat("–", "Machines in use")}
       ${inv ? cstat(inv.new_stock, "Machines in stock", "Dashboard.goDevices('stock')") : stat("–", "Machines in stock")}
+      ${inv && this._hotSpareMinimum ? cstat(inv.new_stock < this._hotSpareMinimum ? `${inv.new_stock}/${this._hotSpareMinimum}` : inv.new_stock, inv.new_stock < this._hotSpareMinimum ? "Stock below minimum" : "Stock minimum met", "Dashboard.goDevices('stock')", inv.new_stock < this._hotSpareMinimum ? "warn" : "") : ""}
+      ${inv ? cstat(DataQuality.rows().length, "Data quality findings", "DataQuality.open()", DataQuality.rows().length ? "warn" : "") : ""}
       ${inv ? HotSpares.tileHtml(inv) : ""}
       ${inv ? cstat(inv.needs_owner_count ?? inv.no_upn_count ?? 0, "Needs owner", "Dashboard.drillNoUpn()", ((inv.needs_owner_count ?? inv.no_upn_count) ? "warn" : "")) : stat("–", "Needs owner")}
       ${inv && (inv.shared_machine_count || 0) ? cstat(inv.shared_machine_count, "Shared machines", "Dashboard.drillSharedMachines()") : ""}
@@ -3067,7 +3539,7 @@ const Dashboard = {
       const when = l.updatedAt || l.createdAt;
       const whenTxt = when ? Tz.date(when, { month: "short", day: "numeric" }) + " " + Tz.time(when) : "";
       return `<div class="h-row clickable" data-sid="${attr(l.id)}">
-        <span class="htag ${l.type === "user" ? "user" : "computer"}">${l.type === "user" ? "User" : "Computer"}</span>
+        <span class="htag ${l.type === "user" || l.type === "offboarding" ? "user" : "computer"}">${l.type === "offboarding" ? "Offboarding" : l.type === "user" ? "User" : "Computer"}</span>
         <span class="who">${esc(l.subject || "(unnamed)")}</span>
         ${l.primaryUser ? `<span class="m2">· ${esc(l.primaryUser)}</span>` : ""}
         ${l.dept ? `<span class="m2">· ${esc(l.dept)}</span>` : ""}
@@ -3194,7 +3666,7 @@ const Dashboard = {
     return `<div class="chart-card" id="deptCard"><h4>In Stock By Department <button class="card-link" onclick="Settings.open('models')">Configure ›</button></h4>
       ${legend}
       <div class="bars">${rows}</div>
-      <p class="sub-note" style="margin:14px 0 0">Deployable pool by department${f !== "all" ? ` · ${f} only` : ", split by site"}. Click a site to filter.</p>${reservedNote}</div>`;
+      <p class="sub-note" style="margin:14px 0 0">Deployable pool by department${f !== "all" ? ` · ${f} only` : ", split by site"}. Shared models count in every assigned department. Click a site to filter.</p>${reservedNote}</div>`;
   },
   drillReserved() {
     const list = (this._inv().reserved) || [];
@@ -3436,16 +3908,14 @@ const Dashboard = {
   _renderDeptDrill() {
     const dept = this._ddDept, siteKey = this._ddSite;
     const rows = (App.state.stock || []).filter(r =>
-      Depts.deptFor(r.model) === dept && (!siteKey || this._siteKey(r.site_tag) === siteKey));
-    const opt = curr => `<option value=""${(!curr || curr === "Unassigned") ? " selected" : ""}>Unassigned</option>` +
-      (Depts.departments || []).map(d => `<option value="${attr(d)}"${d === curr ? " selected" : ""}>${esc(d)}</option>`).join("");
+      Depts.deptsFor(r.model).includes(dept) && (!siteKey || this._siteKey(r.site_tag) === siteKey));
     const title = `In stock · ${dept}${siteKey ? " · " + siteKey : ""}`;
-    const body = rows.length ? `<table><thead><tr><th>Serial</th><th>Model</th><th>Specs</th><th>Site</th><th>Department</th></tr></thead><tbody>` +
+    const body = rows.length ? `<table><thead><tr><th>Serial</th><th>Model</th><th>Specs</th><th>Site</th><th>Departments</th></tr></thead><tbody>` +
       rows.map(r => `<tr>
         <td class="mono">${esc(r.serial)}</td><td>${esc(r.model)}</td>
         <td>${esc([r.cpu, r.ram, r.storage].filter(Boolean).join(" · "))}</td>
         <td>${esc(r.site_tag)}</td>
-        <td><select class="dd-select" onchange="Dashboard.assignDept('${attr(r.model)}', this.value)">${opt(Depts.deptFor(r.model))}</select></td>
+        <td>${Depts.assignmentControl(r.model, Depts.map, Depts.departments || [], "Dashboard.assignDept")}</td>
       </tr>`).join("") + `</tbody></table>`
       : `<div class="empty">No devices here.</div>`;
     document.getElementById("modalRoot").innerHTML =
@@ -3455,14 +3925,23 @@ const Dashboard = {
           ${Help.box("set-models")}
           ${body}</div></div></div>`;
   },
-  async assignDept(model, dept) {
+  async assignDept(model, dept, checked) {
     const map = { ...(Depts.map || {}) };
-    if (dept && dept !== "Unassigned") map[model] = dept; else delete map[model];
-    const r = await Backend.call("hub_save_departments", { departments: Depts.departments || [], map },
-      { action: "assign", target: "Model departments", detail: `${model} → ${dept || "Unassigned"}` });
-    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save the department.", true);
+    const assigned = Depts.deptsFor(model, map);
+    const next = dept ? (checked ? [...new Set([...assigned, dept])] : assigned.filter(x => x !== dept)) : [];
+    if (next.length) map[model] = next; else delete map[model];
     Depts.map = map;
-    App.toast(`${model} → ${dept || "Unassigned"}.`);
+    const seq = this._deptAssignmentSeq = (this._deptAssignmentSeq || 0) + 1;
+    const save = () => Backend.call("hub_save_departments", { departments: Depts.departments || [], map },
+      { action: "assign", target: "Model departments", detail: `${model} → ${next.join(", ") || "Unassigned"}` });
+    this._deptAssignmentQueue = (this._deptAssignmentQueue || Promise.resolve()).then(save, save);
+    const r = await this._deptAssignmentQueue;
+    if (!r || !r.ok) {
+      if (seq === this._deptAssignmentSeq) { await Depts.load(); this._renderDeptDrill(); }
+      return App.toast((r && r.error) || "Could not save the department.", true);
+    }
+    if (seq !== this._deptAssignmentSeq) return;
+    App.toast(`${model} → ${next.join(", ") || "Unassigned"}.`);
     this._renderDeptDrill();   // the reassigned rows drop out of this view
     this.load();               // refresh the dashboard card counts behind the modal
   },
@@ -4148,6 +4627,8 @@ const BGTools = {
   // ---- Boms Permissions Finder ----------------------------------------------
   _renderPerms(p) {
     this._perm = { user: null, groups: [], found: [], locations: [] };
+    const companies = Divisions.cur().company_names || [Divisions.cur().company_name].filter(Boolean);
+    const companyScope = JSON.stringify(companies);
     p.innerHTML =
       `<div class="chart-card" style="max-width:780px">
         <h4 style="margin:0 0 4px">Permissions Finder</h4>
@@ -4161,7 +4642,7 @@ const BGTools = {
         </div>
         <div id="bgpBody" style="margin-top:16px"><p class="hint">Results appear here.</p></div>
       </div>`;
-    Combo.mount("bgpLocHost", "bgpLoc", [{ value: "co:" + Divisions.cur().company_name, label: Divisions.label() + " — " + Divisions.cur().company_name, group: "This division" }], "co:" + Divisions.cur().company_name);
+    Combo.mount("bgpLocHost", "bgpLoc", [{ value: "co:" + companyScope, label: Divisions.label() + " — all assigned companies", group: "This division" }], "co:" + companyScope);
     this._loadPermLocations();
     const el = document.getElementById("bgpSearch"); if (el) el.focus();
   },
@@ -4172,12 +4653,16 @@ const BGTools = {
       const r = await Backend.call("bg_locations");
       if (!document.getElementById("bgpLocHost") || !r || !r.ok) return;
       this._perm.locations = r.locations || [];
-      const mine = "co:" + (r.nbgw_company || Divisions.cur().company_name);
+      const companies = Divisions.cur().company_names || [Divisions.cur().company_name].filter(Boolean);
+      const mine = "co:" + (r.nbgw_company || JSON.stringify(companies));
       const items = [];
-      (r.divisions || []).forEach(d => items.push({ value: "co:" + d.company, label: d.label, group: ("co:" + d.company) === mine ? "This division" : "Other Nucor divisions" }));
+      (r.divisions || []).forEach(d => {
+        if (companies.some(c => c.toLowerCase() === String(d.company || "").toLowerCase())) return;
+        items.push({ value: "co:" + d.company, label: d.label, group: "Other Nucor divisions" });
+      });
       this._perm.locations.forEach(l => items.push({ value: "dom:" + l.domain, label: l.label, group: "Other BG brands" }));
       items.push({ value: "", label: "All divisions (whole tenant)", group: "Everything" });
-      if (!items.some(i => i.value === mine)) items.unshift({ value: mine, label: Divisions.label() + " — " + (r.nbgw_company || Divisions.cur().company_name), group: "This division" });
+      if (!items.some(i => i.value === mine)) items.unshift({ value: mine, label: Divisions.label() + " — all assigned companies", group: "This division" });
       const order = { "This division": 0, "Other Nucor divisions": 1, "Other BG brands": 2, "Everything": 3 };
       items.sort((a, b) => order[a.group] - order[b.group]);           // stable: keeps the list's own order inside each group
       Combo.mount("bgpLocHost", "bgpLoc", items, mine);
@@ -4266,7 +4751,7 @@ const BGTools = {
   // Compare a teammate (or a whole department) against its BomsNet baseline
   // (Configuration → BomsNet baselines) to flag groups they lack that peers have.
   _renderMissing(p) {
-    this._miss = { mode: "user", user: null, found: [], depts: [], company: Divisions.cur().company_name };
+      this._miss = { mode: "user", user: null, found: [], depts: [], company: JSON.stringify(Divisions.cur().company_names || [Divisions.cur().company_name].filter(Boolean)) };
     p.innerHTML =
       `<div class="chart-card" style="max-width:860px">
         <h4 style="margin:0 0 4px">Missing Groups</h4>
@@ -4298,7 +4783,7 @@ const BGTools = {
           <div class="field" style="flex:1;min-width:220px;margin:0"><label>${esc(Divisions.label())} teammate name</label>
             <input id="missSearch" placeholder="Start typing a name…" autocomplete="off" oninput="BGTools.missTyped()" onkeydown="if(event.key==='Enter'){clearTimeout(BGTools._tt.miss);BGTools.missSearchUser(false)}"></div>
           <button class="primary" onclick="BGTools.missSearchUser(false)">Search</button></div>
-         <p class="sub-note" style="margin:8px 0 0">Searches <b>${esc(this._miss.company || Divisions.cur().company_name)}</b> (${esc(Divisions.label())}) teammates only — the same people the baselines are built from.</p>`;
+         <p class="sub-note" style="margin:8px 0 0">Searches all company names assigned to ${esc(Divisions.label())} sites.</p>`;
       const el = document.getElementById("missSearch"); if (el) el.focus();
     } else {
       ctl.innerHTML =
@@ -4314,7 +4799,7 @@ const BGTools = {
     const sel = document.getElementById("missDept"); if (!sel) return;
     try {
       const r = await Backend.call("perm_get_baselines");
-      if (r && r.ok && r.data && r.data.company) this._miss.company = r.data.company;
+      if (r && r.ok && r.data && r.data.companies) this._miss.company = JSON.stringify(r.data.companies);
       const depts = (r && r.ok && r.data && r.data.departments) ? Object.keys(r.data.departments) : [];
       depts.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
       this._miss.depts = depts;
@@ -4671,7 +5156,7 @@ const SWLogic = {
    and flag apps Mandatory per department to see which users are missing them.
    Department comes from Entra (User.Read.All) — dormant until consented. */
 const Software = {
-  data: { apps: [], users: [] }, rules: [], hasDept: false, generatedAt: "", _view: [],
+  data: { apps: [], users: [] }, rules: [], notAllowed: [], showNotAllowed: false, hasDept: false, generatedAt: "", _view: [],
 
   deptKeyOf(u) {
     // Nucor's Entra 'department' already includes the location (e.g. "Design Dept
@@ -4704,8 +5189,9 @@ const Software = {
       this.hasDept = !!d.has_dept;
       this.generatedAt = d.generated_at || "";
       this.rules = (r && r.ok && r.rules && Array.isArray(r.rules.rules)) ? r.rules.rules : [];
+      this.notAllowed = (r && r.ok && r.rules && Array.isArray(r.rules.not_allowed)) ? r.rules.not_allowed : [];
       SWLogic.setCfg(r && r.ok && r.rules ? r.rules.auto : null);
-    } catch (e) { this.data = { apps: [], users: [] }; this.rules = []; }
+    } catch (e) { this.data = { apps: [], users: [] }; this.rules = []; this.notAllowed = []; }
     this.buildDeptOptions();
     this.render();
   },
@@ -4733,10 +5219,28 @@ const Software = {
     if (on !== auto) this.rules.push({ app: appName, scope, required: on, set_by: App.state.account || "", set_at: new Date().toISOString() });
   },
   async _saveRules() {
-    const r = await Backend.call("software_save_rules", { rules: this.rules });
+    const r = await Backend.call("software_save_rules", { rules: this.rules, not_allowed: this.notAllowed });
     if (!r || !r.ok) App.toast((r && r.error) || "Could not save.", true);
     return !!(r && r.ok);
   },
+  async toggleNotAllowed(appName) {
+    const previous = this.notAllowed.slice();
+    const found = this.notAllowed.some(n => n.toLowerCase() === appName.toLowerCase());
+    this.notAllowed = found
+      ? this.notAllowed.filter(n => n.toLowerCase() !== appName.toLowerCase())
+      : [...this.notAllowed, appName];
+    this.render();
+    const r = await Backend.call("software_save_rules", { rules: this.rules, not_allowed: this.notAllowed });
+    if (!r || !r.ok) {
+      this.notAllowed = previous;
+      this.render();
+      return App.toast((r && r.error) || "Could not save software policy.", true);
+    }
+    this.notAllowed = Array.isArray(r.not_allowed) ? r.not_allowed : this.notAllowed;
+    App.toast(found ? `${appName} removed from Not allowed.` : `${appName} flagged as Not allowed.`);
+    this.render();
+  },
+  setReviewView(showBlocked) { this.showNotAllowed = !!showBlocked; this.render(); },
   /* ---- "Mandatory apps" window: tab 1 = one department's list, tab 2 = the automatic rule ---- */
   _md: { tab: "dept", scope: "", q: "", draft: null },
   mandatory(tab) {
@@ -4879,7 +5383,7 @@ const Software = {
     const meta = document.getElementById("swMeta");
     const appNames = new Set(this.data.apps.map(a => a.name)).size;
     if (meta) meta.textContent = this.generatedAt ? `Synced ${this.generatedAt.slice(0, 16).replace("T", " ")} · ${appNames.toLocaleString()} apps` : "Not synced yet";
-    if (!this.data.apps.length) {
+    if (!this.data.apps.length && !(this.showNotAllowed && this.notAllowed.length)) {
       host.innerHTML = `<div class="empty">No software inventory yet. Click <b>Refresh from Intune</b> to build it — this pulls detected apps for every device, so it can take a few minutes.</div>`;
       return;
     }
@@ -4897,7 +5401,7 @@ const Software = {
     if (ql) this.data.apps.forEach(a => { if (hitsApp(a)) appHits++; if ((a.installs || []).some(hitsPerson)) personHits++; });
     let mode = "none";
     if (ql) {
-      mode = this._mode === "people" && personHits ? "people" : this._mode === "apps" && appHits ? "apps" : (appHits ? "apps" : "people");
+      mode = this.showNotAllowed ? "apps" : this._mode === "people" && personHits ? "people" : this._mode === "apps" && appHits ? "apps" : (appHits ? "apps" : "people");
     }
     let apps = this.data.apps.map(a => {
       let scoped = this._installsInScope(a, scope);
@@ -4908,7 +5412,7 @@ const Software = {
       if (a.scoped.length === 0 && (mode === "people" || scope !== "all")) return false;   // nothing of it on that person / in that department
       return true;
     });
-    if (mandOnly) {
+    if (mandOnly && !this.showNotAllowed) {
       // one department: that department's mandatory apps. All departments: mandatory in at least one department.
       const scopes = scope === "all" ? [...new Set((this.data.users || []).map(u => this.deptKeyOf(u)))] : [scope];
       const mand = new Set();
@@ -4930,6 +5434,16 @@ const Software = {
     });
     apps = [...byName.values()];
     apps.forEach(g => { g.versions.sort((x, y) => SWLogic.cmpVer(y.version, x.version)); g.publisher = (g.versions.find(v => v.publisher) || {}).publisher || ""; g.latest = g.versions[0].version; });
+    if (this.showNotAllowed) {
+      const flagged = new Set(this.notAllowed.map(n => n.toLowerCase()));
+      apps = apps.filter(a => flagged.has(a.name.toLowerCase()));
+      const present = new Set(apps.map(a => a.name.toLowerCase()));
+      this.notAllowed.forEach(name => {
+        if ((!ql || name.toLowerCase().includes(ql)) && !present.has(name.toLowerCase())) {
+          apps.push({ name, publisher: "", versions: [], scoped: [], rows: [], _seen: new Set(), latest: "" });
+        }
+      });
+    }
     apps.sort((a, b) => b.scoped.length - a.scoped.length || a.name.localeCompare(b.name));
     this._view = apps;
     const total = appNames, cnt = document.getElementById("swCount");
@@ -4952,20 +5466,27 @@ const Software = {
       html += `<div class="ak-chips" style="margin:0 0 12px"><span class="muted" style="font-size:12.5px;align-self:center">Show:</span>
         <button type="button" class="ak-chip${mode === "apps" ? " on" : ""}" onclick="Software.setMode('apps')">Software matching it (${appHits})</button>
         <button type="button" class="ak-chip${mode === "people" ? " on" : ""}" onclick="Software.setMode('people')">What people or devices matching it have (${personHits})</button></div>`;
-    if (mandOnly) html += `<p class="sub-note" style="margin:0 0 12px">${scope === "all" ? "Apps that are mandatory in at least one department." : "Apps mandatory for <b>" + esc(scope) + "</b>."} Pick a department to see or change its list.</p>`;
+    html += `<div class="sw-review-tabs" role="tablist" aria-label="Software policy view">
+      <button type="button" class="${this.showNotAllowed ? "" : "on"}" role="tab" aria-selected="${!this.showNotAllowed}" onclick="Software.setReviewView(false)">All software (${total.toLocaleString()})</button>
+      <button type="button" class="${this.showNotAllowed ? "on" : ""}" role="tab" aria-selected="${this.showNotAllowed}" onclick="Software.setReviewView(true)">Not allowed (${this.notAllowed.length})</button>
+      ${this.showNotAllowed ? `<span class="muted">Report only; flags do not block installs. Refresh Intune inventory to see current installs.</span><button type="button" class="rowbtn" style="margin-left:auto" onclick="Software.exportNotAllowed()" title="Download every not-allowed app and its installed devices in one CSV">Export full report</button>` : ""}
+    </div>`;
+    if (mandOnly && !this.showNotAllowed) html += `<p class="sub-note" style="margin:0 0 12px">${scope === "all" ? "Apps that are mandatory in at least one department." : "Apps mandatory for <b>" + esc(scope) + "</b>."} Pick a department to see or change its list.</p>`;
     if (ql && !apps.length) html += `<div class="empty">Nothing matches <b>${esc(q)}</b>${scope !== "all" ? " in this department" : ""}. Try a shorter word, a user name, or a device name.</div>`;
     if (scope !== "all") html += this._complianceHtml(scope, deptUsers);
     const mandCell = a => scope !== "all" ? `<td onclick="event.stopPropagation()"><input type="checkbox" ${this.isMandatory(a.name, scope) ? "checked" : ""} onchange="Software.toggleMandatory('${attr(a.name)}','${attr(scope)}',this.checked)"></td>` : "";
+    const notAllowed = new Set(this.notAllowed.map(n => n.toLowerCase()));
     const open = this._open, forceOpen = ql && mode === "apps" && apps.length <= 3;       // a narrow search shows its versions right away
-    html += `<table class="fit sw-tbl"><colgroup><col style="width:36%"><col style="width:16%"><col style="width:18%"><col style="width:9%">${scope !== "all" ? '<col style="width:9%">' : ""}<col style="width:110px"></colgroup>` +
+    html += `<table class="fit sw-tbl"><colgroup><col style="width:36%"><col style="width:16%"><col style="width:18%"><col style="width:9%">${scope !== "all" ? '<col style="width:9%">' : ""}<col style="width:210px"></colgroup>` +
       `<thead><tr><th>App</th><th>Versions</th><th>Publisher</th><th>${scope === "all" ? "Installs" : "In scope"}</th>${scope !== "all" ? "<th>Mandatory</th>" : ""}<th></th></tr></thead><tbody>` +
       apps.map((a, i) => {
         const many = a.versions.length > 1, isOpen = many && (open.has(a.name) || forceOpen);
+        const blocked = notAllowed.has(a.name.toLowerCase());
         let h = `<tr class="sw-row sw-grp" onclick="Software.drill(${i})" title="Click to see who has it, across every version">
-          <td title="${attr(a.name)}">${many ? `<span class="sw-tog" title="${isOpen ? "Hide" : "Show"} the versions" onclick="event.stopPropagation();Software.toggleVers(${i})">${isOpen ? "▾" : "▸"}</span>` : '<span class="sw-tog sw-off"></span>'}${esc(a.name)}</td>
+          <td title="${attr(a.name)}">${many ? `<span class="sw-tog" title="${isOpen ? "Hide" : "Show"} the versions" onclick="event.stopPropagation();Software.toggleVers(${i})">${isOpen ? "▾" : "▸"}</span>` : '<span class="sw-tog sw-off"></span>'}${esc(a.name)}${blocked ? ' <span class="sw-block-tag">Not allowed</span>' : ""}</td>
           <td>${many ? `<a class="sw-vers" onclick="event.stopPropagation();Software.toggleVers(${i})">${a.versions.length} versions</a> <span class="muted">· latest ${esc(a.latest || "—")}</span>` : esc(a.latest || "—")}</td>
           <td class="muted" title="${attr(a.publisher || "")}">${esc(a.publisher || "—")}</td><td>${a.scoped.length}</td>${mandCell(a)}
-          <td style="text-align:right;white-space:nowrap"><button class="rowbtn">Who has it ›</button></td></tr>`;
+          <td class="sw-row-actions" onclick="event.stopPropagation()"><button class="rowbtn${blocked ? " danger" : ""}" title="${blocked ? "Remove not-allowed flag" : "Flag this software as not allowed"}" onclick="Software.toggleNotAllowed('${attr(a.name)}')">${blocked ? "Allow" : "Flag not allowed"}</button><button class="rowbtn" onclick="Software.drill(${i})">Who has it ›</button></td></tr>`;
         if (isOpen) h += a.versions.map((v, k) => `<tr class="sw-row sw-ver" onclick="Software.drill(${i}, ${k})" title="Click to see who has this version">
             <td class="sw-vname">↳ version <b>${esc(v.version || "—")}</b>${k === 0 ? ' <span class="md-tag you">Latest</span>' : ""}</td><td></td><td></td><td>${v.n}</td>${scope !== "all" ? "<td></td>" : ""}
             <td style="text-align:right;white-space:nowrap"><button class="rowbtn">Who has it ›</button></td></tr>`).join("");
@@ -4978,10 +5499,58 @@ const Software = {
   toggleVers(i) { const g = (this._view || [])[i]; if (!g) return; if (this._open.has(g.name)) this._open.delete(g.name); else this._open.add(g.name); this.render(); },
   copy() {
     const rows = this._view || [], cell = v => String(v == null ? "" : v).replace(/[\t\r\n]+/g, " ");
-    const txt = ["App\tVersions (installs)\tPublisher\tInstalls"].concat(rows.map(a => [a.name, a.versions.map(v => `${v.version || "?"} (${v.n})`).join(", "), a.publisher, (a.scoped || []).length].map(cell).join("\t"))).join("\n");
+    const blocked = new Set(this.notAllowed.map(n => n.toLowerCase()));
+    const txt = ["App\tPolicy\tVersions (installs)\tPublisher\tInstalls"].concat(rows.map(a => [a.name, blocked.has(a.name.toLowerCase()) ? "Not allowed" : "Allowed", a.versions.map(v => `${v.version || "?"} (${v.n})`).join(", "), a.publisher, (a.scoped || []).length].map(cell).join("\t"))).join("\n");
     const done = () => App.toast(`Copied ${rows.length} app${rows.length === 1 ? "" : "s"}.`);
     const fb = () => { const t = document.createElement("textarea"); t.value = txt; document.body.appendChild(t); t.select(); try { document.execCommand("copy"); done(); } catch (e) { App.toast("Could not copy.", true); } t.remove(); };
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, fb); else fb();
+  },
+  async exportNotAllowed() {
+    const flagged = new Map();
+    this.notAllowed.forEach(name => {
+      const key = String(name || "").trim().toLowerCase();
+      if (key && !flagged.has(key)) flagged.set(key, String(name).trim());
+    });
+    if (!flagged.size) return App.toast("No software is flagged Not allowed.", true);
+    const header = ["Software", "Policy", "Publisher", "Version", "Device", "Serial number", "User", "Site", "Department", "Install status", "Inventory refreshed"];
+    const csvCell = value => {
+      let text = String(value == null ? "" : value).replace(/[\r\n\t]/g, " ");
+      if (/^\s*[=+@-]/.test(text)) text = "'" + text;  // prevent spreadsheet formula execution
+      return `"${text.replace(/"/g, '""')}"`;
+    };
+    const rows = [header];
+    let installRows = 0;
+    flagged.forEach((name, key) => {
+      const matches = [];
+      this.data.apps.forEach(app => {
+        if (String(app.name || "").trim().toLowerCase() !== key) return;
+        (app.installs || []).forEach(install => matches.push({ app, install }));
+      });
+      if (!matches.length) {
+        rows.push([name, "Not allowed", "", "", "", "", "", "", "", "No installs found", this.generatedAt].map(csvCell));
+        return;
+      }
+      matches.forEach(({ app, install }) => {
+        rows.push([name, "Not allowed", app.publisher || "", app.version || "", install.device || "", install.serial || "", install.user || "", install.site || "", install.dept || "", "Installed", this.generatedAt].map(csvCell));
+        installRows++;
+      });
+    });
+    const csv = "\uFEFF" + rows.map(row => row.join(",")).join("\r\n");
+    const division = String(Divisions.current || "division").replace(/[^a-z0-9_-]+/gi, "-");
+    const filename = `Not-allowed-software-${division}-${new Date().toISOString().slice(0, 10)}.csv`;
+    if (Backend.real && window.pywebview && window.pywebview.api && window.pywebview.api.save_csv_file) {
+      const result = await Backend.call("save_csv_file", filename, csv);
+      if (!result || !result.ok) return App.toast((result && result.error) || "Could not save the CSV report.", true);
+      if (result.cancelled) return;
+      App.toast(`Saved ${filename} to ${result.path}.`);
+      return;
+    }
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob), link = document.createElement("a");
+    link.href = url; link.download = filename;
+    document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    App.toast(`Downloaded ${filename}.`);
   },
   _mode: "", _t: null,
   typed() { this._mode = ""; clearTimeout(this._t); this._t = setTimeout(() => this.render(), 120); },
@@ -5506,7 +6075,16 @@ const Depts = {
     this.loaded = true;
   },
 
-  deptFor(model) { return this.map[(model || "").trim()] || "Unassigned"; },
+  deptsFor(model, source) {
+    const value = (source || this.map)[(model || "").trim()];
+    return [...new Set((Array.isArray(value) ? value : value ? [value] : []).map(x => String(x || "").trim()).filter(Boolean))];
+  },
+  deptFor(model) { return this.deptsFor(model)[0] || "Unassigned"; },
+  assignmentControl(model, source, departments, handler) {
+    const selected = new Set(this.deptsFor(model, source));
+    const label = selected.size ? [...selected].join(", ") : "Unassigned";
+    return `<details class="dept-multi" data-model="${attr(model)}"><summary title="${attr(label)}">${esc(label)}</summary><div>${departments.map(d => `<label><input type="checkbox"${selected.has(d) ? " checked" : ""} onchange="${handler}('${attr(model)}','${attr(d)}',this.checked)">${esc(d)}</label>`).join("") || `<span class="muted">No departments</span>`}${selected.size ? `<button type="button" class="dept-multi-clear" onclick="${handler}('${attr(model)}','',false)">Unassign all</button>` : `<span class="muted">Unassigned</span>`}</div></details>`;
+  },
 
   // every model we currently hold, union any already-mapped model
   _models() {
@@ -5546,7 +6124,7 @@ const Depts = {
 
   // set up editable drafts for both tabs, then render
   _enter(tab) {
-    this._draft = { ...this.map };
+    this._draft = Object.fromEntries(Object.keys(this.map).map(model => [model, this.deptsFor(model)]));
     this._depts = this.departments.slice();
     this._sel = new Set(); this._search = ""; this._filterDept = "";
     this._sCats = Sites.categories.slice();
@@ -5556,7 +6134,14 @@ const Depts = {
     this._render();
   },
 
-  tab(name) { this.activeTab = name; this._sel = new Set(); this._search = ""; this._filterDept = ""; this._render(); },
+  tab(name) {
+    if (name === this.activeTab) return;
+    const discard = this._page && Settings.dirty;
+    if (discard && !Settings.confirmLeave()) return;
+    if (discard && this.activeTab === "models") { this._draft = Object.fromEntries(Object.keys(this.map).map(model => [model, this.deptsFor(model)])); this._depts = this.departments.slice(); }
+    if (discard && this.activeTab === "sites") { this._sCats = Sites.categories.slice(); this._sList = Sites.list.map(s => ({ ...s })); this._sPin = Sites.pin; }
+    this.activeTab = name; this._sel = new Set(); this._search = ""; this._filterDept = ""; this._render();
+  },
 
   _render() {
     const tabBar = this.TABS.map(t =>
@@ -5649,11 +6234,31 @@ const Depts = {
     </div>`;
   },
   async _pbSave() {
-    try {
-      const n = Object.keys((this._pb || {}).departments || {}).length;
-      const r = await Backend.call("perm_save_baselines", this._pb, { action: "save", target: "Group baselines", detail: `${n} department(s)` });
-      if (r && r.ok && r.data) this._pb = r.data;
-    } catch (e) { }
+    const seq = this._pbSaveSeq = (this._pbSaveSeq || 0) + 1;
+    const snapshot = JSON.parse(JSON.stringify(this._pb || {}));
+    const save = async () => {
+      try {
+        if (seq === this._pbSaveSeq) {
+          const status = document.getElementById("pbStatus");
+          if (status) status.innerHTML = `<div class="pb-run">Saving baseline changes…</div>`;
+        }
+        const n = Object.keys(snapshot.departments || {}).length;
+        const r = await Backend.call("perm_save_baselines", snapshot, { action: "save", target: "Group baselines", detail: `${n} department(s)` });
+        if (seq !== this._pbSaveSeq) return;
+        const host = document.getElementById("pbStatus");
+        if (r && r.ok && r.data) {
+          this._pb = r.data;
+          if (host) host.innerHTML = `<div class="cfg-ok">Changes saved to the shared hub.</div>`;
+        } else if (host) host.innerHTML = `<div class="cfg-warn">Could not save baseline changes. Your edits remain on screen; try again.</div>`;
+      } catch (e) {
+        if (seq === this._pbSaveSeq) {
+          const host = document.getElementById("pbStatus");
+          if (host) host.innerHTML = `<div class="cfg-warn">Could not save baseline changes. Your edits remain on screen; try again.</div>`;
+        }
+      }
+    };
+    this._pbSaveQueue = (this._pbSaveQueue || Promise.resolve()).then(save, save);
+    return this._pbSaveQueue;
   },
   _pbThreshold(v) {
     const thr = Math.min(Math.max(parseInt(v, 10) || 60, 0), 100) / 100;
@@ -5804,18 +6409,14 @@ const Depts = {
   },
 
   // ---- Model-department tab --------------------------------------------
-  _optHtml(dep) {
-    return `<option value=""${!dep ? " selected" : ""}>Unassigned</option>` +
-      this._depts.map(d => `<option value="${attr(d)}"${d === dep ? " selected" : ""}>${esc(d)}</option>`).join("");
-  },
-
   // models after the search box + department filter are applied
   _filteredModels() {
     const q = (this._search || "").toLowerCase();
     const f = this._filterDept || "";
     return this._models().filter(m => {
       if (q && !m.model.toLowerCase().includes(q)) return false;
-      if (f && (this._draft[m.model] || "Unassigned") !== f) return false;
+      const assigned = this.deptsFor(m.model, this._draft);
+      if (f && (f === "Unassigned" ? assigned.length > 0 : !assigned.includes(f))) return false;
       return true;
     });
   },
@@ -5831,12 +6432,12 @@ const Depts = {
         <td class="dept-cbcell"><input type="checkbox" class="cb dept-check" data-model="${attr(m.model)}"${this._sel.has(m.model) ? " checked" : ""} onclick="Depts.selOne(this)"></td>
         <td>${esc(m.model)}</td>
         <td class="dept-instock">${m.stock || ""}</td>
-        <td><select data-model="${attr(m.model)}" onchange="Depts._pick(this)">${this._optHtml(this._draft[m.model] || "")}</select></td>
+        <td>${this.assignmentControl(m.model, this._draft, this._depts, "Depts._draftDeptToggle")}</td>
       </tr>`).join("");
   },
 
   _modelsBody() {
-    const bulkOpts = `<option value="">Unassigned</option>` + this._depts.map(d => `<option value="${attr(d)}">${esc(d)}</option>`).join("");
+    const bulkOpts = `<option value="">Choose department…</option>` + this._depts.map(d => `<option value="${attr(d)}">${esc(d)}</option>`).join("") + `<option value="__clear__">Remove all assignments</option>`;
     const filterOpts = `<option value="">All departments</option>` +
       this._depts.map(d => `<option value="${attr(d)}"${this._filterDept === d ? " selected" : ""}>${esc(d)}</option>`).join("") +
       `<option value="Unassigned"${this._filterDept === "Unassigned" ? " selected" : ""}>Unassigned</option>`;
@@ -5852,13 +6453,13 @@ const Depts = {
       </div>
       <div class="bulk-bar">
         <span class="bulk-count"><b id="selCount">0</b> selected</span>
-        <span class="bulk-assign">Assign selected to
+        <span class="bulk-assign">Add selected to
           <select id="bulkDept">${bulkOpts}</select>
           <button class="ghost" id="bulkApply" onclick="Depts.applyBulk()" disabled>Apply</button></span>
       </div>
       <table class="dept-table"><thead><tr>
           <th class="dept-cbcell"><input type="checkbox" class="cb" id="deptSelAll" title="Select all" onclick="Depts.selAll(this.checked)"></th>
-          <th>Model</th><th>In stock</th><th>Department</th></tr></thead>
+          <th>Model</th><th>In stock</th><th>Departments</th></tr></thead>
         <tbody id="deptRows">${this._rowsHtml(this._filteredModels())}</tbody></table>`;
   },
 
@@ -5913,11 +6514,16 @@ const Depts = {
   applyBulk() {
     if (!this._sel.size) return;
     const dep = document.getElementById("bulkDept").value;
-    this._sel.forEach(m => { if (dep) this._draft[m] = dep; else delete this._draft[m]; });
+    if (!dep) return;
+    this._sel.forEach(m => {
+      if (dep === "__clear__") delete this._draft[m];
+      else this._draft[m] = [...new Set([...this.deptsFor(m, this._draft), dep])];
+    });
+    Settings.markDirty();
     const n = this._sel.size;
     this._sel = new Set();
     this._render();
-    App.toast && App.toast(`${n} model(s) set to ${dep || "Unassigned"} — Save to keep.`);
+    App.toast && App.toast(`${n} model(s) ${dep === "__clear__" ? "unassigned" : `assigned to ${dep}`} — Save to keep.`);
   },
 
   addDept() {
@@ -5925,6 +6531,7 @@ const Depts = {
     const v = (inp.value || "").trim();
     if (!v) return;
     if (!this._depts.some(d => d.toLowerCase() === v.toLowerCase())) this._depts.push(v);
+    Settings.markDirty();
     inp.value = "";
     this._render();
     const ni = document.getElementById("deptNew"); if (ni) ni.focus();
@@ -5932,14 +6539,25 @@ const Depts = {
 
   removeDept(d) {
     this._depts = this._depts.filter(x => x !== d);
-    // unassign any model that pointed at the removed department
-    Object.keys(this._draft).forEach(m => { if (this._draft[m] === d) delete this._draft[m]; });
+    Object.keys(this._draft).forEach(m => {
+      const remaining = this.deptsFor(m, this._draft).filter(x => x !== d);
+      if (remaining.length) this._draft[m] = remaining; else delete this._draft[m];
+    });
+    Settings.markDirty();
     this._render();
   },
 
-  _pick(sel) {
-    const m = sel.dataset.model, v = sel.value;
-    if (v) this._draft[m] = v; else delete this._draft[m];
+  _draftDeptToggle(model, dept, checked) {
+    const assigned = this.deptsFor(model, this._draft);
+    const next = dept ? (checked ? [...new Set([...assigned, dept])] : assigned.filter(x => x !== dept)) : [];
+    if (next.length) this._draft[model] = next; else delete this._draft[model];
+    Settings.markDirty();
+    const tbody = document.getElementById("deptRows");
+    if (tbody) {
+      tbody.innerHTML = this._rowsHtml(this._filteredModels());
+      const control = [...tbody.querySelectorAll(".dept-multi")].find(el => el.dataset.model === model);
+      if (control) control.open = true;
+    }
   },
 
   async save() {
@@ -5949,6 +6567,7 @@ const Depts = {
       { action: "save", target: "Model departments", detail: `${data.departments.length} dept(s), ${mapped} model(s) mapped` });
     if (r && r.ok) {
       this.departments = data.departments; this.map = data.map;
+      Settings.dirty = false;
       this.close();
       App.toast ? App.toast("Saved.") : 0;
       try { Dashboard.load(); } catch (e) {}
@@ -5998,11 +6617,12 @@ const Depts = {
   },
 
   _sIcon(i) { IconPicker.open((this._sList[i] || {}).icon, v => { if (this._sList[i]) { this._sList[i].icon = v; Settings.markDirty && Settings.markDirty(); this._render(); } }); },
-  _sEdit(el) { const i = +el.dataset.i; if (this._sList[i]) this._sList[i][el.dataset.k] = el.value; },
-  _sPinEdit(el) { this._sPin = el.value; },
-  _sRemove(i) { this._sList.splice(i, 1); this._render(); },
+  _sEdit(el) { const i = +el.dataset.i; if (this._sList[i]) { this._sList[i][el.dataset.k] = el.value; Settings.markDirty(); } },
+  _sPinEdit(el) { this._sPin = el.value; Settings.markDirty(); },
+  _sRemove(i) { this._sList.splice(i, 1); Settings.markDirty(); this._render(); },
   addSite() {
     this._sList.push({ id: "site-" + Math.random().toString(36).slice(2, 8), name: "", url: "", icon: "🌐", mode: "fullview", category: "" });
+    Settings.markDirty();
     this._render();
     const rows = document.querySelectorAll("#siteRows input.cfg-in[data-k='name']");
     const last = rows[rows.length - 1]; if (last) last.focus();
@@ -6012,6 +6632,7 @@ const Depts = {
     const v = (inp.value || "").trim();
     if (!v) return;
     if (!this._sCats.some(c => c.toLowerCase() === v.toLowerCase())) this._sCats.push(v);
+    Settings.markDirty();
     inp.value = "";
     this._render();
     const ni = document.getElementById("catNew"); if (ni) ni.focus();
@@ -6019,6 +6640,7 @@ const Depts = {
   removeCat(c) {
     this._sCats = this._sCats.filter(x => x !== c);
     this._sList.forEach(s => { if (s.category === c) s.category = ""; });
+    Settings.markDirty();
     this._render();
   },
 
@@ -6040,6 +6662,7 @@ const Depts = {
       { action: "save", target: "NBT Sites", detail: `${sites.length} site(s), ${data.categories.length} categor(ies)` });
     if (r && r.ok) {
       Sites.categories = data.categories; Sites.list = data.sites; Sites.pin = data.pin;
+      Settings.dirty = false;
       this.close();
       App.toast && App.toast("Sites saved.");
       try { Sites.home(); } catch (e) {}
@@ -6049,7 +6672,10 @@ const Depts = {
   },
 
   close() {
-    if (this._page) { this._enter(this.activeTab); return; }       // page: Cancel/Done = reload the tab's saved state
+    if (this._page) {
+      if (Settings.dirty && !Settings.confirmLeave()) return;
+      this._enter(this.activeTab); return;
+    }       // page: Cancel/Done = reload the tab's saved state
     document.getElementById("modalRoot").innerHTML = "";
   },
 };
@@ -6076,22 +6702,33 @@ const Hub = {
 
   /* A config object is usable only if it has the three parts the app reads. */
   validCfg(c) { return !!(c && c.user && c.computerBase && c.departments); },
+  ensureOffboarding() {
+    if (!Array.isArray(this.config.offboarding?.sections)) this.config.offboarding = { label: "Teammate Offboarding", sections: [
+      { title: "Account and access", note: "Follow division HR and security procedures.", items: [
+        { text: "Confirm final work date and manager approval", detail: "" }, { text: "Disable sign-in and revoke active sessions", detail: "" },
+        { text: "Remove group, application, VPN, and privileged access", detail: "" }, { text: "Set mailbox and OneDrive handoff per policy", detail: "" } ] },
+      { title: "Equipment and records", note: "", items: [
+        { text: "Recover assigned computer and accessories", detail: "Record serial and condition" }, { text: "Return device to stock or mark for repair", detail: "" },
+        { text: "Transfer business files and ownership", detail: "" }, { text: "Record completion with HR or manager", detail: "" } ] }
+    ] };
+  },
 
   /* The division's checklists. A division with none yet starts from the platform TEMPLATE (Platform > Template
      checklists), else from the built-in defaults, and saves that as its own copy. */
   async loadConfig() {
     this.templateMode = false;
     const r = await Backend.call("hub_get_config");
-    if (r && r.ok && this.validCfg(r.config)) { this.config = r.config; return; }
+    if (r && r.ok && this.validCfg(r.config)) { this.config = r.config; this.ensureOffboarding(); return; }
     const fromTemplate = r && r.ok && this.validCfg(r.seed);
-    this.config = fromTemplate ? this.clone(r.seed) : this.makeDefaults();
+    this.config = fromTemplate ? this.clone(r.seed) : this.makeDefaults(); this.ensureOffboarding();
     Backend.call("hub_save_config", this.config, { action: "seed", target: "(entire config)", detail: fromTemplate ? "from the template checklists" : "defaults" });
   },
 
   /* Starting point for "Reset": the template if a super admin has made one, else the built-in defaults. */
   async startingPoint() {
     const t = await Backend.call("hub_get_template_config");
-    return (t && t.ok && this.validCfg(t.config)) ? this.clone(t.config) : this.makeDefaults();
+    this.config = (t && t.ok && this.validCfg(t.config)) ? this.clone(t.config) : this.makeDefaults();
+    this.ensureOffboarding(); return this.clone(this.config);
   },
 
   persistConfig(meta) {
@@ -6126,12 +6763,14 @@ const Hub = {
 
   currentSections() {
     if (this.state.type === "user") return this.config.user.sections;
+    if (this.state.type === "offboarding") return this.config.offboarding.sections;
     let secs = this.config.computerBase.sections.slice();
     if (this.state.dept && this.config.departments[this.state.dept]) secs = secs.concat(this.config.departments[this.state.dept].sections);
     return secs;
   },
 
   startUser() { if (!this.config) return App.toast("Still loading…"); this.newState("user", null); this.go("run"); this.renderRun(); },
+  startOffboarding() { if (!this.config) return App.toast("Still loading…"); this.newState("offboarding", null); this.go("run"); this.renderRun(); },
   startComputer() { if (!this.config) return App.toast("Still loading…"); this.buildDeptGrid(); this.go("dept"); },
   pickDept(d) {
     const p = this._pendingUpgrade; this._pendingUpgrade = null;
@@ -6197,26 +6836,27 @@ const Hub = {
   },
 
   renderRun() {
-    const s = this.state, isUser = s.type === "user";
+    const s = this.state, isUser = s.type === "user", isOffboarding = s.type === "offboarding";
     const badge = document.getElementById("runBadge");
-    badge.textContent = isUser ? "User setup" : "Computer setup";
+    badge.textContent = isOffboarding ? "Offboarding" : isUser ? "User setup" : "Computer setup";
     badge.className = "hbadge " + (isUser ? "user" : "computer");
     const db = document.getElementById("runDeptBadge");
     if (!isUser && s.dept) { db.style.display = ""; db.textContent = s.dept; } else db.style.display = "none";
     document.getElementById("runResumed").style.display = s.resumed ? "" : "none";
-    document.getElementById("runTitle").textContent = isUser ? "New user setup" : ("New computer setup" + (s.dept ? " · " + s.dept : ""));
-    document.getElementById("nameLabel").textContent = isUser ? (this.config.user.subjectLabel || "Teammate name") : "Computer hostname";
+    document.getElementById("runTitle").textContent = isOffboarding ? "Teammate offboarding" : isUser ? "New user setup" : ("New computer setup" + (s.dept ? " · " + s.dept : ""));
+    document.getElementById("nameLabel").textContent = isUser || isOffboarding ? (this.config.user.subjectLabel || "Teammate name") : "Computer hostname";
     const subj = document.getElementById("subjectInput");
-    subj.placeholder = isUser ? (this.config.user.subjectPlaceholder || "e.g. Smith, Jane") : "e.g. " + Divisions.label() + "-XXXXXX";
+    subj.placeholder = isUser || isOffboarding ? (this.config.user.subjectPlaceholder || "e.g. Smith, Jane") : "e.g. " + Divisions.label() + "-XXXXXX";
     subj.value = s.subject || ""; subj.classList.remove("req-missing");
     // Primary user (required for a computer setup, optional for a user setup)
     const pu = document.getElementById("primaryUserInput");
     if (pu) { pu.value = s.primaryUser || ""; pu.classList.remove("req-missing"); }
     const puLbl = document.getElementById("primaryUserLabel");
-    if (puLbl) puLbl.textContent = isUser ? "Primary user" : "Primary user (required)";
+    if (puLbl) puLbl.textContent = isUser || isOffboarding ? "Primary user" : "Primary user (required)";
+    const puField = puLbl && puLbl.parentElement; if (puField) puField.style.display = isOffboarding ? "none" : "";
     document.getElementById("techInput").value = s.tech || (this.who && this.who.user) || "";
     document.getElementById("dateInput").value = new Date().toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
-    document.getElementById("serviceTagField").style.display = isUser ? "none" : "";
+    document.getElementById("serviceTagField").style.display = isUser || isOffboarding ? "none" : "";
     document.getElementById("serviceTagInput").value = s.serviceTag || "";
     const nt = document.getElementById("setupNotesInput"); if (nt) nt.value = s.setupNotes || "";
     document.getElementById("saveBanner").classList.remove("show");
@@ -6392,7 +7032,7 @@ const Hub = {
   async save() {
     const subj = document.getElementById("subjectInput").value.trim();
     if (!subj) { const i = document.getElementById("subjectInput"); i.classList.add("req-missing"); i.focus();
-      return App.toast(this.state.type === "user" ? "Enter the teammate name first." : "Enter the hostname first.", true); }
+      return App.toast(this.state.type !== "computer" ? "Enter the teammate name first." : "Enter the hostname first.", true); }
     const pu = (document.getElementById("primaryUserInput").value || "").trim();
     if (this.state.type === "computer" && !pu) {
       const i = document.getElementById("primaryUserInput"); i.classList.add("req-missing"); i.focus();
@@ -6420,10 +7060,10 @@ const Hub = {
   },
 
   buildRecordHtml(subj, secs, done, total) {
-    const s = this.state, isUser = s.type === "user", d = new Date();
+    const s = this.state, isUser = s.type === "user", isOffboarding = s.type === "offboarding", d = new Date();
     const safe = subj.replace(/[^\w .\-]/g, "_");
     const idtail = (s.id || "").split("-").slice(-2).join("-");
-    const fname = (isUser ? "User Setup" : "Computer Setup") + " - " + safe + " - " + idtail + ".html";
+    const fname = (isOffboarding ? "Teammate Offboarding" : isUser ? "User Setup" : "Computer Setup") + " - " + safe + " - " + idtail + ".html";
     const pct = total ? Math.round(done / total * 100) : 0;
     let rows = "";
     secs.forEach((sec, si) => {
@@ -6446,9 +7086,9 @@ const Hub = {
       .mark{width:26px;text-align:center;font-weight:700}.mark.y{color:#006325}.mark.n{color:#b3261e}
       .rd{color:#5c6b64;font-size:12px;margin-top:2px}.rn{color:#8a6d1e;font-size:12px;margin-top:3px;font-style:italic}
       .ft{margin-top:20px;color:#5c6b64;font-size:12px}</style></head><body>
-      <h1>NUCOR ${esc(Divisions.label())} · ${isUser ? "New User Setup" : "New Computer Setup"}</h1>
+      <h1>NUCOR ${esc(Divisions.label())} · ${isOffboarding ? "Teammate Offboarding" : isUser ? "New User Setup" : "New Computer Setup"}</h1>
       <div class="sub">${esc(Divisions.label())} Systems setup record</div>
-      <div class="hd"><div><b>${isUser ? "Teammate:" : "Hostname:"}</b> ${esc(subj)}</div>
+      <div class="hd"><div><b>${isUser || isOffboarding ? "Teammate:" : "Hostname:"}</b> ${esc(subj)}</div>
       <div><b>Primary user:</b> ${esc(s.primaryUser || "—")}</div>
       ${s.dept ? `<div><b>Department:</b> ${esc(s.dept)}</div>` : ""}
       <div><b>Technician:</b> ${esc(s.tech || "—")}</div>
@@ -6473,7 +7113,7 @@ const Hub = {
         const pct = typeof l.pct === "number" ? l.pct : (l.total ? Math.round(l.done / l.total * 100) : 0);
         const done = l.status === "complete";
         const row = document.createElement("div"); row.className = "h-row";
-        row.innerHTML = `<span class="htag ${l.type === "user" ? "user" : "computer"}">${l.type === "user" ? "User" : "Computer"}</span>
+        row.innerHTML = `<span class="htag ${l.type === "user" || l.type === "offboarding" ? "user" : "computer"}">${l.type === "offboarding" ? "Offboarding" : l.type === "user" ? "User" : "Computer"}</span>
           <span class="who">${esc(l.subject || "(unnamed)")}</span>
           ${l.primaryUser ? `<span class="m2">· ${esc(l.primaryUser)}</span>` : ""}
           ${l.dept ? `<span class="m2">· ${esc(l.dept)}</span>` : ""}
@@ -6518,7 +7158,7 @@ const Hub = {
   // logs it, and reverts any linked upgrade back to queued.
   cancelSetup() {
     const s = this.state || {};
-    const label = s.type === "user" ? "user setup" : "computer setup";
+    const label = s.type === "offboarding" ? "teammate offboarding" : s.type === "user" ? "user setup" : "computer setup";
     const si = document.getElementById("subjectInput");
     const subj = (si && si.value.trim()) || s.subject || "(unnamed)";
     document.getElementById("modalRoot").innerHTML =
@@ -6562,13 +7202,14 @@ const Hub = {
   buildAdminSelect() {
     const sel = document.getElementById("adminSelect"), cur = sel.value; sel.innerHTML = "";
     const add = (v, t) => { const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o); };
-    add("user", "User setup"); add("base", "Computer — base build");
+    add("user", "User setup"); add("offboarding", "Teammate offboarding"); add("base", "Computer — base build");
     Object.keys(this.config.departments).forEach(n => add("dept:" + n, "Computer — " + n));
     if (cur) sel.value = cur;
   },
   readTarget() {
     const v = document.getElementById("adminSelect").value || "user";
     if (v === "user") { this.adminTarget = { kind: "user" }; this.adminList = this.clone(this.config.user.sections); }
+    else if (v === "offboarding") { this.adminTarget = { kind: "offboarding" }; this.adminList = this.clone(this.config.offboarding.sections); }
     else if (v === "base") { this.adminTarget = { kind: "base" }; this.adminList = this.clone(this.config.computerBase.sections); }
     else { const n = v.slice(5); this.adminTarget = { kind: "dept", dept: n }; this.adminList = this.clone(this.config.departments[n].sections); }
   },
@@ -6628,6 +7269,7 @@ const Hub = {
     this.adminList.forEach(s => s.items = s.items.filter(x => (x.text || "").trim() !== ""));
     const label = this.adminLabel(), summary = this.adminSummary();
     if (this.adminTarget.kind === "user") this.config.user.sections = this.adminList;
+    else if (this.adminTarget.kind === "offboarding") this.config.offboarding.sections = this.adminList;
     else if (this.adminTarget.kind === "base") this.config.computerBase.sections = this.adminList;
     else this.config.departments[this.adminTarget.dept].sections = this.adminList;
     this.persistConfig({ action: "save", target: label, detail: summary }).then(r => {
@@ -6640,6 +7282,7 @@ const Hub = {
       : "This restores this checklist to the platform template and discards your edits.", async () => {
       const d = this.templateMode ? this.makeDefaults() : await this.startingPoint(), label = this.adminLabel();
       if (this.adminTarget.kind === "user") this.config.user = d.user;
+      else if (this.adminTarget.kind === "offboarding") this.config.offboarding = d.offboarding;
       else if (this.adminTarget.kind === "base") this.config.computerBase = d.computerBase;
       else if (this.config.departments[this.adminTarget.dept]) this.config.departments[this.adminTarget.dept] = d.departments[this.adminTarget.dept] || this.config.departments[this.adminTarget.dept];
       this.persistConfig({ action: "reset", target: label, detail: this.templateMode ? "restored built-in defaults" : "restored the template" });
@@ -6760,14 +7403,16 @@ Object.assign(Mock, {
   async get_flags() { return { ok: true, auto_sync: true }; },
   /* division admin - mirrors Api.get_division_admin / save_division */
   _dv: [
-    { id: "nbgw", name: "NBGW - Nucor Buildings Group West", company_name: "Nucor Buildings Group West", intune_category: "NBGW", sharepoint_hostname: "nucor.sharepoint.com", site_path: "/sites/NBGW/systems", ad_domain: "bg.nucorsteel.local", sql_server: "BGBRISQL07", enabled: true, access: [],
-      sites: [{ code: "LTR", name: "Lathrop, CA", city_prefixes: ["lathrop"], device_prefixes: ["BGLTR", "BGCCN", "BGMOD"] }, { code: "BRI", name: "Brigham City, UT", city_prefixes: ["brigham"], device_prefixes: ["BGBRI"] }] },
-    { id: "nbgtx", name: "NBGTX - NBG Terrell", company_name: "NBG - Terrell", intune_category: "NBGTX", sharepoint_hostname: "", site_path: "", ad_domain: "", sql_server: "", enabled: true, access: [],
-      sites: [{ code: "TER", name: "Terrell, TX", city_prefixes: ["terrell"], device_prefixes: ["BGTER"] }] }],
+    { id: "nbgw", name: "NBGW - Nucor Buildings Group West", company_name: "Nucor Buildings Group West", company_names: ["Nucor Buildings Group West"], intune_category: "NBGW", intune_categories: ["NBGW"], sharepoint_hostname: "nucor.sharepoint.com", site_path: "/sites/NBGW/systems", ad_domain: "bg.nucorsteel.local", sql_server: "BGBRISQL07", enabled: true, access: [],
+      sites: [{ code: "LTR", name: "Lathrop, CA", city_prefixes: ["lathrop"], device_prefixes: ["BGLTR", "BGCCN", "BGMOD"], company_names: ["Nucor Buildings Group West"], intune_categories: ["NBGW"] }, { code: "BRI", name: "Brigham City, UT", city_prefixes: ["brigham"], device_prefixes: ["BGBRI"], company_names: ["Nucor Buildings Group West"], intune_categories: ["NBGW"] }] },
+    { id: "nbgtx", name: "NBGTX - NBG Terrell", company_name: "NBG - Terrell", company_names: ["NBG - Terrell"], intune_category: "NBGTX", intune_categories: ["NBGTX"], sharepoint_hostname: "", site_path: "", ad_domain: "", sql_server: "", enabled: true, access: [],
+      sites: [{ code: "TER", name: "Terrell, TX", city_prefixes: ["terrell"], device_prefixes: ["BGTER"], company_names: ["NBG - Terrell"], intune_categories: ["NBGTX"] }] }],
   async get_division_admin() { return { ok: true, super_admin: true, divisions: JSON.parse(JSON.stringify(this._dv)) }; },
   async save_division(d) {
     if (!/^[a-z0-9][a-z0-9_-]{1,19}$/.test(d.id || "")) return { ok: false, error: "Division id: 2-20 characters, lowercase letters, digits, - or _." };
-    if (!d.name || !d.company_name || !d.intune_category) return { ok: false, error: "Display name, Entra company name and Intune category are required." };
+    const companies = [...new Set((d.sites || []).flatMap(s => s.company_names || []))], categories = [...new Set((d.sites || []).flatMap(s => s.intune_categories || []))];
+    if (!d.name || !companies.length || !categories.length) return { ok: false, error: "Add at least one Entra company name and Intune category to a site in the Sites tab." };
+    d.company_names = companies; d.company_name = companies[0]; d.intune_categories = categories; d.intune_category = categories[0];
     const i = this._dv.findIndex(x => x.id === d.id);
     if (i >= 0) this._dv[i] = d; else this._dv.push(d);
     return { ok: true };
@@ -6811,7 +7456,7 @@ Object.assign(Mock, {
     return { ok: true };
   },
   /* division preferences + tenant settings - mirrors Api.get_division_prefs / save_division_prefs / get_own_division / save_own_division */
-  _prefs: { timezone: "" },
+  _prefs: { timezone: "", ot_lists: { areas: [], lines: [], panels: [], owners: [] } },
   async get_my_prefs() { return { ok: true, divisions: (Divisions.list || []).map(d => ({ id: d.id, name: d.name })), default_division: localStorage.getItem("mock_def_div") || "" }; },
   async save_my_prefs(d) { try { localStorage.setItem("mock_def_div", d || ""); } catch (e) {} return { ok: true, default_division: d || "" }; },
   async get_division_prefs() {
@@ -6821,7 +7466,11 @@ Object.assign(Mock, {
       device_os: this._prefs.device_os || "windows", device_os_options: [{ id: "windows", label: "Windows computers only" }, { id: "all", label: "All device types (phones, tablets, Macs too)" }],
       hot_spare_depts: this._prefs.hot_spare_depts || [], hot_spare_default: ["Detailing", "Engineering"],
       hot_spare_effective: ((this._prefs.hot_spare_depts || []).length ? this._prefs.hot_spare_depts : ["Detailing", "Engineering"]).concat(["Other"]),
-      smtp: this._prefs.smtp || { enabled: false, server: "", port: 25, security: "none", from_address: "" } };
+      ot_lists: this._prefs.ot_lists || { areas: [], lines: [], panels: [], owners: [] },
+      ot_stale_months: this._prefs.ot_stale_months || 6,
+      smtp: this._prefs.smtp || { enabled: false, server: "", port: 25, security: "none", from_address: "" },
+      issue_subscribers: this._prefs.issue_subscribers || [], hot_spare_minimum: this._prefs.hot_spare_minimum || 0,
+      notification_events: { new: "New issue", status: "Issue status changes", comment: "Issue comments", boneyard: "Boneyard device moves", sharepoint: "SharePoint permission changes", software: "Not allowed software policy changes", device: "Device checkout and return", inventory: "Inventory and data quality alerts" } };
   },
   _scopes: null,
   async get_search_scopes() {
@@ -6832,7 +7481,7 @@ Object.assign(Mock, {
     for (const b of d.brands || []) if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/i.test((b.domain || "").trim())) return { ok: false, error: "Brand '" + (b.label || b.domain) + "': needs a name and an email domain such as example.com." };
     this._scopes = d; return { ok: true, ...d };
   },
-  async save_division_prefs(tz, url, os, depts, smtp) {
+  async save_division_prefs(tz, url, os, depts, smtp, issueSubscribers, hotSpareMinimum, otLists, otStaleMonths) {
     if (os !== undefined && os !== null) this._prefs.device_os = os;
     if (depts !== undefined && depts !== null) this._prefs.hot_spare_depts = depts.filter(x => x && x.toLowerCase() !== "other");
     if (tz !== undefined && tz !== null) this._prefs.timezone = tz || "";
@@ -6843,11 +7492,17 @@ Object.assign(Mock, {
       this._prefs.project_hub_url = u;
     }
     if (smtp !== undefined && smtp !== null) this._prefs.smtp = { ...smtp, port: Number(smtp.port || 25) };
+    if (issueSubscribers !== undefined && issueSubscribers !== null) this._prefs.issue_subscribers = issueSubscribers;
+    if (hotSpareMinimum !== undefined && hotSpareMinimum !== null) this._prefs.hot_spare_minimum = Math.max(0, Math.min(500, Number(hotSpareMinimum) || 0));
+    if (otLists !== undefined && otLists !== null) this._prefs.ot_lists = otLists;
+    if (otStaleMonths !== undefined && otStaleMonths !== null) this._prefs.ot_stale_months = Number(otStaleMonths);
     return { ok: true };
   },
+  async division_notify_test(event = "new") { return { ok: true, sent: 1, via: "demo", event }; },
   async get_own_division() {
     const d = this._dv.find(x => x.id === this._divCur) || this._dv[0];
-    return { ok: true, id: d.id, name: d.name, company_name: d.company_name, intune_category: d.intune_category, super_admin: true, role: "super", can_edit: true,
+    const companies = d.company_names || [d.company_name].filter(Boolean), categories = d.intune_categories || [d.intune_category].filter(Boolean);
+    return { ok: true, id: d.id, name: d.name, company_name: d.company_name, company_names: companies, intune_category: d.intune_category, intune_categories: categories, super_admin: true, role: "super", can_edit: true,
       sites: JSON.parse(JSON.stringify(d.sites || [])), access: [...(d.access || [])], ad_domain: d.ad_domain || "", sql_server: d.sql_server || "",
       timesheet_db: d.timesheet_db || "", timesheet_table: d.timesheet_table || "", employee_db: d.employee_db || "", employee_table: d.employee_table || "" };
   },
@@ -6983,6 +7638,68 @@ Object.assign(Mock, {
   },
   _deviceClassifications: {},
   async device_classifications_get() { return { ok: true, data: this._deviceClassifications, can_edit: true }; },
+  _deviceLifecycle: {}, _savedDeviceReports: [], _sharedReviews: {}, _otAssets: [],
+  _otDeviceTypes: ["Windows PC", "Windows Server", "PLC / Controller", "HMI / Panel", "Network device", "Sensor / Instrument", "Other"],
+  async ot_assets_get() {
+    const own = await this.get_own_division();
+    return { ok: true, assets: this._otAssets, types: this._otDeviceTypes, can_edit: true,
+      sites: own.sites || [], lists: this._prefs.ot_lists || { areas: [], lines: [], panels: [], owners: [] }, stale_months: this._prefs.ot_stale_months || 6 };
+  },
+  async ot_asset_save(value) {
+    const now = new Date().toISOString(), id = value.id || (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID() : `ot-${Date.now()}`);
+    const prior = this._otAssets.find(x => x.id === id), asset = { ...value, id, status: value.status || "Active", criticality: value.criticality || "Medium", created_at: (prior && prior.created_at) || now, updated_at: now, updated_by: "Demo User" };
+    this._otAssets = [...this._otAssets.filter(x => x.id !== id), asset].sort((a,b) => a.name.localeCompare(b.name));
+    return { ok: true, asset, assets: this._otAssets };
+  },
+  async ot_asset_delete(id) { this._otAssets = this._otAssets.filter(x => x.id !== id); return { ok: true, assets: this._otAssets }; },
+  async ot_asset_verify(id) {
+    const asset = this._otAssets.find(x => x.id === id);
+    if (!asset) return { ok: false, error: "OT device was removed. Refresh the list." };
+    const now = new Date().toISOString(); Object.assign(asset, { last_verified: now.slice(0, 10), updated_at: now, updated_by: "Demo User" });
+    return { ok: true, asset, assets: this._otAssets };
+  },
+  async ot_assets_import(values) {
+    let added = 0, updated = 0, skipped = 0, added_choices = 0;
+    const currentLists = this._prefs.ot_lists || {};
+    const lists = { areas: [...(currentLists.areas || [])], lines: [...(currentLists.lines || [])], panels: [...(currentLists.panels || [])], owners: [...(currentLists.owners || [])] };
+    const choiceFields = { area: "areas", line: "lines", panel: "panels", owner: "owners" };
+    for (const value of values || []) {
+      if (!value.name || !value.type || !this._otDeviceTypes.includes(value.type)) { skipped++; continue; }
+      const prior = this._otAssets.find(a => (value.serial && a.serial?.toLowerCase() === value.serial.toLowerCase()) || (value.asset_tag && a.asset_tag?.toLowerCase() === value.asset_tag.toLowerCase()));
+      await this.ot_asset_save({ ...(prior || {}), ...value, id: prior?.id }); prior ? updated++ : added++;
+      for (const [field, listName] of Object.entries(choiceFields)) {
+        const choice = String(value[field] || "").trim().slice(0, 100);
+        if (!choice || choice.toLowerCase() === "needs verification") continue;
+        if (!lists[listName].some(item => String(item).toLowerCase() === choice.toLowerCase()) && lists[listName].length < 200) {
+          lists[listName].push(choice); added_choices++;
+        }
+      }
+    }
+    this._prefs.ot_lists = lists;
+    return { ok: true, assets: this._otAssets, added, updated, skipped, errors: skipped, row_errors: [], lists, added_choices };
+  },
+  async ot_xlsx_read(contentBase64, sheetName) {
+    if (window.pywebview?.api?.ot_xlsx_read) return await window.pywebview.api.ot_xlsx_read(contentBase64, sheetName || "");
+    return { ok: false, error: "Excel import needs the NBG Hub desktop app. Save this workbook as CSV to import in browser preview." };
+  },
+  async ot_assets_send_reminders() { return { ok: false, error: "Email reminders are available in the signed-in desktop app." }; },
+  async ot_device_types_get() { return { ok: true, types: this._otDeviceTypes }; },
+  async ot_device_types_save(types) { this._otDeviceTypes = types; return { ok: true, types }; },
+  async device_lifecycle_get(serial) { return serial ? { ok: true, device: this._deviceLifecycle[String(serial).toLowerCase()] || {} } : { ok: true, devices: this._deviceLifecycle }; },
+  async device_checkout(serial, custodian, due_date, notes) {
+    const key = String(serial || "").toLowerCase(), old = this._deviceLifecycle[key] || { history: [] }, at = new Date().toISOString();
+    const item = { ...old, status: "checked_out", custodian, due_date, checked_out_at: at, history: [...(old.history || []), { at, by: "Demo User", action: "checked out", custodian, due_date, notes }] };
+    this._deviceLifecycle[key] = item; return { ok: true, device: item };
+  },
+  async device_return(serial, notes) {
+    const key = String(serial || "").toLowerCase(), old = this._deviceLifecycle[key]; if (!old || old.status !== "checked_out") return { ok: false, error: "This device has no active checkout." };
+    const at = new Date().toISOString(), item = { ...old, status: "available", custodian: "", due_date: "", history: [...(old.history || []), { at, by: "Demo User", action: "returned", custodian: old.custodian, notes }] };
+    this._deviceLifecycle[key] = item; return { ok: true, device: item };
+  },
+  async saved_reports_get() { return { ok: true, reports: this._savedDeviceReports }; },
+  async saved_reports_save(reports) { this._savedDeviceReports = reports || []; return { ok: true, reports: this._savedDeviceReports }; },
+  async sharepoint_review_get(site) { return { ok: true, items: this._sharedReviews[site] || [] }; },
+  async sharepoint_review_save(site, items) { this._sharedReviews[site] = items || []; return { ok: true, items: this._sharedReviews[site] }; },
   async device_classification_set(serial, classification) {
     const key = String(serial || "").toLowerCase();
     if (classification === "shared") this._deviceClassifications[key] = "shared";
@@ -7013,8 +7730,8 @@ Object.assign(Mock, {
   _divCur: "nbgw",
   async get_divisions() {
     return { ok: true, current: this._divCur, divisions: [
-      { id: "nbgw", name: "NBGW - Nucor Buildings Group West", company_name: "Nucor Buildings Group West", sites: [{ code: "LTR", name: "Lathrop, CA" }, { code: "BRI", name: "Brigham City, UT" }] },
-      { id: "nbgtx", name: "NBGTX - NBG Terrell", company_name: "NBG - Terrell", sites: [{ code: "TER", name: "Terrell, TX" }] },
+      { id: "nbgw", name: "NBGW - Nucor Buildings Group West", company_name: "Nucor Buildings Group West", company_names: ["Nucor Buildings Group West"], intune_category: "NBGW", intune_categories: ["NBGW"], sites: [{ code: "LTR", name: "Lathrop, CA", company_names: ["Nucor Buildings Group West"], intune_categories: ["NBGW"] }, { code: "BRI", name: "Brigham City, UT", company_names: ["Nucor Buildings Group West"], intune_categories: ["NBGW"] }] },
+      { id: "nbgtx", name: "NBGTX - NBG Terrell", company_name: "NBG - Terrell", company_names: ["NBG - Terrell"], intune_category: "NBGTX", intune_categories: ["NBGTX"], sites: [{ code: "TER", name: "Terrell, TX", company_names: ["NBG - Terrell"], intune_categories: ["NBGTX"] }] },
     ] };
   },
   async switch_division(id) { this._divCur = id; return { ok: true, current: id }; },
@@ -7063,8 +7780,9 @@ Object.assign(Mock, {
       const serial = (r.serial || "").trim(); if (!serial) return;
       const resv = reserved[serial];
       if (resv && resv.setup_id !== excludeSetupId) return;
-      const dep = (this._deptData.map || {})[(r.model || "").trim()] || "Unassigned";
-      (by_dept[dep] = by_dept[dep] || []).push({ serial, model: r.model || "", site: r.site_tag || "" });
+      const rawDepts = (this._deptData.map || {})[(r.model || "").trim()];
+      const depts = (Array.isArray(rawDepts) ? rawDepts : rawDepts ? [rawDepts] : []).filter(Boolean);
+      (depts.length ? depts : ["Unassigned"]).forEach(dep => (by_dept[dep] = by_dept[dep] || []).push({ serial, model: r.model || "", site: r.site_tag || "" }));
     });
     return { ok: true, by_dept };
   },
@@ -7206,13 +7924,15 @@ Object.assign(Mock, {
       { user: "s.bhatt@nucor.com", site: "BRI", dept: "Engineering" }],
     devices: 3, has_dept: true, generated_at: "2026-08-07T10:00:00Z",
   },
-  _softwareRules: { rules: [{ app: "Tekla Structures 2023", scope: "Detailing", required: true, set_by: "Demo User", set_at: "2026-08-12T10:00:00Z" }] },
+  _softwareRules: { rules: [{ app: "Tekla Structures 2023", scope: "Detailing", required: true, set_by: "Demo User", set_at: "2026-08-12T10:00:00Z" }], not_allowed: ["Bluebeam Revu"] },
   async software_get() { return { ok: true, data: this._software, rules: this._softwareRules }; },
   async software_refresh() { await new Promise(r => setTimeout(r, 300)); this._software.generated_at = new Date().toISOString(); return { ok: true, apps: this._software.apps.length, devices: this._software.devices, generated_at: this._software.generated_at, has_dept: true }; },
+  async windows_updates_get() { return { ok: true, data: null }; },
+  async windows_updates_refresh() { return { ok: false, error: "Windows Update Watch needs the signed-in NBG Hub desktop app." }; },
   async software_save_rules(rules) {
     const auto = rules && rules.auto ? { top: +rules.auto.top, min_pct: +rules.auto.min_pct, min_people: +rules.auto.min_people } : this._softwareRules.auto;
-    this._softwareRules = { rules: (rules && rules.rules) || [], ...(auto ? { auto } : {}) };
-    return { ok: true, rules: this._softwareRules.rules, auto };
+    this._softwareRules = { rules: (rules && rules.rules) || [], not_allowed: (rules && rules.not_allowed) || this._softwareRules.not_allowed || [], ...(auto ? { auto } : {}) };
+    return { ok: true, rules: this._softwareRules.rules, not_allowed: this._softwareRules.not_allowed, auto };
   },
   async hub_get_changes() { return { ok: true, changes: this._hubChanges }; },
   async hub_get_feedback() { return { ok: true, feedback: this._hubFeedback }; },
@@ -7279,11 +7999,11 @@ Object.assign(Mock, {
       inventory: { new_stock: _stock.length, in_use: this._use.length, total: _stock.length + this._use.length,
         by_site: this._use.reduce((m, r) => { const t = r.site_tag || "—"; m[t] = (m[t] || 0) + 1; return m; }, {}),
         stock_by_site: _stock.reduce((m, r) => { const t = r.site_tag || "—"; m[t] = (m[t] || 0) + 1; return m; }, {}),
-        stock_by_dept: _stock.reduce((m, r) => { const d = (this._deptData.map || {})[(r.model || "").trim()] || "Unassigned"; m[d] = (m[d] || 0) + 1; return m; }, {}),
+        stock_by_dept: _stock.reduce((m, r) => { const raw = (this._deptData.map || {})[(r.model || "").trim()], ds = (Array.isArray(raw) ? raw : raw ? [raw] : []).filter(Boolean); (ds.length ? ds : ["Unassigned"]).forEach(d => { m[d] = (m[d] || 0) + 1; }); return m; }, {}),
         stock_by_dept_site: _stock.reduce((m, r) => {
-          const d = (this._deptData.map || {})[(r.model || "").trim()] || "Unassigned";
           const s = (r.site_tag || "").trim().toUpperCase(), k = (s === "LTR" || s === "BRI") ? s : "Other";
-          (m[d] = m[d] || {})[k] = (m[d][k] || 0) + 1; return m;
+          const raw = (this._deptData.map || {})[(r.model || "").trim()], ds = (Array.isArray(raw) ? raw : raw ? [raw] : []).filter(Boolean);
+          (ds.length ? ds : ["Unassigned"]).forEach(d => { (m[d] = m[d] || {})[k] = (m[d][k] || 0) + 1; }); return m;
         }, {}),
         warranty: wb,
         not_nbgw_count: notNbgw.length, not_nbgw: notNbgw, not_nbgw_by_office: byOffice,

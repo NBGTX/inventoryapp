@@ -143,15 +143,103 @@ def run_sync(gc: GraphClient, commit: bool = False) -> dict:
 
     # one summary audit entry per sync run (not one per device)
     if commit and (added or updated):
+        categories = ", ".join(gc.cfg.get("intune_device_categories") or [gc.division.get("intune_category", "")])
         gc.add_log("Sync", "", "", actor=getattr(gc, "account_name", "") or "",
-                   details=f"Intune ({gc.division['intune_category']} device category): {len(added)} added, {len(updated)} updated")
+                   details=f"Intune ({categories} device categories): {len(added)} added, {len(updated)} updated")
 
     if commit and deployed_now:
         record_deploy_dates(gc, deployed_now)
+    if commit and not errors and (added or updated):
+        changed_serials = {str(x.get("serial") or "").lower() for x in added}
+        changed_serials.update(str(x).lower() for x in updated)
+        record_intune_snapshots(gc, [d for d in devices if str(d.get("serial") or "").lower() in changed_serials])
+    if commit and not errors:
+        notify_low_stock(gc)
     queued = queue_upgrades(gc) if (commit and not errors) else 0
     return {"moved": added, "added": len(added), "updated": len(updated),
             "refreshed": len(updated), "count": len(devices), "skipped": 0,
             "deduped": dedupe["removed"], "queued_upgrades": queued, "errors": errors}
+
+
+def record_intune_snapshots(gc: GraphClient, devices: list[dict], hub=None) -> int:
+    """Keep a compact, shared history when Intune-reported device facts change."""
+    try:
+        if hub is None:
+            from hub import hub_for
+            hub = hub_for(gc)
+        import hashlib
+        at = _dt.datetime.now().astimezone().isoformat()
+        tracked = ("device_name", "user", "model", "manufacturer", "os_version", "os_install", "last_checkin", "site_tag")
+        changed = 0
+        for device in devices:
+            serial = str(device.get("serial") or "").strip()
+            if not serial:
+                continue
+            key = hashlib.sha256(serial.lower().encode()).hexdigest()[:32]
+            state = dict(hub.get_named("device-lifecycle-" + key) or {})
+            snapshot = {field: str(device.get(field) or "")[:300] for field in tracked}
+            history = list(state.get("history") or [])
+            previous = next((row.get("snapshot") for row in reversed(history) if row.get("source") == "Intune"), None)
+            if previous != snapshot:
+                history.append({"at": at, "by": "Intune sync", "action": "Intune snapshot", "source": "Intune", "snapshot": snapshot})
+                state["history"] = history[-100:]
+                hub.put_named("device-lifecycle-" + key, state); changed += 1
+        if changed:
+            try:
+                hub._change("Device history", f"Intune sync recorded {changed} changed device snapshot(s)")
+            except Exception:
+                pass
+        return changed
+    except Exception:
+        return 0
+
+
+def notify_low_stock(gc: GraphClient, hub=None) -> None:
+    """Send opt-in transition alerts for low stock, stale check-ins, warranties, and overdue loans."""
+    try:
+        from hub import hub_for
+        import notify
+        hub = hub or hub_for(gc)
+        prefs = hub.get_prefs(); minimum = int(prefs.get("hot_spare_minimum", 0) or 0)
+        reserved = {str(row.get("serial", "")).strip().casefold() for row in hub.active_reservations()}
+        hot_spares = {str(row.get("serial", "")).strip().casefold() for row in hub.get_hot_spares()}
+        life = hub.get_named("device-lifecycle-index") or {}; loans = life.get("devices") or {}
+        checked_out = {str(serial).strip().casefold() for serial, item in loans.items() if item.get("status") == "checked_out"}
+        held = reserved | hot_spares | checked_out
+        stock = [row for row in gc.get_new_stock()
+                 if (row.get("status") or "").strip().lower() != "boneyard"
+                 and str(row.get("serial", "")).strip().casefold() not in held]
+        use = gc.get_in_use(); tracked = use + [row for row in gc.get_new_stock() if (row.get("status") or "").strip().lower() != "boneyard"]
+        today = _dt.date.today()
+        def as_day(value):
+            try: return _dt.date.fromisoformat(str(value or "")[:10])
+            except (TypeError, ValueError): return None
+        try:
+            import settings_catalog
+            stale_days = settings_catalog.number(gc, "stale_checkin_days")
+        except Exception:
+            stale_days = 30
+        counts = {"low_stock": len(stock) if minimum and len(stock) < minimum else 0,
+                  "stale_checkins": sum(1 for row in tracked if (d := as_day(row.get("last_checkin"))) and (today - d).days > stale_days),
+                  "expired_warranties": sum(1 for row in tracked if (d := as_day(row.get("warranty"))) and d < today)}
+        overdue = [serial for serial, item in loans.items() if item.get("status") == "checked_out" and item.get("due_date") and item["due_date"] < today.isoformat()]
+        counts["overdue_returns"] = len(overdue)
+        old = (hub.get_named("inventory-alerts") or {}).get("counts")
+        if old is None:
+            hub.put_named("inventory-alerts", {"counts": counts})
+            return
+        changes = [f"{key.replace('_', ' ').title()}: {value}" for key, value in counts.items() if value and value != old.get(key, 0)]
+        if changes:
+            recipients = notify.division_recipients(notify.division_subscribers_doc(prefs.get("issue_subscribers")), "inventory")
+            if recipients:
+                division = (gc.division or {}).get("name") or (gc.division or {}).get("id", "Division")
+                title = "Inventory needs review"
+                detail = "\n".join(changes + (["Overdue device serials: " + ", ".join(overdue[:25])] if overdue else []))
+                subject, text, html = notify.render_notice(division, title, detail, "inventory")
+                notify.deliver(gc, recipients, subject, text, html, "inventory", {"title": title, "division": {"name": division}})
+        hub.put_named("inventory-alerts", {"counts": counts})
+    except Exception:
+        return
 
 
 def record_deploy_dates(gc: GraphClient, serials, hub=None, today: str | None = None) -> int:
@@ -711,7 +799,8 @@ def main() -> None:
         return main_enrich(gc, commit)
     result = run_sync(gc, commit=commit)
 
-    print(f"\n{'COMMITTED' if commit else 'DRY RUN'} - saw {result['count']} {gc.division['intune_category']} device(s) in Intune; "
+    categories = ", ".join(gc.cfg.get("intune_device_categories") or [gc.division.get("intune_category", "")])
+    print(f"\n{'COMMITTED' if commit else 'DRY RUN'} - saw {result['count']} device(s) in Intune categories {categories}; "
           f"{len(result['moved'])} {'added' if commit else 'would be added'} to In Use, "
           f"{result['updated']} {'updated' if commit else 'would update'}.")
     for m in result["moved"]:

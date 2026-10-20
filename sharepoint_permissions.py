@@ -1,7 +1,7 @@
-"""SharePoint permission browsing, auditing, and reviewed inheritance propagation.
+"""SharePoint permission browsing, auditing, and reviewed permission changes.
 
-Scans and folder browsing are read-only. The only write path resets descendants to
-inherit from a chosen parent after a server-side preview and explicit confirmation.
+Scans and folder browsing are read-only. Permission changes require a server-side
+preview and explicit confirmation.
 """
 from __future__ import annotations
 
@@ -240,7 +240,7 @@ class _RestClient:
                 continue
             roles.sort(key=lambda x: x["name"].casefold())
             rows.append({
-                "id": member.get("Id"), "title": title, "login": login,
+                "id": member.get("Id"), "principal_id": row.get("PrincipalId"), "title": title, "login": login,
                 "email": member.get("Email") or "", "kind": kind,
                 "external": "#ext#" in login.lower(), "sharing_link": sharing_link,
                 "roles": roles, "level": ", ".join(r["name"] for r in roles),
@@ -478,6 +478,179 @@ def apply_inheritance_reset(site_url: str, allowed_host: str, token: str, plan: 
             errors.append({"path": str(target.get("path") or ""), "error": str(exc)})
     return {"applied": applied, "skipped": skipped, "errors": errors,
             "complete": not errors, "parent_path": parent_path}
+
+
+def prepare_permission_copy(site_input: str, allowed_host: str, token: str,
+                            source_list_id: str, source_path: str,
+                            target_list_id: str, target_path: str) -> dict:
+    """Preview copying one source ACL to a destination and inheriting its descendants."""
+    site_url = normalize_site_url(site_input, allowed_host)
+    client = _RestClient(site_url, token)
+
+    def resolve(list_id: str, path: str) -> dict:
+        if not re.fullmatch(r"[0-9a-fA-F-]{36}", str(list_id or "").strip()):
+            raise SharePointPermissionsError("Choose a valid document library for both locations.")
+        lib = client.get(f"/web/lists(guid'{list_id}')?$select=Id,Title,BaseTemplate,HasUniqueRoleAssignments,RootFolder/ServerRelativeUrl&$expand=RootFolder")
+        if int(lib.get("BaseTemplate") or 0) != 101:
+            raise SharePointPermissionsError("Permission copy supports document libraries only.")
+        root = str((lib.get("RootFolder") or {}).get("ServerRelativeUrl") or "").rstrip("/")
+        path = str(path or "").rstrip("/")
+        if not root or (path.casefold() != root.casefold() and not path.casefold().startswith(root.casefold() + "/")):
+            raise SharePointPermissionsError("Choose a library or folder inside that document library.")
+        item_id = 0
+        unique = bool(lib.get("HasUniqueRoleAssignments"))
+        if path.casefold() != root.casefold():
+            escaped = path.replace("'", "''")
+            query = urlencode({"$select": "Id,FileRef,FileSystemObjectType,HasUniqueRoleAssignments",
+                              "$filter": f"FileRef eq '{escaped}'"})
+            matches = client.all(f"/web/lists(guid'{list_id}')/items?{query}")
+            if not matches or int(matches[0].get("FileSystemObjectType") or 0) != 1:
+                raise SharePointPermissionsError("A selected folder no longer exists. Browse to it again.")
+            item_id = int(matches[0].get("Id") or 0)
+            unique = bool(matches[0].get("HasUniqueRoleAssignments"))
+        return {"list_id": str(list_id), "title": str(lib.get("Title") or ""), "root": root,
+                "path": path, "item_id": item_id, "unique": unique,
+                "ref": ("item", str(list_id), item_id) if item_id else ("list", str(list_id), 0)}
+
+    source = resolve(source_list_id, source_path)
+    target = resolve(target_list_id, target_path)
+    if source["list_id"].casefold() == target["list_id"].casefold():
+        sp, tp = source["path"].casefold(), target["path"].casefold()
+        if sp == tp or sp.startswith(tp + "/") or tp.startswith(sp + "/"):
+            raise SharePointPermissionsError("Choose separate, non-overlapping source and destination folders.")
+    effective = client.get("/web/effectivebasepermissions")
+    if not (int(effective.get("Low") or 0) & 0x02000000):
+        raise SharePointPermissionsError("Your account lacks Manage Permissions on this site.")
+    source_assignments = client.assignments(source["ref"])
+    if not source_assignments:
+        raise SharePointPermissionsError("Source has no copyable permission grants.")
+    operator_id = int((client.get("/web/currentuser?$select=Id").get("Id") or 0))
+    target_assignments = client.assignments(target["ref"])
+    prefix = (target["path"].rstrip("/") + "/").replace("'", "''")
+    query = urlencode({"$select": "Id,FileRef,FileSystemObjectType,HasUniqueRoleAssignments",
+                       "$filter": f"startswith(FileRef,'{prefix}')", "$top": "2000"})
+    rows = client.all(f"/web/lists(guid'{target['list_id']}')/items?{query}")
+    descendants = [row for row in rows
+                   if str(row.get("FileRef") or "").casefold().startswith((target["path"].rstrip("/") + "/").casefold())
+                   and row.get("HasUniqueRoleAssignments")]
+    if len(descendants) > 1000:
+        raise SharePointPermissionsError("Destination has over 1,000 unique descendants. Choose a smaller folder.")
+    descendant_assignments = {}
+    for row in descendants:
+        item_id = int(row.get("Id") or 0)
+        descendant_assignments[item_id] = client.assignments(("item", target["list_id"], item_id))
+    descendants.sort(key=lambda row: str(row.get("FileRef") or "").casefold())
+    return {"site_url": client.site_url, "operator_id": operator_id,
+            "source": {**source, "assignments": source_assignments,
+                       "signature": _assignment_signature(source_assignments)},
+            "target": {**target, "assignments": target_assignments,
+                       "signature": _assignment_signature(target_assignments)},
+            "descendants": [{"item_id": int(row.get("Id") or 0),
+                             "path": str(row.get("FileRef") or ""),
+                             "type": "Folder" if int(row.get("FileSystemObjectType") or 0) == 1 else "File",
+                             "signature": _assignment_signature(descendant_assignments[int(row.get("Id") or 0)]),
+                             "assignments": descendant_assignments[int(row.get("Id") or 0)]}
+                            for row in descendants]}
+
+
+def apply_permission_copy(site_url: str, allowed_host: str, token: str, plan: dict) -> dict:
+    """Replace destination grants with source grants, then reset unique descendants."""
+    site_url = normalize_site_url(site_url, allowed_host)
+    client = _RestClient(site_url, token)
+    source, target = plan["source"], plan["target"]
+
+    def live_scope(snapshot: dict) -> dict:
+        list_id, path = snapshot["list_id"], snapshot["path"]
+        lib = client.get(f"/web/lists(guid'{list_id}')?$select=Id,BaseTemplate,HasUniqueRoleAssignments,RootFolder/ServerRelativeUrl&$expand=RootFolder")
+        if int(lib.get("BaseTemplate") or 0) != 101:
+            raise SharePointPermissionsError("A selected document library changed. Build a fresh preview.")
+        root = str((lib.get("RootFolder") or {}).get("ServerRelativeUrl") or "").rstrip("/")
+        if path.casefold() == root.casefold():
+            return {"ref": ("list", list_id, 0), "unique": bool(lib.get("HasUniqueRoleAssignments"))}
+        escaped = path.replace("'", "''")
+        query = urlencode({"$select": "Id,FileRef,FileSystemObjectType,HasUniqueRoleAssignments",
+                           "$filter": f"FileRef eq '{escaped}'"})
+        matches = client.all(f"/web/lists(guid'{list_id}')/items?{query}")
+        if not matches or int(matches[0].get("FileSystemObjectType") or 0) != 1:
+            raise SharePointPermissionsError("A selected folder changed since preview. Rebuild the preview.")
+        item_id = int(matches[0].get("Id") or 0)
+        return {"ref": ("item", list_id, item_id), "unique": bool(matches[0].get("HasUniqueRoleAssignments")),
+                "item_id": item_id}
+
+    effective = client.get("/web/effectivebasepermissions")
+    if not (int(effective.get("Low") or 0) & 0x02000000):
+        raise SharePointPermissionsError("Your account lacks Manage Permissions on this site.")
+    current_source = client.assignments(live_scope(source)["ref"])
+    target_scope = live_scope(target)
+    current_target = client.assignments(target_scope["ref"])
+    if (_assignment_signature(current_source) != source["signature"]
+            or _assignment_signature(current_target) != target["signature"]):
+        raise SharePointPermissionsError("Source or destination permissions changed since preview. Review a fresh preview.")
+    current_user = client.get("/web/currentuser?$select=Id,LoginName")
+    operator_id = int(current_user.get("Id") or 0)
+    for entry in plan["descendants"]:
+        current = client.get(f"/web/lists(guid'{target['list_id']}')/items({int(entry['item_id'])})?$select=Id,FileRef,HasUniqueRoleAssignments")
+        if (str(current.get("FileRef") or "").casefold() != str(entry["path"]).casefold()
+                or not current.get("HasUniqueRoleAssignments")):
+            raise SharePointPermissionsError("Destination descendants changed since preview. Review a fresh preview.")
+        assignments = client.assignments(("item", target["list_id"], int(entry["item_id"])))
+        if _assignment_signature(assignments) != entry["signature"]:
+            raise SharePointPermissionsError("Destination descendant permissions changed since preview. Review a fresh preview.")
+    prefix = (target["path"].rstrip("/") + "/").replace("'", "''")
+    query = urlencode({"$select": "Id,FileRef,HasUniqueRoleAssignments",
+                       "$filter": f"startswith(FileRef,'{prefix}')", "$top": "2000"})
+    current_rows = client.all(f"/web/lists(guid'{target['list_id']}')/items?{query}")
+    current_unique = {(int(row.get("Id") or 0), str(row.get("FileRef") or "").casefold())
+                      for row in current_rows
+                      if row.get("HasUniqueRoleAssignments")
+                      and str(row.get("FileRef") or "").casefold().startswith((target["path"].rstrip("/") + "/").casefold())}
+    planned_unique = {(int(row["item_id"]), str(row["path"]).casefold()) for row in plan["descendants"]}
+    if current_unique != planned_unique:
+        raise SharePointPermissionsError("Destination contents changed since preview. Review a fresh preview.")
+
+    ref = target_scope["ref"]
+    base = client._base(ref)
+    result = {"target_path": target["path"], "grants_added": 0, "descendants_reset": [], "errors": []}
+    try:
+        if not target_scope["unique"]:
+            client.post(base + "/breakroleinheritance(copyRoleAssignments=false,clearSubscopes=false)")
+        existing = client.assignments(ref)
+        for assignment in existing:
+            principal_id = int(assignment.get("principal_id") or assignment.get("id") or 0)
+            if operator_id and principal_id == operator_id:
+                continue
+            if principal_id > 0:
+                client.post(base + f"/roleassignments/getbyprincipalid({principal_id})/deleteobject")
+        for assignment in source["assignments"]:
+            if assignment.get("sharing_link"):
+                continue
+            principal_id = int(assignment.get("principal_id") or assignment.get("id") or 0)
+            if principal_id <= 0:
+                continue
+            if operator_id and principal_id == operator_id:
+                continue
+            for role in assignment.get("roles") or []:
+                role_id = int(role.get("id") or 0)
+                if role_id > 0:
+                    client.post(base + f"/roleassignments/addroleassignment(principalid={principal_id},roledefid={role_id})")
+                    result["grants_added"] += 1
+    except Exception as exc:
+        result["errors"].append({"path": target["path"], "error": str(exc)})
+        result["complete"] = False
+        result["target_updated"] = False
+        return result
+
+    for entry in plan["descendants"]:
+        try:
+            client.post(f"/web/lists(guid'{target['list_id']}')/items({int(entry['item_id'])})/resetroleinheritance")
+            result["descendants_reset"].append(entry["path"])
+        except Exception as exc:
+            result["errors"].append({"path": entry["path"], "error": str(exc)})
+    result["target_updated"] = True
+    result["complete"] = not result["errors"]
+    result["operator_access_preserved"] = True
+    result["sharing_links_not_copied"] = sum(1 for item in source["assignments"] if item.get("sharing_link"))
+    return result
 
 
 def _diff(current: list[dict], parent: list[dict]) -> list[dict]:
@@ -944,6 +1117,8 @@ def scan(site_input: str, allowed_host: str, token: str, progress=None, cancel_e
         "scanned_at": _dt.datetime.now().astimezone().isoformat(), "items_scanned": items_scanned,
         "scan_scope": "folders" if requested_scopes else "site",
         "selected_folders": sum(len(paths) for paths in scope_by_library.values()),
+        "scan_scopes": [{"list_id": list_id, "path": path}
+                        for list_id, paths in scope_by_library.items() for path in paths],
         "permission_errors": len(assignment_errors), "can_manage_permissions": can_manage_permissions,
         "permission_targets": len(refs), "permissions_read": len(assignment_map),
         "site_groups_found": len(site_groups), "site_groups_expanded": len(group_member_map),

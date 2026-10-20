@@ -31,6 +31,9 @@ webapp/**/App_Data/
 # Release build outputs
 release/
 installer/assets/
+PSADT Output/
+PSADT/Files/NBG-Hub-Setup-*.exe
+PSADT/Files/NBG-Hub-Setup-*.sha256
 .venv-build/
 .venv-build-backup*/
 trial-build*/

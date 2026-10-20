@@ -5,7 +5,7 @@
     python tools/bump_version.py --check    # exit 1 if the files disagree (build.ps1 runs this)
 
 Files: version.py (APP_VERSION), version.txt (filevers / prodvers / FileVersion / ProductVersion),
-web/app.js (Mock app_version + register_client strings).
+web/app.js (Mock app_version + register_client strings, plus APP_RELEASE_NOTES entry for this release).
 """
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ P_TXT = os.path.join(ROOT, "version.txt")
 P_JS = os.path.join(ROOT, "web", "app.js")
 RX_PY = re.compile(r'APP_VERSION\s*=\s*"([^"]+)"')
 RX_VER = re.compile(r"^\d{4}\.\d{2}\.\d{2}(\.\d+)?$")
+RX_NOTES = re.compile(r"const APP_RELEASE_NOTES\s*=\s*\{([\s\S]*?)\n\};")
 
 
 def _read(p):
@@ -66,6 +67,11 @@ def found_versions() -> dict:
     return out
 
 
+def has_release_notes() -> bool:
+    match = RX_NOTES.search(_read(P_JS))
+    return bool(match and re.search(rf'^\s*"{re.escape(current())}"\s*:', match.group(1), re.MULTILINE))
+
+
 def apply(v: str) -> None:
     _write(P_PY, RX_PY.sub(f'APP_VERSION = "{v}"', _read(P_PY)))
     t = _read(P_TXT)
@@ -89,8 +95,10 @@ def main() -> int:
         f = found_versions()
         for k, v in f.items():
             print(f"  {k:36} {v}")
-        if len(set(f.values())) != 1:
-            print("Version files disagree. Run: python tools/bump_version.py --set <version>")
+        notes = has_release_notes()
+        print(f"  {'APP_RELEASE_NOTES entry':36} {'present' if notes else 'MISSING'}")
+        if len(set(f.values())) != 1 or not notes:
+            print("Version files must agree and APP_RELEASE_NOTES must include current version.")
             return 1
         print("Versions consistent:", current())
         return 0
@@ -105,7 +113,7 @@ def main() -> int:
 
 def bump_check() -> int:
     f = found_versions()
-    return 0 if len(set(f.values())) == 1 else 1
+    return 0 if len(set(f.values())) == 1 and has_release_notes() else 1
 
 
 if __name__ == "__main__":

@@ -788,16 +788,29 @@ class Hub:
         return None
 
     def save_software_rules(self, data: dict, actor: str = "") -> dict:
-        """Per-department mandatory-app overrides (`rules`) and the automatic-rule settings (`auto`).
-        A save that carries only `rules` keeps the stored `auto`."""
+        """Per-department mandatory-app overrides, automatic settings, and blocked app names.
+        Partial saves preserve fields omitted by the caller."""
         data = data or {}
+        previous = self.get_software_rules() or {}
         rules = data.get("rules") or []
+        blocked = data.get("not_allowed", previous.get("not_allowed", []))
+        if not isinstance(blocked, list):
+            raise ValueError("Not-allowed software list must be an array of app names.")
+        clean_blocked, seen = [], set()
+        for name in blocked:
+            name = str(name or "").strip()
+            key = name.casefold()
+            if name and len(name) <= 300 and key not in seen:
+                clean_blocked.append(name)
+                seen.add(key)
         doc = {"rules": rules}
-        auto = data["auto"] if "auto" in data else ((self.get_software_rules() or {}).get("auto"))
+        if "not_allowed" in data or "not_allowed" in previous:
+            doc["not_allowed"] = clean_blocked
+        auto = data["auto"] if "auto" in data else previous.get("auto")
         if auto:
             doc["auto"] = auto
         self._write(self.software_rules_path, json.dumps(doc, indent=2, ensure_ascii=False))
-        self._change("Software rules", f"{len(rules)} mandatory rule(s)" + (f" · auto: {auto}" if "auto" in data else ""))
+        self._change("Software rules", f"{len(rules)} mandatory rule(s), {len(clean_blocked)} not-allowed app(s)" + (f" · auto: {auto}" if "auto" in data else ""))
         return doc
 
     # ---- setups -----------------------------------------------------------
@@ -866,7 +879,7 @@ class Hub:
                 reverted = True
         if reverted:
             self._write_upgrades({"items": items})
-        label = ("user" if stype == "user" else "computer") + " setup"
+        label = "teammate offboarding" if stype == "offboarding" else ("user" if stype == "user" else "computer") + " setup"
         self._change("Setup cancelled",
                      f"{label} '{subject or '(unnamed)'}' cancelled by {who}: {reason}")
         return {"ok": True, "subject": subject, "reverted": reverted}
@@ -1124,12 +1137,13 @@ class Hub:
         in_progress = total - complete
         computer = sum(1 for s in setups if s.get("type") == "computer")
         user = sum(1 for s in setups if s.get("type") == "user")
+        offboarding = sum(1 for s in setups if s.get("type") == "offboarding")
         # simple 14-day activity by updated date
         recent = setups[:8]
         open_feedback = sum(1 for f in self.get_feedback() if f.get("status") != "closed")
         return {
             "total": total, "complete": complete, "in_progress": in_progress,
-            "computer": computer, "user": user,
+            "computer": computer, "user": user, "offboarding": offboarding,
             "recent": recent, "open_feedback": open_feedback,
         }
 

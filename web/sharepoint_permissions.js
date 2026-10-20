@@ -37,6 +37,9 @@ const SharePointPermissions = {
   folderExpanded: new Set(),
   folderSelected: new Set(),
   folderNodes: {},
+  copySource: null,
+  copyTarget: null,
+  selectedSharingLinks: new Set(),
 
   async enter() {
     const input = document.getElementById("spmSite");
@@ -72,8 +75,11 @@ const SharePointPermissions = {
     if (clearSelection) {
       this.selectedSite = false;
       this.data = null;
+      this.selectedSharingLinks.clear();
       this.selected = -1;
       this.folderSelected = new Set();
+      this.copySource = null;
+      this.copyTarget = null;
       this.siteLibraries = [];
       this.folderChildren = {};
       this.folderExpanded = new Set();
@@ -278,6 +284,8 @@ const SharePointPermissions = {
     this.folderChildren = {};
     this.folderExpanded = new Set();
     this.folderSelected = new Set();
+    this.copySource = null;
+    this.copyTarget = null;
     this.showScanPage();
     this.setStatus(`Selected ${site.title}. Browse folders, then scan chosen content.`, false, true);
     this.loadContentBrowser();
@@ -382,6 +390,80 @@ const SharePointPermissions = {
     if (scan) scan.disabled = this.folderSelected.size === 0;
     const propagate = document.getElementById("spmPropagateButton");
     if (propagate) propagate.disabled = this.folderSelected.size !== 1;
+    this.renderCopySelection();
+  },
+
+  captureCopyEndpoint(which) {
+    if (this.folderSelected.size !== 1) return App.toast("Select one library or folder first.", true);
+    const selected = [...this.folderSelected][0];
+    this[which === "source" ? "copySource" : "copyTarget"] = { ...selected };
+    this.folderSelected = new Set();
+    this.renderFolderBrowser();
+  },
+
+  renderCopySelection() {
+    const selected = [...this.folderSelected];
+    const oneSelected = selected.length === 1;
+    const sourceButton = document.getElementById("spmCopySourceButton");
+    const targetButton = document.getElementById("spmCopyTargetButton");
+    const previewButton = document.getElementById("spmCopyPreviewButton");
+    if (sourceButton) sourceButton.disabled = !oneSelected;
+    if (targetButton) targetButton.disabled = !oneSelected;
+    const source = this.copySource, target = this.copyTarget;
+    const summary = document.getElementById("spmCopySelectionSummary");
+    const describe = item => item ? `${item.library} · ${item.path}` : "Not selected";
+    if (summary) summary.textContent = `Source: ${describe(source)} · Destination: ${describe(target)}`;
+    const same = source && target && source.list_id.toLowerCase() === target.list_id.toLowerCase()
+      && source.path.toLowerCase() === target.path.toLowerCase();
+    if (previewButton) previewButton.disabled = !(source && target) || !!same;
+  },
+
+  async preparePermissionCopy(button) {
+    if (!this.copySource || !this.copyTarget) return App.toast("Choose both a source and destination.", true);
+    const site = (document.getElementById("spmSite")?.value || "").trim();
+    const btn = button || document.getElementById("spmCopyPreviewButton");
+    if (btn) { btn.disabled = true; btn.textContent = "Preparing preview…"; }
+    try {
+      const plan = await Backend.call("sharepoint_permissions_prepare_copy", site,
+        this.copySource.list_id, this.copySource.path, this.copyTarget.list_id, this.copyTarget.path);
+      if (!plan || !plan.ok) throw new Error((plan && plan.error) || "Could not prepare permission-copy preview.");
+      this.showPermissionCopyPreview(plan);
+    } catch (e) {
+      App.toast(String((e && e.message) || e), true);
+    } finally {
+      if (btn) { btn.textContent = "Preview permission copy"; this.renderCopySelection(); }
+    }
+  },
+
+  showPermissionCopyPreview(plan) {
+    const grants = plan.source_grants || [];
+    const rows = grants.map(grant => `<div class="spm-propagate-row"><span>${grant.sharing_link ? "Sharing link · not copied" : grant.operator_preserved ? "Your access · kept" : "Grant"}</span><b>${esc(grant.title)}</b><small>${esc(grant.level || "Permission")}</small></div>`).join("");
+    const removed = (plan.target_grants || []).map(grant => `<div class="spm-propagate-row"><span>${grant.operator_preserved ? "Your access · kept" : "Removed"}</span><b>${esc(grant.title)}</b><small>${esc(grant.level || "Permission")}${grant.sharing_link ? " · sharing link" : ""}</small></div>`).join("");
+    const descendants = (plan.descendants || []).map(item => `<div class="spm-propagate-row"><span>${esc(item.type)}</span><b>${esc(item.path)}</b><small>${Number(item.grants || 0).toLocaleString()} grants${item.sharing_links ? ` · ${Number(item.sharing_links).toLocaleString()} sharing links removed` : ""}</small></div>`).join("");
+    const warnings = [];
+    if (plan.source_links_not_copied) warnings.push(`${Number(plan.source_links_not_copied).toLocaleString()} source sharing-link grants will not be copied.`);
+    if (plan.target_sharing_links) warnings.push(`${Number(plan.target_sharing_links).toLocaleString()} direct destination sharing-link grants will be removed.`);
+    if (plan.descendant_sharing_links) warnings.push(`${Number(plan.descendant_sharing_links).toLocaleString()} destination items have sharing-link grants; propagation removes them.`);
+    warnings.push("Hub preserves your direct account grant on destination to help prevent lockout; that grant may differ from source.");
+    const warning = warnings.length ? `<div class="spm-warning">${warnings.map(esc).join(" ")}</div>` : "";
+    document.getElementById("modalRoot").innerHTML = `<div class="overlay"><div class="modal spm-fix-modal spm-propagate-modal" role="dialog" aria-modal="true" aria-labelledby="spmCopyTitle"><div class="modal-head"><h3 id="spmCopyTitle">Review permission copy</h3><button onclick="App._closeModal()" aria-label="Close">&times;</button></div><div class="modal-body"><p><b>Copy from:</b> ${esc(plan.source_library)} · ${esc(plan.source_path)}</p><p><b>Copy to:</b> ${esc(plan.target_library)} · ${esc(plan.target_path)}</p><p>${Number(grants.filter(row => !row.sharing_link && !row.operator_preserved).length).toLocaleString()} source grants will be copied. Your direct account grant will be kept if present. ${Number(plan.target_grant_count || 0).toLocaleString()} destination grants reviewed. ${Number(plan.descendant_count || 0).toLocaleString()} uniquely permissioned descendants will inherit from destination.</p>${warning}<h4>Source access to apply</h4><div class="spm-propagate-list">${rows || '<div class="empty">No permissions to copy.</div>'}</div><h4>Current destination access</h4><div class="spm-propagate-list">${removed || '<div class="empty">No direct destination grants.</div>'}</div><h4>Descendants to reset</h4><div class="spm-propagate-list">${descendants || '<div class="empty">No descendants have unique permissions.</div>'}</div></div><div class="modal-foot"><button class="ghost" onclick="App._closeModal()">Cancel</button><button class="primary" ${grants.some(row => !row.sharing_link) ? "" : "disabled"} onclick="SharePointPermissions.applyPermissionCopy('${plan.plan_id}')">Apply reviewed copy</button></div></div></div>`;
+  },
+
+  async applyPermissionCopy(planId, button) {
+    if (!window.confirm("Replace destination permissions with source grants and reset unique permissions on all listed descendants? Sharing links will not be copied.")) return;
+    const btn = button || document.querySelector("#modalRoot .modal-foot .primary");
+    if (btn) { btn.disabled = true; btn.textContent = "Applying…"; }
+    try {
+      const result = await Backend.call("sharepoint_permissions_apply_copy", planId, true);
+      if (!result || !result.ok) throw new Error((result && result.error) || "Permission copy failed.");
+      App._closeModal();
+      const errors = result.errors || [];
+      document.getElementById("modalRoot").innerHTML = `<div class="overlay"><div class="modal spm-fix-modal" role="dialog" aria-modal="true"><div class="modal-head"><h3>Permission copy result</h3><button onclick="App._closeModal()" aria-label="Close">&times;</button></div><div class="modal-body"><p>${result.target_updated ? "Destination grants updated." : "Destination grants may be partially updated."} ${Number(result.grants_added || 0).toLocaleString()} grants added. ${Number((result.descendants_reset || []).length).toLocaleString()} descendants now inherit from destination.</p>${errors.length ? `<div class="spm-warning">${errors.length.toLocaleString()} changes failed. Review these paths; some changes may already have applied.</div><div class="spm-propagate-list">${errors.slice(0, 100).map(item => `<div class="spm-propagate-row"><b>${esc(item.path)}</b><small>${esc(item.error)}</small></div>`).join("")}</div>` : ""}<p class="muted">Rescan destination to verify permissions.</p></div><div class="modal-foot"><button class="primary" onclick="App._closeModal()">Close</button></div></div></div>`;
+      this.setStatus(errors.length ? "Permission copy partially applied. Review the listed paths." : "Permission copy applied. Rescan destination to verify.", false, !errors.length, !!errors.length);
+    } catch (e) {
+      App.toast(String((e && e.message) || e), true);
+      if (btn) { btn.disabled = false; btn.textContent = "Apply reviewed copy"; }
+    }
   },
 
   async prepareInheritance(button) {
@@ -548,6 +630,7 @@ const SharePointPermissions = {
       }
       if (!result || !result.ok) throw new Error((result && result.error) || "SharePoint scan failed.");
       this.previousScan = this.recordScan(result);
+      this.selectedSharingLinks.clear();
       this.data = result;
       this.selected = result.entries && result.entries.length ? result.entries.reduce((best, entry, index, entries) =>
         best < 0 || this.exceptionRank(entry) < this.exceptionRank(entries[best]) ? index : best, -1) : -1;
@@ -1115,6 +1198,15 @@ const SharePointPermissions = {
     return Array.isArray(plans) ? plans : [];
   },
 
+  async refreshReviewPlans() {
+    const site = this.data && this.data.site_url; if (!site) return;
+    const key = this.siteKey();
+    const r = await Backend.call("sharepoint_review_get", site);
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not load shared access reviews.", true);
+    const all = this.readStore(this.REVIEW_KEY, {}); all[key] = r.items || []; this.writeStore(this.REVIEW_KEY, all);
+    this._reviewLoadedKey = key; this.renderReviewQueue();
+  },
+
   stageReview(index) {
     const entry = (this.data && this.data.entries || [])[Number(index)];
     if (!entry) return;
@@ -1130,10 +1222,10 @@ const SharePointPermissions = {
       : entry.has_external ? "Access impact: removing external grants will revoke those principals’ access to this scope."
       : "Access impact: compare listed grants with parent before approving a change.";
     const principals = (entry.assignments || []).map(a => a.title || a.login).filter(Boolean).slice(0, 12).join(", ") || "No assignment details available";
-    document.getElementById("modalRoot").innerHTML = `<div class="overlay"><div class="modal spm-fix-modal" role="dialog" aria-modal="true" aria-labelledby="spmPlanTitle"><div class="modal-head"><h3 id="spmPlanTitle">Review recommendation</h3><button onclick="App._closeModal()" aria-label="Close">&times;</button></div><div class="modal-body"><p><b>${esc(entry.display_path)}</b></p><p>${esc(recommendation)}</p><div class="spm-impact-preview">${esc(exact)}<br><br><b>Current principals:</b> ${esc(principals)}</div><div class="field"><label>Owner or reviewer</label><input id="spmPlanOwner" placeholder="Name or email" autocomplete="off"></div><div class="field"><label>Review note</label><textarea id="spmPlanNote" rows="3" placeholder="Reason, decision, or follow-up"></textarea></div><p class="muted">This stages a review record only. Hub will not change SharePoint permissions.</p></div><div class="modal-foot"><button class="ghost" onclick="App._closeModal()">Cancel</button><button class="primary" onclick="SharePointPermissions.saveReview(${Number(index)})">Add to review plan</button></div></div></div>`;
+    document.getElementById("modalRoot").innerHTML = `<div class="overlay"><div class="modal spm-fix-modal" role="dialog" aria-modal="true" aria-labelledby="spmPlanTitle"><div class="modal-head"><h3 id="spmPlanTitle">Review recommendation</h3><button onclick="App._closeModal()" aria-label="Close">&times;</button></div><div class="modal-body"><p><b>${esc(entry.display_path)}</b></p><p>${esc(recommendation)}</p><div class="spm-impact-preview">${esc(exact)}<br><br><b>Current principals:</b> ${esc(principals)}</div><div class="field"><label>Owner or reviewer</label><input id="spmPlanOwner" placeholder="Name or email" autocomplete="off"></div><div class="field"><label>Review due date</label><input id="spmPlanDue" type="date"></div><div class="field"><label>Review note</label><textarea id="spmPlanNote" rows="3" placeholder="Reason, decision, or follow-up"></textarea></div><p class="muted">Shared with this division. Hub will not change SharePoint permissions.</p></div><div class="modal-foot"><button class="ghost" onclick="App._closeModal()">Cancel</button><button class="primary" onclick="SharePointPermissions.saveReview(${Number(index)})">Add to review plan</button></div></div></div>`;
   },
 
-  saveReview(index) {
+  async saveReview(index) {
     const entry = (this.data && this.data.entries || [])[Number(index)];
     if (!entry) return;
     const owner = (document.getElementById("spmPlanOwner") || {}).value || "";
@@ -1148,16 +1240,19 @@ const SharePointPermissions = {
         : entry.has_external ? "Confirm external user access remains required; remove grants that do not."
         : entry.differs ? "Confirm each added or changed grant with the content owner."
         : "Review whether this scope should inherit permissions from its parent.",
-      reviewer: owner.trim(), note: note.trim(), status: "Proposed", created_at: new Date().toISOString(), decisions: [] };
+      reviewer: owner.trim(), due_date: (document.getElementById("spmPlanDue") || {}).value || "", note: note.trim(), status: "Proposed", created_at: new Date().toISOString(), decisions: [] };
     const all = this.readStore(this.REVIEW_KEY, {}), key = this.siteKey();
     const plan = Array.isArray(all[key]) ? all[key] : [];
     plan.unshift(record); all[key] = plan.slice(0, 250);
     this.writeStore(this.REVIEW_KEY, all);
+    const saved = await Backend.call("sharepoint_review_save", this.data.site_url, all[key]);
+    if (!saved || !saved.ok) return App.toast((saved && saved.error) || "Could not save shared review plan.", true);
+    this._reviewLoadedKey = key;
     App._closeModal(); this.renderReviewQueue();
-    App.toast("Added recommendation to local review plan.");
+    App.toast("Added recommendation to shared division review plan.");
   },
 
-  decideReview(id, status) {
+  async decideReview(id, status) {
     const all = this.readStore(this.REVIEW_KEY, {}), key = this.siteKey(), plan = Array.isArray(all[key]) ? all[key] : [];
     const item = plan.find(row => row.id === id);
     if (!item) return;
@@ -1165,17 +1260,21 @@ const SharePointPermissions = {
     if (!["Proposed", "Approved", "Rejected", "Reviewed"].includes(status)) return;
     item.status = status;
     item.decisions = [...(item.decisions || []), { status, by: account, at: new Date().toISOString() }].slice(-20);
-    all[key] = plan; this.writeStore(this.REVIEW_KEY, all); this.renderReviewQueue();
+    all[key] = plan; this.writeStore(this.REVIEW_KEY, all);
+    const saved = await Backend.call("sharepoint_review_save", this.data.site_url, plan);
+    if (!saved || !saved.ok) return App.toast((saved && saved.error) || "Could not save review decision.", true);
+    this.renderReviewQueue();
   },
 
   renderReviewQueue() {
     const host = document.getElementById("spmReviewQueue");
     if (!host || !this.data) return;
+    if (this._reviewLoadedKey !== this.siteKey()) { host.innerHTML = '<div class="spm-empty-state compact">Loading shared review plan…</div>'; this.refreshReviewPlans(); return; }
     const plan = this.reviewPlans();
     if (!plan.length) { host.innerHTML = '<div class="spm-empty-state compact">No staged recommendations. Select “Add to review plan” on a finding to start.</div>'; return; }
     host.innerHTML = plan.map(item => {
       const state = ["Proposed", "Approved", "Rejected", "Reviewed"].includes(item.status) ? item.status : "Proposed";
-      return `<article class="spm-review-row"><div><span class="spm-review-status ${state.toLowerCase()}">${esc(state)}</span><b>${esc(item.display_path)}</b><small>${esc(item.recommendation)}</small><small>${item.reviewer ? `Reviewer: ${esc(item.reviewer)} · ` : ""}${new Date(item.created_at).toLocaleString()}${item.note ? ` · ${esc(item.note)}` : ""}</small>${item.decisions && item.decisions.length ? `<small>Last decision: ${esc(item.decisions[item.decisions.length - 1].status)} by ${esc(item.decisions[item.decisions.length - 1].by)} · ${new Date(item.decisions[item.decisions.length - 1].at).toLocaleString()}</small>` : ""}</div><div class="spm-review-actions">${state === "Proposed" ? `<button class="rowbtn" onclick="SharePointPermissions.decideReview('${item.id}','Approved')">Approve</button><button class="rowbtn" onclick="SharePointPermissions.decideReview('${item.id}','Rejected')">Decline</button>` : state === "Approved" ? `<button class="rowbtn" onclick="SharePointPermissions.decideReview('${item.id}','Reviewed')">Mark review complete</button><button class="rowbtn" onclick="SharePointPermissions.decideReview('${item.id}','Proposed')">Reopen</button>` : `<button class="rowbtn" onclick="SharePointPermissions.decideReview('${item.id}','Proposed')">Reopen</button>`}</div></article>`;
+      return `<article class="spm-review-row"><div><span class="spm-review-status ${state.toLowerCase()}">${esc(state)}</span><b>${esc(item.display_path)}</b><small>${esc(item.recommendation)}</small><small>${item.reviewer ? `Reviewer: ${esc(item.reviewer)} · ` : ""}${item.due_date ? `Due: ${esc(item.due_date)} · ` : ""}${new Date(item.created_at).toLocaleString()}${item.note ? ` · ${esc(item.note)}` : ""}</small>${item.decisions && item.decisions.length ? `<small>Last decision: ${esc(item.decisions[item.decisions.length - 1].status)} by ${esc(item.decisions[item.decisions.length - 1].by)} · ${new Date(item.decisions[item.decisions.length - 1].at).toLocaleString()}</small>` : ""}</div><div class="spm-review-actions">${state === "Proposed" ? `<button class="rowbtn" onclick="SharePointPermissions.decideReview('${item.id}','Approved')">Approve</button><button class="rowbtn" onclick="SharePointPermissions.decideReview('${item.id}','Rejected')">Decline</button>` : state === "Approved" ? `<button class="rowbtn" onclick="SharePointPermissions.decideReview('${item.id}','Reviewed')">Mark review complete</button><button class="rowbtn" onclick="SharePointPermissions.decideReview('${item.id}','Proposed')">Reopen</button>` : `<button class="rowbtn" onclick="SharePointPermissions.decideReview('${item.id}','Proposed')">Reopen</button>`}</div></article>`;
     }).join("");
   },
 
@@ -1204,7 +1303,10 @@ const SharePointPermissions = {
           && typeof item.path === "string" && item.path && !known.has(item.id))
           .map(item => ({ ...item, status: ["Proposed", "Approved", "Rejected", "Reviewed"].includes(item.status) ? item.status : "Proposed" }));
         all[key] = [...incoming, ...existing].slice(0, 250);
-        this.writeStore(this.REVIEW_KEY, all); this.renderReviewQueue(); App.toast("Review plan imported.");
+        this.writeStore(this.REVIEW_KEY, all);
+        const saved = await Backend.call("sharepoint_review_save", parsed.site_url || this.data.site_url, all[key]);
+        if (!saved || !saved.ok) throw new Error((saved && saved.error) || "Could not save shared review plan.");
+        this._reviewLoadedKey = key; this.renderReviewQueue(); App.toast("Review plan imported and shared with this division.");
       } catch (e) { App.toast(String(e.message || e), true); }
       input.value = "";
     };
@@ -1255,17 +1357,125 @@ const SharePointPermissions = {
       const audience = { anonymous: "Anyone with the link", organization: "People in organization", users: "Specific people" };
       const access = { view: "View", edit: "Edit", embed: "Embed" };
       return `<section class="spm-link-details"><div><h4>Sharing links <small>${links.length}</small></h4><p>Links can grant file access. URLs stay hidden until you reveal or copy them.</p></div>${links.map((link, index) => {
+        const key = this.sharingLinkKey(entry, link);
         const expiry = link.expiration ? `Expires ${new Date(link.expiration).toLocaleString()}` : "No expiry reported";
         const urlActions = link.web_url
-          ? `<div class="spm-link-actions"><button class="rowbtn" onclick="SharePointPermissions.revealSharingLink(${entryIndex},${index},this)">Reveal URL</button><button class="rowbtn" onclick="SharePointPermissions.copySharingLink(${entryIndex},${index})">Copy URL</button></div><code class="spm-link-url" hidden></code>`
-          : '<small class="muted">Graph did not return the URL for this link.</small>';
-        return `<article class="spm-link-card"><div><b>${esc(audience[link.scope] || "Sharing link")}</b><small>${esc(access[link.type] || link.roles?.join(", ") || "Access unknown")} · ${esc(expiry)}</small></div>${urlActions}</article>`;
-      }).join("")}</section>`;
+          ? `<div class="spm-link-actions"><button class="rowbtn" onclick="SharePointPermissions.revealSharingLink(${entryIndex},${index},this)">Reveal URL</button><button class="rowbtn" onclick="SharePointPermissions.copySharingLink(${entryIndex},${index})">Copy URL</button><button class="rowbtn danger" onclick="SharePointPermissions.removeSharingLink(${entryIndex},${index})">Remove</button><code class="spm-link-url" hidden></code></div>`
+          : `<div class="spm-link-actions"><small class="muted">Graph did not return the URL.</small><button class="rowbtn danger" onclick="SharePointPermissions.removeSharingLink(${entryIndex},${index})">Remove</button></div>`;
+        return `<article class="spm-link-card"><label class="spm-link-select"><input type="checkbox" ${this.selectedSharingLinks.has(key) ? "checked" : ""} onchange="SharePointPermissions.toggleSharingLink(${entryIndex},${index},this.checked)"><span><b>${esc(audience[link.scope] || "Sharing link")}</b><small>${esc(access[link.type] || link.roles?.join(", ") || "Access unknown")} · ${esc(expiry)}</small></span></label>${urlActions}</article>`;
+      }).join("")}<div class="spm-link-bulk"><button class="rowbtn" onclick="SharePointPermissions.removeSelectedSharingLinks()" ${this.selectedSharingLinks.size ? "" : "disabled"}>Remove selected (${this.selectedSharingLinks.size})</button><button class="rowbtn" onclick="SharePointPermissions.removeSharingLinksForItem(${entryIndex})">Remove all on this item</button><button class="rowbtn" onclick="SharePointPermissions.removeSharingLinksForLibrary(${entryIndex})" ${this.scanCoversLibrary(entry.library) ? "" : "disabled"} title="Requires a full site scan or scan starting at this library">Remove all in library</button><button class="rowbtn" onclick="SharePointPermissions.removeSharingLinksForSite()" ${this.data.scan_scope === "site" ? "" : "disabled"} title="Requires a full site scan">Remove all in site</button></div></section>`;
     }
     if (entry.sharing_link_details_error) {
       return `<div class="spm-warning">${esc(entry.sharing_link_details_error)}</div>`;
     }
     return "";
+  },
+
+  sharingLinkKey(entry, link) { return `${entry.list_id}|${entry.item_id}|${link.permission_id || ""}`; },
+
+  toggleSharingLink(entryIndex, linkIndex, checked) {
+    const entry = this.data?.entries?.[Number(entryIndex)];
+    const link = entry?.sharing_link_details?.[Number(linkIndex)];
+    if (!entry || !link?.permission_id) return App.toast("This link cannot be selected. Rescan the site.", true);
+    const key = this.sharingLinkKey(entry, link);
+    if (checked) this.selectedSharingLinks.add(key); else this.selectedSharingLinks.delete(key);
+    this.renderDetail();
+  },
+
+  scanCoversLibrary(library) {
+    if (this.data?.scan_scope === "site") return true;
+    const lib = (this.data?.libraries || []).find(row => row.title === library);
+    const root = String(lib?.root_url || "").replace(/\/$/, "").toLocaleLowerCase();
+    return !!root && (this.data?.scan_scopes || []).some(scope => String(scope.list_id).toLocaleLowerCase() === String(lib.id).toLocaleLowerCase()
+      && String(scope.path || "").replace(/\/$/, "").toLocaleLowerCase() === root);
+  },
+
+  sharingLinkTargets(entries) {
+    const targets = new Map();
+    for (const entry of entries || []) for (const link of entry.sharing_link_details || []) {
+      if (!link.permission_id) continue;
+      const key = `${entry.list_id}|${entry.item_id}`;
+      if (!targets.has(key)) targets.set(key, { list_id: entry.list_id, item_id: entry.item_id,
+        library: entry.library, path: entry.display_path, permission_ids: [] });
+      targets.get(key).permission_ids.push(link.permission_id);
+    }
+    return [...targets.values()];
+  },
+
+  async removeSharingLinksForItem(entryIndex) {
+    const entry = this.data?.entries?.[Number(entryIndex)];
+    if (!entry) return;
+    if (entry.sharing_link_details_error) return App.toast("Link details were not readable for this item. Rescan after fixing access.", true);
+    await this.prepareSharingLinkRemoval(this.sharingLinkTargets([entry]), "this item");
+  },
+
+  async removeSharingLink(entryIndex, linkIndex) {
+    const entry = this.data?.entries?.[Number(entryIndex)];
+    const link = entry?.sharing_link_details?.[Number(linkIndex)];
+    if (!entry || !link?.permission_id) return App.toast("This link cannot be removed. Rescan the site.", true);
+    await this.prepareSharingLinkRemoval([{ list_id: entry.list_id, item_id: entry.item_id,
+      library: entry.library, path: entry.display_path, permission_ids: [link.permission_id] }], "this link");
+  },
+
+  async removeSharingLinksForLibrary(entryIndex) {
+    const selected = this.data?.entries?.[Number(entryIndex)];
+    if (!selected) return;
+    if (!this.scanCoversLibrary(selected.library)) return App.toast("Scan the whole site or select the library root before removing all library links.", true);
+    const entries = (this.data.entries || []).filter(entry => entry.library === selected.library);
+    if (entries.some(entry => entry.scan_error)) return App.toast("Some permission reads in this library failed. Resolve scan errors before bulk removal.", true);
+    if (entries.some(entry => entry.has_sharing_links && entry.sharing_link_details_error)) return App.toast("Some link details in this library were unreadable. Resolve scan errors before bulk removal.", true);
+    await this.prepareSharingLinkRemoval(this.sharingLinkTargets(entries), `library “${selected.library}”`);
+  },
+
+  async removeSharingLinksForSite() {
+    if (this.data?.scan_scope !== "site") return App.toast("Run a full site scan before removing all site links.", true);
+    if (Number(this.data.permission_errors || 0)) return App.toast("Some permission reads failed. Resolve scan errors before bulk site removal.", true);
+    const entries = this.data.entries || [];
+    if (entries.some(entry => entry.has_sharing_links && entry.sharing_link_details_error)) return App.toast("Some link details on this site were unreadable. Resolve scan errors before bulk removal.", true);
+    await this.prepareSharingLinkRemoval(this.sharingLinkTargets(entries), "the full site");
+  },
+
+  async removeSelectedSharingLinks() {
+    const wanted = new Set(this.selectedSharingLinks);
+    const targets = this.sharingLinkTargets(this.data?.entries || []).map(target => ({
+      ...target, permission_ids: target.permission_ids.filter(id => wanted.has(`${target.list_id}|${target.item_id}|${id}`)),
+    })).filter(target => target.permission_ids.length);
+    await this.prepareSharingLinkRemoval(targets, "selected links");
+  },
+
+  async prepareSharingLinkRemoval(targets, label) {
+    if (!targets.length) return App.toast("No removable sharing links found in this scan.", true);
+    const job = Busy.jobStart("sharepoint_permissions_prepare_remove_links");
+    try {
+      const plan = await Backend.call("sharepoint_permissions_prepare_remove_links", this.data.site_url, targets);
+      if (!plan || !plan.ok) throw new Error(plan?.error || "Could not prepare the link removal preview.");
+      this.showSharingLinkRemovalReview(plan, label);
+    } catch (e) { App.toast(String(e?.message || e), true); }
+    finally { Busy.jobEnd(job); }
+  },
+
+  showSharingLinkRemovalReview(plan, label) {
+    const rows = (plan.targets || []).map(target => `<div class="spm-propagate-row"><span>${esc(target.library)}</span><b>${esc(target.path)}</b><small>${(target.links || []).map(link => `${esc(link.scope || "audience")} · ${esc(link.type || link.roles?.join(", ") || "access")}${link.expiration ? ` · expires ${esc(new Date(link.expiration).toLocaleString())}` : " · no expiry reported"}`).join("<br>")}</small></div>`).join("");
+    document.getElementById("modalRoot").innerHTML = `<div class="overlay"><div class="modal spm-fix-modal spm-propagate-modal" role="dialog" aria-modal="true" aria-labelledby="spmRemoveLinksTitle"><div class="modal-head"><h3 id="spmRemoveLinksTitle">Review sharing-link removal</h3><button onclick="App._closeModal()" aria-label="Close">&times;</button></div><div class="modal-body"><div class="spm-warning">This will revoke ${Number(plan.link_count).toLocaleString()} sharing link${plan.link_count === 1 ? "" : "s"} across ${Number(plan.item_count).toLocaleString()} item${plan.item_count === 1 ? "" : "s"} in ${esc(label)}. Anyone relying on these links may lose access. SharePoint may not identify every recipient.</div><div class="spm-propagate-list">${rows}</div></div><div class="modal-foot"><button class="ghost" onclick="App._closeModal()">Cancel</button><button class="danger" onclick="SharePointPermissions.applySharingLinkRemoval('${plan.plan_id}')">Revoke reviewed links</button></div></div></div>`;
+  },
+
+  async applySharingLinkRemoval(planId) {
+    const job = Busy.jobStart("sharepoint_permissions_apply_remove_links");
+    try {
+      const result = await Backend.call("sharepoint_permissions_apply_remove_links", planId, true);
+      if (!result || !result.ok) throw new Error(result?.error || "Could not remove sharing links.");
+      this.selectedSharingLinks.clear();
+      App._closeModal();
+      const failed = result.failed || [];
+      App.toast(`${(result.removed || []).length.toLocaleString()} links revoked${failed.length ? ` · ${failed.length.toLocaleString()} failed` : ""}. Rescan to refresh results.`, !!failed.length);
+      if (failed.length) this.showSharingLinkRemovalResult(failed);
+    } catch (e) { App.toast(String(e?.message || e), true); }
+    finally { Busy.jobEnd(job); }
+  },
+
+  showSharingLinkRemovalResult(failed) {
+    const rows = failed.slice(0, 100).map(item => `<div class="spm-propagate-row"><b>${esc(item.path)}</b><small>${esc(item.error)}</small></div>`).join("");
+    document.getElementById("modalRoot").innerHTML = `<div class="overlay"><div class="modal spm-fix-modal" role="dialog" aria-modal="true"><div class="modal-head"><h3>Some links could not be revoked</h3><button onclick="App._closeModal()" aria-label="Close">&times;</button></div><div class="modal-body"><p>${failed.length.toLocaleString()} link${failed.length === 1 ? "" : "s"} failed. Successfully revoked links stay revoked.</p><div class="spm-propagate-list">${rows}</div></div><div class="modal-foot"><button class="primary" onclick="App._closeModal()">Close</button></div></div></div>`;
   },
 
   revealSharingLink(entryIndex, linkIndex, button) {

@@ -43,6 +43,7 @@ except Exception:
     pass
 
 GRAPH = "https://graph.microsoft.com/v1.0"
+GRAPH_BETA = "https://graph.microsoft.com/beta"
 LENOVO_WARRANTY_URL = "https://supportapi.lenovo.com/v2.5/warranty"
 LENOVO_PRODUCT_URL = "https://supportapi.lenovo.com/v2.5/product"
 
@@ -91,6 +92,10 @@ SCOPES = [
     "DeviceManagementManagedDevices.Read.All",
     "Sites.ReadWrite.All",
 ]
+# Optional read access to Microsoft's Windows update catalog. The catalog provides
+# official quality-update build revisions and CVE severity; without it the app must
+# not infer missing patches from OS version strings alone.
+WINDOWS_UPDATES_SCOPE = "WindowsUpdates.Read.All"
 # Optional directory read. Unlocks three things for co-managed/hybrid devices that
 # have no user on the Intune record: the assigned user (Azure AD device registered
 # owner), the user's city (-> LTR/BRI site), and their office location. Requested
@@ -226,6 +231,8 @@ class GraphClient:
         self._resolved: dict[str, dict[str, str | None]] = {}
         self.account_name: str | None = None
         self.account_upn: str = ""
+        self.account_oid: str = ""
+        self.account_tid: str = ""
         self._master_cache: dict | None = None
         self._master_at = 0.0
         self._reg_at = 0.0           # monotonic time of the last central registry read
@@ -236,6 +243,7 @@ class GraphClient:
         self._has_auditlog_read = False      # did the token include AuditLog.Read.All?
         self._has_authmethod_read = False    # did the token include UserAuthenticationMethod.Read.All?
         self._has_user_read = False          # did the token include User.Read.All?
+        self._has_windows_updates_read = False  # did the token include WindowsUpdates.Read.All?
         self._dept_cache = {}                # upn_lower -> {department, office, city, ou}
         self._mfa_cache: dict | None = None  # {upn_lower: {"registered": bool, "capable": bool}}
         self._mfa_cache_at = 0.0             # monotonic time of the last MFA report pull
@@ -258,6 +266,7 @@ class GraphClient:
                     "site_path": d.get("site_path") or base("site_path"),
                     "lists": d.get("lists") or base("lists") or {},
                     "intune_device_category": d.get("intune_category") or base("intune_device_category"),
+                    "intune_device_categories": self._div_mod.intune_categories(d) or [d.get("intune_category") or base("intune_device_category")],
                     "ad_domain": d.get("ad_domain") or base("ad_domain"),
                     "timesheet_sql_server": d.get("sql_server") or base("timesheet_sql_server"),
                     # Timesheet database/table names are per division and have NO fallback (an unset value
@@ -495,6 +504,7 @@ class GraphClient:
         c._apply_division()
         c._token, c._token_exp = self._token, self._token_exp
         c.account_name, c.account_upn = self.account_name, self.account_upn
+        c.account_oid, c.account_tid = self.account_oid, self.account_tid
         return c
 
     def snapshot_hub(self) -> dict:
@@ -617,9 +627,15 @@ class GraphClient:
             base["id"] = did
             base.setdefault("name", did)
             base.setdefault("company_name", base["name"])
-            sites = self._div_mod.clean_sites(j("Sites JSON", []))
+            sites = self._div_mod.clean_sites(j("Sites JSON", []), base.get("company_name"), base.get("intune_category"))
             if sites:
                 base["sites"] = sites
+            companies = self._div_mod.company_names({**base, "sites": sites})
+            categories = self._div_mod.intune_categories({**base, "sites": sites})
+            if companies:
+                base["company_name"] = companies[0]
+            if categories:
+                base["intune_category"] = categories[0]
             try:        # a malformed ACL must DENY (admins only), never open the division to everyone
                 acl = json.loads(g("Access JSON") or "[]")
                 if not isinstance(acl, list):
@@ -672,12 +688,18 @@ class GraphClient:
                     return v if isinstance(v, list) else []
                 except Exception:
                     return []
-            out.append({"id": did.lower(), "name": g("Display Name"), "company_name": g("Company Name"),
-                        "intune_category": g("Intune Category"), "sharepoint_hostname": g("SharePoint Host"),
+            company, category = g("Company Name"), g("Intune Category")
+            sites = self._div_mod.clean_sites(j("Sites JSON"), company, category)
+            normalized = {"company_name": company, "intune_category": category, "sites": sites}
+            companies = self._div_mod.company_names(normalized)
+            categories = self._div_mod.intune_categories(normalized)
+            out.append({"id": did.lower(), "name": g("Display Name"), "company_name": companies[0] if companies else company,
+                        "company_names": companies, "intune_category": categories[0] if categories else category,
+                        "intune_categories": categories, "sharepoint_hostname": g("SharePoint Host"),
                         "site_path": g("Site Path"), "ad_domain": g("AD Domain"), "sql_server": g("SQL Server"),
                         "timesheet_db": g("Timesheet DB"), "timesheet_table": g("Timesheet Table"),
                         "employee_db": g("Employee DB"), "employee_table": g("Employee Table"),
-                        "sites": j("Sites JSON"), "access": j("Access JSON"),
+                        "sites": sites, "access": j("Access JSON"),
                         "enabled": g("Enabled").lower() not in ("no", "false", "0")})
         return sorted(out, key=lambda d: d["name"].lower())
 
@@ -692,8 +714,11 @@ class GraphClient:
             if code in [x["code"] for x in sites] or code == "OTHER":
                 raise GraphError(f"Site code '{code}' is duplicated or reserved.")
             clean = lambda v: [str(x).strip() for x in (v or []) if str(x).strip()]
+            companies = clean(s.get("company_names")) if isinstance(s.get("company_names"), list) else []
+            categories = clean(s.get("intune_categories")) if isinstance(s.get("intune_categories"), list) else []
             sites.append({"code": code, "name": str(s.get("name") or code).strip(),
-                          "city_prefixes": clean(s.get("city_prefixes")), "device_prefixes": clean(s.get("device_prefixes"))})
+                          "city_prefixes": clean(s.get("city_prefixes")), "device_prefixes": clean(s.get("device_prefixes")),
+                          "company_names": companies, "intune_categories": categories})
         return sites
 
     def _timesheet_fields(self, d: dict, cmap: dict) -> dict:
@@ -719,8 +744,8 @@ class GraphClient:
     TENANT_FIELDS = ("sites", "access", "ad_domain", "sql_server", "timesheet_db", "timesheet_table", "employee_db", "employee_table")
 
     def save_own_division(self, d: dict) -> None:
-        """Tenant settings: update ONLY sites, AD domain and the timesheet/SQL names of the ACTIVE division.
-        Identity (id, company, Intune category), access and visibility stay super-admin only."""
+        """Tenant settings: update only permitted fields on the ACTIVE division.
+        Division admins can maintain site matching values; division identity, access and visibility stay super-admin only."""
         if not self._central:
             raise GraphError("Division settings need the central site (config.json 'central').")
         if self._local:
@@ -739,7 +764,8 @@ class GraphClient:
         fields = {}
         if "sites" in d:
             import json
-            fields[col("Sites JSON")] = json.dumps(self._clean_sites(d["sites"]))
+            sites = self._clean_sites(d["sites"])
+            fields[col("Sites JSON")] = json.dumps(sites)
         if "access" in d:
             import json
             sa = self.is_super_admin()
@@ -781,11 +807,14 @@ class GraphClient:
         if not re.match(r"^[a-z0-9][a-z0-9_-]{1,19}$", did):
             raise GraphError("Division id: 2-20 characters, lowercase letters, digits, - or _.")
         name = str(d.get("name") or "").strip()
-        company = str(d.get("company_name") or "").strip()
-        cat = str(d.get("intune_category") or "").strip()
-        if not name or not company or not cat:
-            raise GraphError("Display name, Entra company name and Intune category are required.")
+        if not name:
+            raise GraphError("Display name is required.")
         sites = self._clean_sites(d.get("sites"))
+        companies = self._div_mod.company_names({"sites": sites})
+        categories = self._div_mod.intune_categories({"sites": sites})
+        if not companies or not categories:
+            raise GraphError("Assign at least one Entra company name and Intune category to a site in Platform → Divisions → Sites.")
+        company, cat = companies[0], categories[0]
         access = []
         for a in d.get("access") or []:
             a = self._div_mod.acl_entry(a)
@@ -1055,7 +1084,8 @@ class GraphClient:
         )
         result = None
         accounts = self._app.get_accounts()
-        full = SCOPES + [DIR_SCOPE, AUDITLOG_SCOPE, AUTHMETHOD_SCOPE, USER_READ_SCOPE]   # + dir read + audit log (MFA report) + auth methods + user dept read
+        full = SCOPES + [DIR_SCOPE, AUDITLOG_SCOPE, AUTHMETHOD_SCOPE, USER_READ_SCOPE,
+                         WINDOWS_UPDATES_SCOPE]   # optional directory, MFA, department, and update-catalog reads
         if accounts:
             result = (self._app.acquire_token_silent(full, account=accounts[0])
                       or self._app.acquire_token_silent(SCOPES, account=accounts[0]))
@@ -1081,6 +1111,7 @@ class GraphClient:
         _granted = (result.get("scope") or "").lower()
         # Default expiry from expires_in; overridden by the token's own exp below.
         self._token_exp = time.time() + int(result.get("expires_in", 3600) or 3600)
+        _claims = {}
         try:
             _payload = self._token.split(".")[1]
             _payload += "=" * (-len(_payload) % 4)
@@ -1097,11 +1128,15 @@ class GraphClient:
         self._has_auditlog_read = "auditlog.read.all" in _granted
         self._has_authmethod_read = "userauthenticationmethod.read.all" in _granted
         self._has_user_read = "user.read.all" in _granted
+        self._has_windows_updates_read = WINDOWS_UPDATES_SCOPE.lower() in _granted
         self.account_name = (result.get("id_token_claims") or {}).get("name") or (
             accounts[0]["username"] if accounts else None
         )
         self.account_upn = ((result.get("id_token_claims") or {}).get("preferred_username")
                             or (accounts[0]["username"] if accounts else "") or "")
+        id_claims = result.get("id_token_claims") or {}
+        self.account_oid = str(id_claims.get("oid") or _claims.get("oid") or "")
+        self.account_tid = str(id_claims.get("tid") or _claims.get("tid") or self.cfg.get("tenant_id") or "")
         return self._token
 
     def sign_out(self) -> None:
@@ -1149,6 +1184,7 @@ class GraphClient:
             if not isinstance(link, dict):
                 continue
             links.append({
+                "permission_id": str(permission.get("id") or ""),
                 "type": str(link.get("type") or ""),
                 "scope": str(link.get("scope") or ""),
                 "roles": [str(role) for role in permission.get("roles") or []],
@@ -1156,6 +1192,29 @@ class GraphClient:
                 "expiration": str(permission.get("expirationDateTime") or ""),
             })
         return links
+
+    def delete_sharepoint_item_sharing_link(self, site_url: str, list_id: str, item_id: int,
+                                            permission_id: str) -> None:
+        """Revoke one Graph link permission after verifying it is still a sharing link."""
+        links = self.sharepoint_item_sharing_links(site_url, list_id, item_id)
+        permission_id = str(permission_id or "").strip()
+        if not permission_id or not any(link.get("permission_id") == permission_id for link in links):
+            raise GraphError("This sharing link is no longer present. Rescan before retrying.")
+        parsed = urlsplit(str(site_url or ""))
+        host = (parsed.hostname or "").lower()
+        path = quote(unquote(parsed.path.rstrip("/")), safe="/")
+        site_id = self._spm_graph_site_ids.get(f"{host}{path}".lower())
+        if not site_id:
+            site_id = self._get(f"{GRAPH}/sites/{host}:{path}")["id"]
+            self._spm_graph_site_ids[f"{host}{path}".lower()] = site_id
+        drive_item = self._get(
+            f"{GRAPH}/sites/{site_id}/lists/{quote(str(list_id or '').strip('{}'), safe='')}/items/{int(item_id)}/driveItem?$select=id,parentReference"
+        )
+        drive_id = quote(str((drive_item.get("parentReference") or {}).get("driveId") or ""), safe="")
+        drive_item_id = quote(str(drive_item.get("id") or ""), safe="")
+        if not drive_id or not drive_item_id:
+            raise GraphError("Microsoft Graph did not return this item's drive reference.")
+        self._req("DELETE", f"{GRAPH}/drives/{drive_id}/items/{drive_item_id}/permissions/{quote(permission_id, safe='')}")
 
     # ---- low-level HTTP ---------------------------------------------------
     def _headers(self) -> dict:
@@ -1375,25 +1434,28 @@ class GraphClient:
         if self._devmap_cache is not None and (time.monotonic() - self._devmap_at) < ttl:
             return self._devmap_cache
         out = {}
-        category = (self.cfg.get("intune_device_category") or "NBGW").strip().replace("'", "''")
-        url = (f"{GRAPH}/deviceManagement/managedDevices"
-               f"?$filter=deviceCategoryDisplayName eq '{category}'&$select={_INTUNE_SELECT}&$top=200")
-        for d in self._get_all(url):
-            s = (d.get("serialNumber") or "").strip().upper()
-            if not s:
-                continue
-            out[s] = {
-                "serial": d.get("serialNumber", ""),
-                "manufacturer": d.get("manufacturer", ""),
-                "model": d.get("model", ""),
-                "device_name": d.get("deviceName", ""),
-                "user": clean_upn(d.get("userPrincipalName")),
-                "os_version": d.get("osVersion") or "",
-                "os_install": d.get("enrolledDateTime") or "",
-                "last_checkin": d.get("lastSyncDateTime") or "",
-                "storage": _bytes_to_gb(d.get("totalStorageSpaceInBytes")),
-                "compliance": d.get("complianceState") or "",
-            }
+        categories = self.cfg.get("intune_device_categories") or [self.cfg.get("intune_device_category") or "NBGW"]
+        categories = list(dict.fromkeys(str(c).strip() for c in categories if str(c).strip()))
+        for category in categories:
+            escaped = category.replace("'", "''")
+            url = (f"{GRAPH}/deviceManagement/managedDevices"
+                   f"?$filter=deviceCategoryDisplayName eq '{escaped}'&$select={_INTUNE_SELECT}&$top=200")
+            for d in self._get_all(url):
+                s = (d.get("serialNumber") or "").strip().upper()
+                if not s:
+                    continue
+                out[s] = {
+                    "serial": d.get("serialNumber", ""),
+                    "manufacturer": d.get("manufacturer", ""),
+                    "model": d.get("model", ""),
+                    "device_name": d.get("deviceName", ""),
+                    "user": clean_upn(d.get("userPrincipalName")),
+                    "os_version": d.get("osVersion") or "",
+                    "os_install": d.get("enrolledDateTime") or "",
+                    "last_checkin": d.get("lastSyncDateTime") or "",
+                    "storage": _bytes_to_gb(d.get("totalStorageSpaceInBytes")),
+                    "compliance": d.get("complianceState") or "",
+                }
         self._devmap_cache = out
         self._devmap_at = time.monotonic()
         return out
@@ -1416,11 +1478,14 @@ class GraphClient:
                     for j, s in enumerate(chunk)]
             try:
                 resp = self._req("POST", f"{GRAPH}/$batch", json={"requests": reqs}).json()
-            except GraphError:
-                return out
-            for r in resp.get("responses", []):
-                if r.get("status") != 200:
-                    continue
+            except GraphError as exc:
+                raise GraphError(f"Intune device lookup failed: {exc}") from exc
+            responses = resp.get("responses", [])
+            if len(responses) != len(reqs) or any(r.get("status") != 200 or
+                    not isinstance(r.get("body"), dict) or not isinstance(r["body"].get("value"), list)
+                    for r in responses):
+                raise GraphError("Intune returned incomplete device lookup results.")
+            for r in responses:
                 for d in (((r.get("body") or {}).get("value")) or []):
                     s = (d.get("serialNumber") or "").strip().upper()
                     if s:
@@ -1444,12 +1509,15 @@ class GraphClient:
                     for j, nm in enumerate(chunk)]
             try:
                 resp = self._req("POST", f"{GRAPH}/$batch", json={"requests": reqs}).json()
-            except GraphError:
+            except GraphError as exc:
                 self._has_dir_read = False   # consent revoked mid-run; stop trying
-                return out
-            for r in resp.get("responses", []):
-                if r.get("status") != 200:
-                    continue
+                raise GraphError(f"Entra device lookup failed: {exc}") from exc
+            responses = resp.get("responses", [])
+            if len(responses) != len(reqs) or any(r.get("status") != 200 or
+                    not isinstance(r.get("body"), dict) or not isinstance(r["body"].get("value"), list)
+                    for r in responses):
+                raise GraphError("Entra returned incomplete device lookup results.")
+            for r in responses:
                 vals = ((r.get("body") or {}).get("value")) or []
                 if not vals:
                     continue
@@ -1876,15 +1944,24 @@ class GraphClient:
         `intune_device_os` in config.json to "all" (or "" ) to include every device
         type (phones/tablets) in a later phase - or to another OS to target that.
         """
-        category = (self.cfg.get("intune_device_category") or "NBGW").strip().replace("'", "''")
+        categories = self.cfg.get("intune_device_categories") or [self.cfg.get("intune_device_category") or "NBGW"]
+        categories = list(dict.fromkeys(str(c).strip() for c in categories if str(c).strip()))
         pref = (self.division_prefs().get("device_os") or "").strip().lower()      # Settings > General wins over config.json
         os_want = ("" if pref == "all" else "windows") if pref in ("all", "windows") \
             else (self.cfg.get("intune_device_os", "Windows") or "").strip().lower()
         include_all_os = os_want in ("", "all", "*", "any")
         select = _INTUNE_SELECT + ",deviceCategoryDisplayName"
-        url = (f"{GRAPH}/deviceManagement/managedDevices"
-               f"?$filter=deviceCategoryDisplayName eq '{category}'&$select={select}&$top=200")
-        devices = self._get_all(url)
+        devices = []
+        seen = set()
+        for category in categories:
+            escaped = category.replace("'", "''")
+            url = (f"{GRAPH}/deviceManagement/managedDevices"
+                   f"?$filter=deviceCategoryDisplayName eq '{escaped}'&$select={select}&$top=200")
+            for device in self._get_all(url):
+                key = device.get("id") or device.get("serialNumber") or device.get("deviceName")
+                if key and key not in seen:
+                    seen.add(key)
+                    devices.append(device)
         rows = []
         for d in devices:
             if not include_all_os:
@@ -1898,6 +1975,7 @@ class GraphClient:
                 "manufacturer": d.get("manufacturer", ""),
                 "model": d.get("model", ""),
                 "user": clean_upn(d.get("userPrincipalName")),
+                "os": d.get("operatingSystem") or "",
                 "os_version": d.get("osVersion") or "",
                 # Intune has no true OS-install date; enrolledDateTime is the proxy.
                 "os_install": d.get("enrolledDateTime") or "",
@@ -1908,6 +1986,190 @@ class GraphClient:
                 "cpu": "", "ram": "", "warranty": "",
             })
         return rows
+
+    @staticmethod
+    def _windows_build_parts(value: str) -> tuple[int, int, int, int] | None:
+        """Parse an Intune or catalog Windows build into comparable numeric parts."""
+        match = re.search(r"(?<!\d)(\d+)\.(\d+)\.(\d+)\.(\d+)(?!\d)", str(value or ""))
+        if not match:
+            return None
+        try:
+            return tuple(int(part) for part in match.groups())
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _windows_update_time(value: str) -> _dt.datetime | None:
+        try:
+            result = _dt.datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+            return result.replace(tzinfo=_dt.timezone.utc) if result.tzinfo is None else result.astimezone(_dt.timezone.utc)
+        except (TypeError, ValueError):
+            return None
+
+    def windows_update_watch(self) -> dict:
+        """Compare active-division Windows devices with Microsoft's security update catalog.
+
+        The catalog supplies applicable product build revisions and CVE severity. A
+        three-day deadline applies to critical/exploited releases; other security
+        quality updates use fourteen days. Devices without a recent Intune check-in
+        are reported as unknown/stale rather than assumed behind.
+        """
+        if not self._has_windows_updates_read:
+            raise GraphError(
+                "Windows Update Watch needs the delegated Microsoft Graph permission "
+                "WindowsUpdates.Read.All with admin consent. Add it to the Inventory "
+                "Dashboard app registration, grant admin consent, then sign out and back in."
+            )
+
+        filter_text = (
+            "isof('microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry') and "
+            "microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry/qualityUpdateClassification eq 'security'"
+        )
+        expand_text = "microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry/productRevisions"
+        filter_query = quote(filter_text, safe="'()")
+        expand_query = quote(expand_text, safe="/.")
+        url = (f"{GRAPH_BETA}/admin/windows/updates/catalog/entries"
+               f"?$filter={filter_query}&$expand={expand_query}&$top=500")
+        try:
+            entries = self._get_all(url)
+        except GraphError as exc:
+            msg = str(exc)
+            if "403" in msg:
+                raise GraphError(
+                    "Microsoft denied access to the Windows update catalog. Confirm "
+                    "WindowsUpdates.Read.All admin consent and assign your account an "
+                    "Intune Administrator or Windows Update Deployment Administrator role."
+                ) from exc
+            raise
+
+        latest_by_branch: dict[tuple[int, int, int], dict] = {}
+        for entry in entries:
+            if (entry.get("qualityUpdateClassification") or "").lower() != "security":
+                continue
+            severity_data = entry.get("cveSeverityInformation") or {}
+            severity = str(severity_data.get("maxSeverity") or "").strip().lower()
+            exploited = severity_data.get("exploitedCves") or []
+            critical = severity == "critical" or bool(exploited)
+            for revision in entry.get("productRevisions") or []:
+                build = revision.get("osBuild") or {}
+                try:
+                    parts = (int(build.get("majorVersionNumber")), int(build.get("minorVersionNumber")),
+                             int(build.get("buildNumber")), int(build.get("updateBuildRevision")))
+                except (TypeError, ValueError):
+                    continue
+                released = self._windows_update_time(
+                    revision.get("releaseDateTime") or entry.get("releaseDateTime"))
+                if not released:
+                    continue
+                branch = parts[:3]
+                record = {
+                    "build": parts,
+                    "release_date": released,
+                    "severity": severity.title() if severity else "Security",
+                    "critical": critical,
+                    "name": entry.get("shortName") or entry.get("displayName") or "Security quality update",
+                    "kb": (revision.get("knowledgeBaseArticle") or {}).get("articleId") or "",
+                    "kb_url": (revision.get("knowledgeBaseArticle") or {}).get("articleUrl") or "",
+                    "cves": [str(cve.get("number") or "") for cve in exploited if isinstance(cve, dict) and cve.get("number")],
+                }
+                old = latest_by_branch.get(branch)
+                if not old or (released, parts[3]) > (old["release_date"], old["build"][3]):
+                    latest_by_branch[branch] = record
+
+        devices = [d for d in self.get_intune_category_devices()
+                   if (d.get("os") or "").strip().lower() == "windows"]
+        now = _dt.datetime.now(_dt.timezone.utc)
+        rows = []
+        for device in devices:
+            checkin = self._windows_update_time(device.get("last_checkin"))
+            age_days = ((now - checkin).total_seconds() / 86400) if checkin else None
+            build = self._windows_build_parts(device.get("os_version"))
+            branch = build[:3] if build else None
+            target = latest_by_branch.get(branch) if branch else None
+            row = {
+                "intune_id": device.get("id") or "",
+                "serial": device.get("serial") or "",
+                "device_name": device.get("device_name") or "",
+                "user": device.get("user") or "",
+                "site": device.get("site_tag") or "",
+                "model": device.get("model") or "",
+                "os_version": device.get("os_version") or "",
+                "last_checkin": device.get("last_checkin") or "",
+                "installed_build": ".".join(str(part) for part in build) if build else "",
+                "update_name": "",
+                "target_build": "",
+                "release_date": "",
+                "deadline": "",
+                "severity": "",
+                "kb": "",
+                "kb_url": "",
+                "cves": [],
+                "status": "unknown",
+                "status_detail": "No matching Microsoft security-update build was found.",
+                "checkin_age_days": round(age_days, 1) if age_days is not None else None,
+                "days_overdue": 0,
+                "days_remaining": None,
+            }
+            if age_days is None:
+                row["status"] = "unknown"
+                row["status_detail"] = "Intune has no check-in date; update status is unknown."
+            elif age_days >= 30:
+                row["status"] = "stale"
+                row["status_detail"] = "No Intune check-in in over 30 days."
+            elif age_days >= 7:
+                row["status"] = "unknown"
+                row["status_detail"] = "No Intune check-in in over 7 days; update state may be out of date."
+            elif not build:
+                row["status_detail"] = "Intune did not report a complete four-part Windows build."
+            elif target:
+                row.update({
+                    "update_name": target["name"],
+                    "target_build": ".".join(str(part) for part in target["build"]),
+                    "release_date": target["release_date"].isoformat(),
+                    "severity": "Critical" if target["critical"] else target["severity"],
+                    "kb": target["kb"],
+                    "kb_url": target["kb_url"],
+                    "cves": target["cves"],
+                })
+                deadline_days = 3 if target["critical"] else 14
+                due = target["release_date"] + _dt.timedelta(days=deadline_days)
+                row["deadline"] = due.isoformat()
+                if build >= target["build"]:
+                    row["status"] = "current"
+                    row["status_detail"] = "Installed Windows build includes this security update."
+                else:
+                    remaining = (due - now).total_seconds() / 86400
+                    row["days_remaining"] = max(0, int(remaining + 0.999)) if remaining > 0 else 0
+                    overdue_seconds = (now - due).total_seconds()
+                    row["days_overdue"] = max(1, int((overdue_seconds + 86399) // 86400)) if overdue_seconds > 0 else 0
+                    if target["critical"]:
+                        row["status"] = "critical-overdue" if remaining <= 0 else "critical-due"
+                        row["status_detail"] = "Critical/exploited security update is overdue." if remaining <= 0 else "Critical/exploited security update must be installed within 72 hours of release."
+                    elif remaining <= 0:
+                        row["status"] = "behind"
+                        row["status_detail"] = "Security update is more than 14 days past release."
+                    elif (now - target["release_date"]).days >= 7:
+                        row["status"] = "due-soon"
+                        row["status_detail"] = "Security update is approaching its 14-day deadline."
+                    else:
+                        row["status"] = "pending"
+                        row["status_detail"] = "Security update is within the 14-day deployment window."
+            rows.append(row)
+
+        priority = {"critical-overdue": 0, "behind": 1, "critical-due": 2,
+                    "due-soon": 3, "pending": 4, "unknown": 5, "stale": 6, "current": 7}
+        rows.sort(key=lambda row: (priority.get(row["status"], 8), row.get("device_name", "").lower()))
+        counts = {key: sum(1 for row in rows if row["status"] == key) for key in priority}
+        return {
+            "rows": rows,
+            "counts": counts,
+            "device_count": len(rows),
+            "catalog_updates": len(entries),
+            "generated_at": now.isoformat(),
+            "division": (self.division or {}).get("name", ""),
+            "standard": {"critical_hours": 72, "security_days": 14, "warning_after_days": 7,
+                         "unknown_after_days": 7, "stale_after_days": 30},
+        }
 
     # ---- Vendor fallback (device not yet in Intune) ----------------------
     @staticmethod

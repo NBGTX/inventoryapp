@@ -88,12 +88,17 @@ class Api:
         self._gc = None
         self._hub = None
         self._site_view = False  # True while the main window is showing an NBT site
+        self._window = None
         self._busy = 0           # long write operations in flight (a division switch must wait)
         self._busy_lock = threading.Lock()
         self._spm_scans = {}
         self._spm_scans_lock = threading.Lock()
         self._spm_inheritance_plans = {}
         self._spm_inheritance_lock = threading.Lock()
+        self._spm_copy_plans = {}
+        self._spm_copy_lock = threading.Lock()
+        self._spm_link_plans = {}
+        self._spm_link_lock = threading.Lock()
 
     @contextlib.contextmanager
     def _work(self):
@@ -266,19 +271,28 @@ class Api:
                 depts = sc.clean_depts(prefs.get("hot_spare_depts"))
             except ValueError:
                 depts = []
+            ot_lists = self._clean_ot_lists(prefs.get("ot_lists"))
+            ot_stale_months = self._clean_ot_stale_months(prefs.get("ot_stale_months"))
             try:
                 smtp = sc.clean_smtp_settings(prefs.get("smtp"))
             except ValueError:
                 smtp = sc.clean_smtp_settings(None)
+            import notify
+            division_subs = notify.division_subscribers_doc(prefs.get("issue_subscribers"))
             return {"ok": True, "timezone": tz, "default": dflt, "effective": tz or dflt, "zones": sc.zones(),
                     "project_hub_url": ph, "project_hub_default": ph_def, "project_hub_effective": ph or ph_def,
                     "device_os": dos, "device_os_options": [{"id": k, "label": v} for k, v in sc.DEVICE_OS],
                     "hot_spare_depts": depts, "hot_spare_default": sc.HOT_SPARE_DEFAULT,
-                    "hot_spare_effective": (depts or sc.HOT_SPARE_DEFAULT) + ["Other"], "smtp": smtp}
+                    "hot_spare_effective": (depts or sc.HOT_SPARE_DEFAULT) + ["Other"],
+                    "ot_lists": ot_lists,
+                    "ot_stale_months": ot_stale_months,
+                    "hot_spare_minimum": max(0, min(500, int(prefs.get("hot_spare_minimum", 0) or 0))), "smtp": smtp,
+                    "issue_subscribers": division_subs,
+                    "notification_events": notify.DIVISION_EVENT_LABELS}
         except Exception as e:
             return self._fail(e)
 
-    def save_division_prefs(self, timezone=None, project_hub_url=None, device_os=None, hot_spare_depts=None, smtp=None) -> dict:
+    def save_division_prefs(self, timezone=None, project_hub_url=None, device_os=None, hot_spare_depts=None, smtp=None, issue_subscribers=None, hot_spare_minimum=None, ot_lists=None, ot_stale_months=None) -> dict:
         """Admin of the division (or super admin). Only the arguments that are given are changed;
         timezone "" / project_hub_url "" / hot_spare_depts [] mean 'use the default'."""
         try:
@@ -305,11 +319,35 @@ class Api:
                     prefs_in["hot_spare_depts"] = sc.clean_depts(hot_spare_depts)
                 except ValueError as e:
                     return {"ok": False, "error": str(e)}
+            if hot_spare_minimum is not None:
+                try:
+                    prefs_in["hot_spare_minimum"] = max(0, min(500, int(hot_spare_minimum)))
+                except (TypeError, ValueError):
+                    return {"ok": False, "error": "Enter a minimum between 0 and 500 devices."}
+            if ot_lists is not None:
+                try:
+                    prefs_in["ot_lists"] = self._clean_ot_lists(ot_lists, strict=True)
+                except ValueError as e:
+                    return {"ok": False, "error": str(e)}
+            if ot_stale_months is not None:
+                try:
+                    months = int(ot_stale_months)
+                except (TypeError, ValueError):
+                    months = 0
+                if months not in (3, 6, 12, 24):
+                    return {"ok": False, "error": "Choose a stale review period of 3, 6, 12, or 24 months."}
+                prefs_in["ot_stale_months"] = months
             if smtp is not None:
                 try:
                     prefs_in["smtp"] = sc.clean_smtp_settings(smtp)
                 except ValueError as e:
                     return {"ok": False, "error": str(e)}
+            if issue_subscribers is not None:
+                import notify
+                clean_subscribers = notify.division_subscribers_doc(issue_subscribers)
+                if len(clean_subscribers) > 50:
+                    return {"ok": False, "error": "At most 50 people can be on this division's notification list."}
+                prefs_in["issue_subscribers"] = clean_subscribers
             if not prefs_in:
                 return {"ok": True}
             hub = self._hubc()
@@ -366,16 +404,48 @@ class Api:
                 hub = self._issue_hub()
                 subs = notify.subscribers_doc(hub.get_named("issue-subscribers"))
                 to = notify.recipients(issue, event, subs, actor.get("upn", ""))
+                route_gc = gc
+                issue_division = (issue.get("division") or {}).get("id")
+                if issue_division and issue_division != (gc.division or {}).get("id"):
+                    route_gc = gc.clone_for_snapshot()
+                    route_gc.set_division(issue_division, persist=False)
+                from hub import hub_for
+                division_subs = notify.division_subscribers_doc(hub_for(route_gc).get_prefs().get("issue_subscribers"))
+                known = {x["upn"] for x in to}
+                for recipient in notify.division_recipients(division_subs, event):
+                    if recipient["upn"] != (actor.get("upn") or "").lower() and recipient["upn"] not in known:
+                        to.append(recipient); known.add(recipient["upn"])
                 if not to:
                     return
                 subject, text, body = notify.render(issue, event, actor.get("name", ""), extra)
-                res = notify.deliver(gc, to, subject, text, body, event, issue)
+                res = notify.deliver(route_gc, to, subject, text, body, event, issue)
                 note = (f"notified {res['sent']} by {res['via']}" if res["sent"] else
                         ("not sent: " + res["error"] if res["error"] else ""))
                 if note:
                     def add(doc):
                         doc.setdefault("history", []).append({"at": issues.now_iso(), "by": "", "action": "notify", "detail": f"{event}: {note}"})
                     self._mutate_issue(issue["id"], add)
+            except Exception:
+                pass
+        if self._sync_notify:
+            run()
+        else:
+            threading.Thread(target=run, daemon=True).start()
+
+    def _notify_division_event(self, event: str, title: str, detail: str) -> None:
+        """Send one division-scoped operational digest to opted-in people; never block the UI action."""
+        import threading
+        def run():
+            try:
+                import notify
+                gc = self._client()
+                prefs = self._hubc().get_prefs()
+                to = notify.division_recipients(notify.division_subscribers_doc(prefs.get("issue_subscribers")), event)
+                if not to:
+                    return
+                division = (gc.division or {}).get("name") or (gc.division or {}).get("id") or "Division"
+                subject, body_text, body_html = notify.render_notice(division, title, detail, event)
+                notify.deliver(gc, to, subject, body_text, body_html, event, {"title": title, "division": {"name": division}})
             except Exception:
                 pass
         if self._sync_notify:
@@ -589,9 +659,11 @@ class Api:
                 return {"ok": True, "super_admin": False}
             hub = self._issue_hub()
             smtp = gc.division_prefs().get("smtp") or {}
+            smtp_ready = bool(smtp.get("enabled") and smtp.get("server") and smtp.get("from_address"))
             return {"ok": True, "super_admin": True, "subscribers": notify.subscribers_doc(hub.get_named("issue-subscribers")),
                     "events": issues.EVENTS, "webhook_set": bool(gc.get_setting("notify_webhook_url", "")),
-                    "smtp_enabled": bool(smtp.get("enabled")), "can_mail": gc.can_send_mail()}
+                    "smtp_enabled": bool(smtp.get("enabled")), "smtp_ready": smtp_ready,
+                    "can_mail": gc.can_send_mail()}
         except Exception as e:
             return self._fail(e)
 
@@ -620,14 +692,61 @@ class Api:
             me = issues.person(gc.account_upn, gc.account_name)
             hub = self._issue_hub()
             subs = notify.subscribers_doc(hub.get_named("issue-subscribers"))
+            div_subs = notify.division_subscribers_doc(self._hubc().get_prefs().get("issue_subscribers"))
             demo = issues.new_issue("bug", "Test notification", "This is a test from Settings > Issue notifications.", me,
                                     {"id": gc.division["id"], "name": gc.division.get("name", "")}, "")
-            to = [{"upn": s["upn"], "name": s["name"]} for s in subs] or [{"upn": me["upn"], "name": me["name"]}]
+            to = [{"upn": s["upn"], "name": s["name"]} for s in subs]
+            known = {x["upn"] for x in to}
+            for recipient in notify.division_recipients(div_subs, "new"):
+                if recipient["upn"] not in known:
+                    to.append(recipient); known.add(recipient["upn"])
+            if not to:
+                to = [{"upn": me["upn"], "name": me["name"]}]
             subject, text, body = notify.render(demo, "new", me["name"])
             res = notify.deliver(gc, to, subject, text, body, "new", demo)
             if res["sent"]:
                 return {"ok": True, "sent": res["sent"], "via": res["via"]}
             return {"ok": False, "error": res["error"] or "Nothing was sent."}
+        except Exception as e:
+            return self._fail(e)
+
+    def division_notify_test(self, event: str = "new") -> dict:
+        """Send one selected sample notification to the signed-in user only."""
+        try:
+            import notify
+            import issues
+            gc = self._client()
+            gc.sign_in(interactive=False)
+            upn = (gc.account_upn or "").strip()
+            if "@" not in upn:
+                return {"ok": False, "error": "Could not identify your signed-in email address."}
+            division = (gc.division or {}).get("name") or (gc.division or {}).get("id") or "Division"
+            if event not in notify.DIVISION_EVENTS:
+                return {"ok": False, "error": "Choose a notification type from the list."}
+            if event in issues.EVENTS:
+                me = issues.person(upn, gc.account_name)
+                sample = issues.new_issue("bug", "Sample: " + notify.DIVISION_EVENT_LABELS[event],
+                    "Sample email from Settings > General. No issue was created.", me,
+                    {"id": gc.division["id"], "name": division}, "")
+                extra = "Sample comment from NBG Hub." if event == "comment" else ""
+                if event == "status":
+                    sample["status"] = "in_progress"
+                    sample["assignee"] = {"upn": upn, "name": gc.account_name or upn}
+                subject, body_text, body_html = notify.render(sample, event, gc.account_name or upn, extra)
+                delivery_record = sample
+            else:
+                samples = {
+                    "boneyard": ("Sample Boneyard device summary", "Moved to Boneyard: SAMPLE-DEVICE [SAMPLE-SERIAL]\nRestored to Stock: none"),
+                    "sharepoint": ("Sample SharePoint permission change", "Propagated permissions for Documents/Example Folder. Descendants reset: 4; skipped: 0; errors: 0."),
+                    "software": ("Sample Not allowed software policy change", "Flagged not allowed: Sample App\nRemoved from not allowed: none"),
+                    "ot": ("Sample OT asset review reminder", "OT assets need an information review. Open NBG Hub > OT Devices and filter for stale or missing information."),
+                }
+                title, detail = samples[event]
+                subject, body_text, body_html = notify.render_notice(division, title, detail, event)
+                delivery_record = {"title": title, "division": {"name": division}}
+            result = notify.deliver(gc, [{"upn": upn}], subject, body_text, body_html, event, delivery_record)
+            return {"ok": bool(result.get("sent")), "sent": result.get("sent", 0), "via": result.get("via", ""),
+                    "error": result.get("error", "")}
         except Exception as e:
             return self._fail(e)
 
@@ -712,11 +831,15 @@ class Api:
 
     def get_own_division(self) -> dict:
         try:
+            import divisions
             gc = self._client()
             d = gc.division
             keys = ("sites", "access", "ad_domain", "sql_server", "timesheet_db", "timesheet_table", "employee_db", "employee_table")
+            companies = divisions.company_names(d)
+            categories = divisions.intune_categories(d)
             return {"ok": True, "id": d["id"], "name": d.get("name", ""), "company_name": d.get("company_name", ""),
                     "intune_category": d.get("intune_category", ""), "super_admin": gc.is_super_admin(), "role": gc.division_role(),
+                    "company_names": companies, "intune_categories": categories,
                     "can_edit": bool(gc._central) and gc.data_mode != "local",
                     **{k: (list(d.get(k) or []) if k in ("sites", "access") else (d.get(k) or "")) for k in keys}}
         except Exception as e:
@@ -926,7 +1049,11 @@ class Api:
             gc = self._client()
             gc.sign_in(interactive=False)
             self._trace(f"get_status: signed in as {gc.account_upn!r}")
-            return {"ok": True, "signed_in": True, "account": gc.account_name, "upn": gc.account_upn}
+            div = gc.division or {}
+            return {"ok": True, "signed_in": True, "account": gc.account_name, "upn": gc.account_upn,
+                    "object_id": gc.account_oid, "tenant_id": gc.account_tid,
+                    "division": div.get("name", ""), "division_id": div.get("id", ""),
+                    "role": gc.division_role(), "super_admin": gc.is_super_admin()}
         except Exception:
             return {"ok": True, "signed_in": False, "account": None}
 
@@ -1116,7 +1243,175 @@ class Api:
                 result = sharepoint_permissions.apply_inheritance_reset(
                     record["plan"]["site_url"], str(gc.cfg.get("sharepoint_hostname") or ""),
                     gc.sharepoint_rest_access_token(), record["plan"])
+            plan = record["plan"]
+            detail = (f"Folder/library: {plan.get('library_title', '')}/{plan.get('parent_path', '')}\n"
+                      f"Descendants reset: {len(result.get('applied', []))}; skipped: {len(result.get('skipped', []))}; errors: {len(result.get('errors', []))}")
+            self._audit("SharePoint permissions propagated", detail)
+            if result.get("applied"):
+                self._notify_division_event("sharepoint", "SharePoint permissions propagated", detail)
             return {"ok": True, **result}
+        except Exception as e:
+            return self._fail(e)
+
+    def sharepoint_permissions_prepare_copy(self, site_url: str, source_list_id: str, source_path: str,
+                                            target_list_id: str, target_path: str) -> dict:
+        """Read source and destination ACLs, then stage a reviewable copy plan."""
+        import time
+        import uuid
+        try:
+            with self._work():
+                gc = self._client()
+                import sharepoint_permissions
+                plan = sharepoint_permissions.prepare_permission_copy(
+                    site_url, str(gc.cfg.get("sharepoint_hostname") or ""),
+                    gc.sharepoint_rest_access_token(), source_list_id, source_path,
+                    target_list_id, target_path)
+            plan_id = uuid.uuid4().hex
+            with self._spm_copy_lock:
+                now = time.time()
+                self._spm_copy_plans = {key: value for key, value in self._spm_copy_plans.items()
+                                        if now - value["created"] < 1800}
+                self._spm_copy_plans[plan_id] = {"created": now, "plan": plan}
+            source, target = plan["source"], plan["target"]
+            descendants = plan["descendants"]
+            links_not_copied = sum(1 for item in source["assignments"] if item.get("sharing_link"))
+            return {"ok": True, "plan_id": plan_id, "source_path": source["path"],
+                    "source_library": source["title"], "target_path": target["path"],
+                    "target_library": target["title"], "source_grants": [
+                        {"title": row.get("title") or row.get("login"), "level": row.get("level"),
+                         "sharing_link": bool(row.get("sharing_link")),
+                         "operator_preserved": int(row.get("principal_id") or row.get("id") or 0) == int(plan.get("operator_id") or 0)}
+                        for row in source["assignments"]],
+                    "target_grants": [{"title": row.get("title") or row.get("login"),
+                                       "level": row.get("level"),
+                                       "sharing_link": bool(row.get("sharing_link")),
+                                       "operator_preserved": int(row.get("principal_id") or row.get("id") or 0) == int(plan.get("operator_id") or 0)}
+                                      for row in target["assignments"]],
+                    "target_grant_count": len(target["assignments"]),
+                    "target_sharing_links": sum(1 for row in target["assignments"] if row.get("sharing_link")),
+                    "descendant_count": len(descendants),
+                    "descendants": [{"path": row["path"], "type": row["type"],
+                                     "grants": len(row["assignments"]),
+                                     "sharing_links": sum(1 for item in row["assignments"] if item.get("sharing_link"))}
+                                    for row in descendants],
+                    "descendant_sharing_links": sum(1 for row in descendants
+                        if any(item.get("sharing_link") for item in row["assignments"])),
+                    "source_links_not_copied": links_not_copied}
+        except Exception as e:
+            return self._fail(e)
+
+    def sharepoint_permissions_apply_copy(self, plan_id: str, confirmed: bool = False) -> dict:
+        """Apply a previously reviewed permission copy only after explicit confirmation."""
+        if confirmed is not True:
+            return {"ok": False, "error": "Confirm the reviewed permission-copy plan before applying it."}
+        try:
+            with self._spm_copy_lock:
+                record = self._spm_copy_plans.pop(str(plan_id or ""), None)
+            if not record or time.time() - record["created"] >= 1800:
+                return {"ok": False, "error": "This preview expired. Build a fresh permission-copy preview."}
+            gc = self._client()
+            import sharepoint_permissions
+            with self._work():
+                result = sharepoint_permissions.apply_permission_copy(
+                    record["plan"]["site_url"], str(gc.cfg.get("sharepoint_hostname") or ""),
+                    gc.sharepoint_rest_access_token(), record["plan"])
+            plan = record["plan"]
+            source, target = plan.get("source", {}), plan.get("target", {})
+            detail = (f"Copied from {source.get('title', '')}/{source.get('path', '')} to "
+                      f"{target.get('title', '')}/{target.get('path', '')}. "
+                      f"Descendants reset: {len(result.get('descendants_reset', []))}; grants added: {result.get('grants_added', 0)}; "
+                      f"errors: {len(result.get('errors', []))}")
+            self._audit("SharePoint permissions copied", detail)
+            if result.get("grants_added") or result.get("descendants_reset"):
+                self._notify_division_event("sharepoint", "SharePoint permissions copied", detail)
+            return {"ok": True, **result}
+        except Exception as e:
+            return self._fail(e)
+
+    def sharepoint_permissions_prepare_remove_links(self, site_url: str, targets: list) -> dict:
+        """Re-read and stage only existing sharing-link permissions for review."""
+        import uuid
+        try:
+            if not isinstance(targets, list) or not targets or len(targets) > 10000:
+                raise ValueError("Select one or more sharing links to remove.")
+            gc = self._client()
+            plan_targets, total = [], 0
+            seen = set()
+            with self._work():
+                for target in targets:
+                    if not isinstance(target, dict):
+                        continue
+                    list_id = str(target.get("list_id") or "").strip()
+                    try:
+                        item_id = int(target.get("item_id"))
+                    except (TypeError, ValueError):
+                        continue
+                    raw_permission_ids = target.get("permission_ids", [])
+                    if not isinstance(raw_permission_ids, list):
+                        continue
+                    permission_ids = {str(value).strip() for value in raw_permission_ids if str(value).strip()}
+                    if not list_id or not permission_ids:
+                        continue
+                    key = (list_id, item_id)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    live_links = gc.sharepoint_item_sharing_links(site_url, list_id, item_id)
+                    matches = [link for link in live_links if link.get("permission_id") in permission_ids]
+                    if matches:
+                        plan_targets.append({"list_id": list_id, "item_id": item_id,
+                                             "library": str(target.get("library") or ""),
+                                             "path": str(target.get("path") or ""),
+                                             "links": matches})
+                        total += len(matches)
+            if not total:
+                raise ValueError("Selected links are no longer present. Rescan the site.")
+            plan_id = uuid.uuid4().hex
+            with self._spm_link_lock:
+                now = time.time()
+                self._spm_link_plans = {key: value for key, value in self._spm_link_plans.items()
+                                        if now - value["created"] < 1800}
+                self._spm_link_plans[plan_id] = {"created": now, "site_url": str(site_url),
+                                                 "targets": plan_targets}
+            return {"ok": True, "plan_id": plan_id, "link_count": total,
+                    "item_count": len(plan_targets),
+                    "targets": [{"library": row["library"], "path": row["path"],
+                                 "links": [{"scope": link.get("scope"), "type": link.get("type"),
+                                            "roles": link.get("roles", []),
+                                            "expiration": link.get("expiration", "")}
+                                           for link in row["links"]]}
+                                for row in plan_targets]}
+        except Exception as e:
+            return self._fail(e)
+
+    def sharepoint_permissions_apply_remove_links(self, plan_id: str, confirmed: bool = False) -> dict:
+        """Revalidate and revoke reviewed sharing links; report partial failures by item."""
+        if confirmed is not True:
+            return {"ok": False, "error": "Confirm the reviewed sharing-link removal before applying."}
+        try:
+            with self._spm_link_lock:
+                record = self._spm_link_plans.pop(str(plan_id or ""), None)
+            if not record or time.time() - record["created"] >= 1800:
+                return {"ok": False, "error": "This preview expired. Rescan and review the links again."}
+            gc = self._client()
+            removed, failed = [], []
+            with self._work():
+                for target in record["targets"]:
+                    for link in target["links"]:
+                        try:
+                            gc.delete_sharepoint_item_sharing_link(
+                                record["site_url"], target["list_id"], target["item_id"],
+                                link.get("permission_id", ""))
+                            removed.append({"library": target["library"], "path": target["path"]})
+                        except Exception as exc:
+                            failed.append({"library": target["library"], "path": target["path"],
+                                           "error": str(exc)})
+            if removed:
+                paths = list(dict.fromkeys(f"{x['library']}/{x['path']}" for x in removed))
+                detail = f"Revoked sharing links from {len(removed)} item(s): " + ", ".join(paths[:20])
+                self._audit("SharePoint sharing links revoked", detail)
+                self._notify_division_event("sharepoint", "SharePoint sharing links revoked", detail)
+            return {"ok": True, "removed": removed, "failed": failed}
         except Exception as e:
             return self._fail(e)
 
@@ -1184,6 +1479,32 @@ class Api:
             if not isinstance(scan_data, dict) or not isinstance(scan_data.get("entries"), list):
                 raise ValueError("Scan data is missing or invalid. Run the scan again.")
             return sharepoint_permissions.export_xlsx(scan_data)
+        except Exception as e:
+            return self._fail(e)
+
+    def save_csv_file(self, filename: str, content: str) -> dict:
+        """Show a native Save As dialog and write a CSV selected by the user."""
+        try:
+            import webview
+            if self._window is None:
+                raise RuntimeError("Save As is available from the NBG Hub desktop app.")
+            name = os.path.basename(str(filename or "NBG-Hub-export.csv"))
+            if not name.lower().endswith(".csv"):
+                name += ".csv"
+            selected = self._window.create_file_dialog(
+                webview.FileDialog.SAVE,
+                directory=os.path.join(os.path.expanduser("~"), "Downloads"),
+                save_filename=name,
+                file_types=("CSV files (*.csv)",),
+            )
+            if not selected:
+                return {"ok": True, "cancelled": True}
+            path = selected[0] if isinstance(selected, (tuple, list)) else selected
+            if not path:
+                return {"ok": True, "cancelled": True}
+            with open(path, "w", encoding="utf-8", newline="") as stream:
+                stream.write(str(content or ""))
+            return {"ok": True, "path": path}
         except Exception as e:
             return self._fail(e)
 
@@ -1395,6 +1716,129 @@ class Api:
             except Exception:
                 pass
             return {"ok": True, "classification": classification, "data": classifications}
+        except Exception as e:
+            return self._fail(e)
+
+    # ---- device custody and Intune snapshot history ----------------------
+    def device_lifecycle_get(self, serial: str = "") -> dict:
+        try:
+            import hashlib
+            hub = self._hubc(); serial = str(serial or "").strip()
+            if serial:
+                key = hashlib.sha256(serial.lower().encode()).hexdigest()[:32]
+                return {"ok": True, "device": hub.get_named("device-lifecycle-" + key) or {}}
+            doc = hub.get_named("device-lifecycle-index") or {}
+            return {"ok": True, "devices": doc.get("devices") or {}}
+        except Exception as e:
+            return self._fail(e)
+
+    def device_checkout(self, serial: str, custodian: str, due_date: str = "", notes: str = "") -> dict:
+        """Record custody separately from Intune's authoritative primary user."""
+        try:
+            import datetime
+            gc = self._client(); gc.sign_in(interactive=False)
+            serial = str(serial or "").strip(); custodian = str(custodian or "").strip()
+            if not serial or not custodian or len(custodian) > 160:
+                return {"ok": False, "error": "Choose a device and enter its checkout custodian."}
+            if due_date:
+                datetime.date.fromisoformat(due_date)
+            row = gc.find_by_serial("in_use", serial) or gc.find_by_serial("new_stock", serial)
+            if not row:
+                return {"ok": False, "error": "Device is no longer in inventory. Refresh and try again."}
+            import hashlib
+            hub = self._hubc(); doc = hub.get_named("device-lifecycle-index") or {}; devices = dict(doc.get("devices") or {})
+            key = serial.lower(); doc_key = hashlib.sha256(key.encode()).hexdigest()[:32]
+            state = dict(hub.get_named("device-lifecycle-" + doc_key) or {})
+            if state.get("status") == "checked_out":
+                return {"ok": False, "error": f"Device is already checked out to {state.get('custodian') or 'another custodian'}. Record its return first."}
+            event = {"at": __import__("datetime").datetime.now().astimezone().isoformat(), "by": self._actor() or gc.account_upn or "Hub user",
+                     "action": "checked out", "custodian": custodian, "due_date": due_date, "notes": str(notes or "")[:1000]}
+            state.update({"custodian": custodian, "checked_out_at": event["at"], "due_date": due_date, "status": "checked_out"})
+            state["history"] = (list(state.get("history") or []) + [event])[-100:]
+            hub.put_named("device-lifecycle-" + doc_key, state)
+            for attempt in range(3):
+                try:
+                    index = hub.get_named("device-lifecycle-index") or {}; devices = dict(index.get("devices") or {})
+                    devices[key] = {k: state.get(k, "") for k in ("status", "custodian", "checked_out_at", "due_date")}
+                    hub.put_named("device-lifecycle-index", {"devices": devices})
+                    break
+                except Exception as e:
+                    if e.__class__.__name__ != "HubConflict" or attempt == 2: raise
+            gc.add_log("Device checked out", serial, "", actor=event["by"], details=f"Custodian: {custodian}" + (f" · Due: {due_date}" if due_date else ""))
+            self._notify_division_event("device", f"Device checked out: {serial}", f"Custodian: {custodian}\nDue date: {due_date or 'Not set'}\nNotes: {event['notes'] or 'None'}")
+            return {"ok": True, "device": state}
+        except Exception as e:
+            return self._fail(e)
+
+    def device_return(self, serial: str, notes: str = "") -> dict:
+        try:
+            gc = self._client(); gc.sign_in(interactive=False)
+            serial = str(serial or "").strip(); hub = self._hubc()
+            import hashlib
+            key = serial.lower(); doc_key = hashlib.sha256(key.encode()).hexdigest()[:32]
+            state = dict(hub.get_named("device-lifecycle-" + doc_key) or {})
+            if not serial or state.get("status") != "checked_out":
+                return {"ok": False, "error": "This device has no active checkout."}
+            old = state.get("custodian") or "Unknown"
+            event = {"at": __import__("datetime").datetime.now().astimezone().isoformat(), "by": self._actor() or gc.account_upn or "Hub user",
+                     "action": "returned", "custodian": old, "notes": str(notes or "")[:1000]}
+            state.update({"status": "available", "custodian": "", "due_date": "", "returned_at": event["at"]})
+            state["history"] = (list(state.get("history") or []) + [event])[-100:]
+            hub.put_named("device-lifecycle-" + doc_key, state)
+            for attempt in range(3):
+                try:
+                    index = hub.get_named("device-lifecycle-index") or {}; devices = dict(index.get("devices") or {})
+                    devices[key] = {k: state.get(k, "") for k in ("status", "custodian", "checked_out_at", "due_date")}
+                    hub.put_named("device-lifecycle-index", {"devices": devices})
+                    break
+                except Exception as e:
+                    if e.__class__.__name__ != "HubConflict" or attempt == 2: raise
+            gc.add_log("Device returned", serial, "", actor=event["by"], details=f"Returned by {old}" + (f" · {event['notes']}" if event["notes"] else ""))
+            self._notify_division_event("device", f"Device returned: {serial}", f"Returned by: {old}\nNotes: {event['notes'] or 'None'}")
+            return {"ok": True, "device": state}
+        except Exception as e:
+            return self._fail(e)
+
+    def saved_reports_get(self) -> dict:
+        try:
+            doc = self._hubc().get_named("saved-reports") or {}
+            return {"ok": True, "reports": doc.get("reports") or []}
+        except Exception as e:
+            return self._fail(e)
+
+    def saved_reports_save(self, reports: list) -> dict:
+        try:
+            gc = self._client(); gc.sign_in(interactive=False)
+            if not (gc.account_upn or "").strip(): return {"ok": False, "error": "Sign in to save division reports."}
+            clean = []
+            for item in (reports or [])[:50]:
+                if not isinstance(item, dict) or not str(item.get("name") or "").strip(): continue
+                clean.append({"id": str(item.get("id") or "")[:80], "name": str(item["name"]).strip()[:80],
+                              "filters": item.get("filters") if isinstance(item.get("filters"), dict) else {},
+                              "updated_at": __import__("datetime").datetime.now().astimezone().isoformat()})
+            self._hubc().put_named("saved-reports", {"reports": clean})
+            return {"ok": True, "reports": clean}
+        except Exception as e:
+            return self._fail(e)
+
+    def sharepoint_review_get(self, site_url: str) -> dict:
+        try:
+            key = __import__("hashlib").sha256(str(site_url or "").strip().lower().encode()).hexdigest()[:32]
+            doc = self._hubc().get_named("sharepoint-review-plans") or {}
+            return {"ok": True, "items": (doc.get("sites") or {}).get(key) or []}
+        except Exception as e:
+            return self._fail(e)
+
+    def sharepoint_review_save(self, site_url: str, items: list) -> dict:
+        try:
+            gc = self._client(); gc.require_division_admin()
+            url = str(site_url or "").strip()
+            if not url.lower().startswith("https://") or len(items or []) > 250:
+                return {"ok": False, "error": "Review plan needs a valid site and at most 250 findings."}
+            key = __import__("hashlib").sha256(url.lower().encode()).hexdigest()[:32]
+            hub = self._hubc(); doc = hub.get_named("sharepoint-review-plans") or {}; sites = dict(doc.get("sites") or {})
+            sites[key] = (items or [])[:250]; hub.put_named("sharepoint-review-plans", {"sites": sites})
+            return {"ok": True, "items": sites[key]}
         except Exception as e:
             return self._fail(e)
 
@@ -1812,6 +2256,28 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
+    # ---- Windows Update Watch --------------------------------------------
+    def windows_updates_get(self) -> dict:
+        """Read the latest division-scoped Windows update snapshot."""
+        try:
+            data = self._hubc().get_named("windows-update-watch") or {}
+            return {"ok": True, "data": data}
+        except Exception as e:
+            return self._fail(e)
+
+    def windows_updates_refresh(self) -> dict:
+        """Refresh Intune devices and Microsoft security update catalog for this division."""
+        try:
+            gc = self._client()
+            if getattr(gc, "data_mode", "live") == "local":
+                return {"ok": False, "error": "Switch to Live data to refresh Windows Update Watch from Intune."}
+            data = gc.windows_update_watch()
+            data["by"] = self._actor() or getattr(gc, "account_upn", "")
+            self._hubc().put_named("windows-update-watch", data)
+            return {"ok": True, "data": data}
+        except Exception as e:
+            return self._fail(e)
+
     @staticmethod
     def _clean_sw_auto(a) -> dict:
         """The automatic mandatory-app rule: top N apps per department, held by at least min_pct % of it, in departments
@@ -1830,13 +2296,24 @@ class Api:
         try:
             rules = dict(rules or {})
             h = self._hubc()
+            previous_blocked = list((h.get_software_rules() or {}).get("not_allowed") or [])
             if "auto" in rules:
                 new = self._clean_sw_auto(rules["auto"])
                 cur = self._clean_sw_auto((h.get_software_rules() or {}).get("auto"))
                 if new != cur and self._client().division_role() not in ("super", "admin"):
                     return {"ok": False, "error": "Only division admins can change the automatic mandatory-app rules."}
                 rules["auto"] = new
-            return {"ok": True, **h.save_software_rules(rules, self._actor())}
+            saved = h.save_software_rules(rules, self._actor())
+            current_blocked = list(saved.get("not_allowed") or [])
+            before = {x.casefold() for x in previous_blocked}
+            after = {x.casefold() for x in current_blocked}
+            added, removed = [x for x in current_blocked if x.casefold() not in before], [x for x in previous_blocked if x.casefold() not in after]
+            if added or removed:
+                parts = []
+                if added: parts.append("Flagged not allowed: " + ", ".join(added[:30]))
+                if removed: parts.append("Removed from not allowed: " + ", ".join(removed[:30]))
+                self._notify_division_event("software", "Not allowed software policy changed", "\n".join(parts))
+            return {"ok": True, **saved}
         except Exception as e:
             return self._fail(e)
 
@@ -1937,9 +2414,11 @@ class Api:
             resv = reservations.get(serial)
             if resv and resv.get("setup_id") != exclude_setup_id:
                 continue   # held by another setup — not available
-            dep = dept_map.get((r.get("model") or "").strip()) or "Unassigned"
-            by_dept.setdefault(dep, []).append(
-                {"serial": serial, "model": r.get("model", ""), "site": r.get("site_tag", "")})
+            raw_depts = dept_map.get((r.get("model") or "").strip()) or []
+            depts = raw_depts if isinstance(raw_depts, list) else [raw_depts]
+            for dep in [str(d).strip() for d in depts if str(d).strip()] or ["Unassigned"]:
+                by_dept.setdefault(dep, []).append(
+                    {"serial": serial, "model": r.get("model", ""), "site": r.get("site_tag", "")})
         for lst in by_dept.values():
             lst.sort(key=lambda x: (x.get("model", ""), x.get("serial", "")))
         return {"ok": True, "by_dept": by_dept}
@@ -2050,15 +2529,16 @@ class Api:
         hostnames = [(d.get("hostname") or "").strip() for d in devices]
         serials = [(d.get("serial") or "").strip() for d in devices]
         # --- Intune + Entra (Graph) ---
-        intune, entra, entra_state, intune_ok = {}, {}, "off", False
+        intune, entra, entra_state, intune_ok, intune_error = {}, {}, "off", False, ""
         try:
             gc = self._client()
             gc.sign_in(interactive=False)
             try:
                 intune = gc.intune_presence_map(serials)   # any-category, by serial
                 intune_ok = True
-            except Exception:
+            except Exception as exc:
                 intune = {}
+                intune_error = str(exc)
             if gc._has_dir_read:
                 try:
                     entra = gc.entra_device_map(hostnames)
@@ -2096,7 +2576,8 @@ class Api:
                 "ad_last_logon": (arec or {}).get("last_logon", ""), "ad_ou": (arec or {}).get("dn", ""),
             })
         return {"ok": True, "devices": out, "entra_state": entra_state, "intune_ok": intune_ok,
-                "ad_error": ad_error, "ad_domain": (self._client().cfg.get("ad_domain") or "")}
+                "intune_error": intune_error, "ad_error": ad_error,
+                "ad_domain": (self._client().cfg.get("ad_domain") or "")}
 
     # ---- Boneyard: retire devices gone from AD + Entra + Intune -----------
     def _boneyard_move(self, gc, serial: str, snap: dict) -> bool:
@@ -2186,8 +2667,8 @@ class Api:
                 return (today - date.fromisoformat(lc)).days <= 10
             except ValueError:
                 return False
-        _bg = [r for r in in_use if _fresh(r) and (r.get("device_name") or "").strip().upper().startswith("BG")]
-        controls = (_bg or [r for r in in_use if _fresh(r) and (r.get("device_name") or "").strip()])[:8]
+        _bg = [r for r in in_use if _fresh(r) and (r.get("device_name") or "").strip().upper().startswith("BG") and (r.get("serial") or "").strip()]
+        controls = (_bg or [r for r in in_use if _fresh(r) and (r.get("device_name") or "").strip() and (r.get("serial") or "").strip()])[:8]
         control_serials = {(r.get("serial") or "").strip().upper() for r in controls}
 
         checkset = [{"serial": r.get("serial", ""), "hostname": r.get("device_name", "")} for r in candidates]
@@ -2197,6 +2678,12 @@ class Api:
         checkset += [{"serial": r.get("serial", ""), "hostname": r.get("device_name", "")} for r in controls]
         if not candidates and not boneyard_rows:
             return {"ok": True, "added": [], "restored": [], "dry_run": dry_run}
+        if not controls:
+            return {"ok": True, "added": [], "restored": [], "skipped": "No recent control device; source checks cannot be validated."}
+        if any(not (r.get("serial") or "").strip() or not (r.get("device_name") or "").strip() for r in candidates):
+            return {"ok": True, "added": [], "restored": [], "skipped": "A stale candidate is missing serial number or device name."}
+        if any(not (r.get("serial") or "").strip() or not snaps.get((r.get("serial") or "").strip().upper(), {}).get("device_name") for r in boneyard_rows):
+            return {"ok": True, "added": [], "restored": [], "skipped": "A Boneyard device is missing its saved serial number or device name."}
         loc = self.locate_devices(checkset)
         # Safety guards — if any source couldn't be checked, do nothing.
         if loc.get("ad_error"):
@@ -2204,32 +2691,40 @@ class Api:
         if loc.get("entra_state") != "on":
             return {"ok": True, "skipped": "Entra not checkable (" + str(loc.get("entra_state")) + ")", "added": [], "restored": []}
         if not loc.get("intune_ok"):
-            return {"ok": True, "skipped": "Intune query failed", "added": [], "restored": []}
+            return {"ok": True, "skipped": "Intune query failed: " + str(loc.get("intune_error") or "unknown error"), "added": [], "restored": []}
         by = {(d.get("serial") or "").strip().upper(): d for d in loc.get("devices", [])}
         # Authoritativeness: AD must find at least one known-active control device,
         # else its cn= lookups aren't reliable right now -> don't trust any "not found".
-        if control_serials:
-            if not any((by.get(s) or {}).get("in_ad") for s in control_serials):
-                return {"ok": True, "added": [], "restored": [],
-                        "skipped": "AD lookups not returning known-active devices — not trusting 'not found' this run."}
+        if not any((by.get(s) or {}).get("in_ad") for s in control_serials):
+            return {"ok": True, "added": [], "restored": [],
+                    "skipped": "AD lookups not returning known-active devices — not trusting 'not found' this run."}
         added, restored, now = [], [], datetime.now().isoformat()
         for r in candidates:
             d = by.get((r.get("serial") or "").strip().upper())
             if d and not d["in_ad"] and not d["in_entra"] and not d["in_intune"]:
                 if not dry_run:
-                    self._boneyard_move(gc, r.get("serial", ""), {
+                    moved = self._boneyard_move(gc, r.get("serial", ""), {
                         "device_name": r.get("device_name", ""), "user": r.get("user", ""),
                         "last_checkin": r.get("last_checkin", ""), "model": r.get("model", ""),
                         "site": r.get("site_tag", ""), "moved_at": now,
                         "moved_by": gc.account_name or "auto-sync",
                         "reason": "Not in AD, Entra, or Intune"})
+                    if not moved:
+                        continue
                 added.append({"serial": r.get("serial", ""), "device_name": r.get("device_name", ""), "model": r.get("model", "")})
         for r in boneyard_rows:
             d = by.get((r.get("serial") or "").strip().upper())
             if d and (d["in_ad"] or d["in_entra"] or d["in_intune"]):
                 if not dry_run:
-                    self.restore_boneyard(r.get("serial", ""))
+                    outcome = self.restore_boneyard(r.get("serial", ""))
+                    if not outcome.get("ok"):
+                        continue
                 restored.append({"serial": r.get("serial", "")})
+        if not dry_run and (added or restored):
+            changes = []
+            if added: changes.append(f"Moved to Boneyard ({len(added)}): " + ", ".join(f"{d['device_name']} [{d['serial']}]" for d in added[:20]))
+            if restored: changes.append(f"Restored to Stock ({len(restored)}): " + ", ".join(x["serial"] for x in restored[:20]))
+            self._notify_division_event("boneyard", "Boneyard device changes", "\n".join(changes))
         return {"ok": True, "added": added, "restored": restored, "dry_run": dry_run}
 
     # ---- BG Tools: Timesheet Fix (SQL, integrated auth) ------------------
@@ -2444,10 +2939,11 @@ class Api:
     def ad_user_search(self, q: str, all_divisions: bool = False) -> dict:
         """People search; limited to the ACTIVE division's AD company unless all_divisions (Rule 6)."""
         try:
+            import divisions
             domain = self._ad_perm_gate()
             import adperms
             d = self._client().division or {}
-            cos = [] if all_divisions else [d.get("name", ""), d.get("company_name", "")]
+            cos = [] if all_divisions else [d.get("name", ""), *divisions.company_names(d)]
             r = adperms.search_users(q, domain, cos)
             if "__error__" in r:
                 return {"ok": False, "error": r["__error__"]}
@@ -2605,6 +3101,8 @@ class Api:
     ]
 
     def bg_locations(self) -> dict:
+        import json
+        import divisions
         try:
             sc_ = self._scopes()
         except Exception:
@@ -2614,14 +3112,16 @@ class Api:
         have = {d["company"].lower() for d in dout}
         try:                                    # every division in the registry is offered, not just the saved list
             for rd in self._client().registry:
-                co = (rd.get("company_name") or "").strip()
-                if co and co.lower() not in have and rd.get("enabled") is not False:
-                    dout.append({"label": rd.get("name") or co, "company": co})
-                    have.add(co.lower())
+                for co in divisions.company_names(rd):
+                    key = co.lower()
+                    if key not in have and rd.get("enabled") is not False:
+                        dout.append({"label": rd.get("name") or co, "company": co, "division_id": rd.get("id", "")})
+                        have.add(key)
         except Exception:
             pass
         return {"ok": True, "locations": out, "divisions": dout,
-                "nbgw_company": self._division_company()}
+                "nbgw_company": json.dumps(self._division_companies()),
+                "nbgw_label": self._client().division.get("name", "This division")}
 
     def bg_user_search(self, query: str, domain: str = "", company: str = "") -> dict:
         """Find teammates by name in Entra (handles 'First Last' vs 'Last, First').
@@ -2635,6 +3135,7 @@ class Api:
         try:
             from graph import GRAPH
             from urllib.parse import quote
+            import json
             gc = self._client()
             gc.sign_in(interactive=False)
             if not gc._has_dir_read:
@@ -2643,9 +3144,23 @@ class Api:
             url = (f"{GRAPH}/users?$search={term}"
                    "&$select=id,displayName,userPrincipalName,department,companyName&$top=50")
             filters = []
-            co = (company or "").strip()
-            if co:
-                filters.append(f"companyName eq '{self._odq(co)}'")
+            co_values = []
+            if isinstance(company, list):
+                co_values = company
+            else:
+                raw_company = (company or "").strip()
+                if raw_company.startswith("["):
+                    try:
+                        parsed = json.loads(raw_company)
+                        co_values = parsed if isinstance(parsed, list) else [raw_company]
+                    except Exception:
+                        co_values = [raw_company]
+                elif raw_company:
+                    co_values = [raw_company]
+            co_values = list(dict.fromkeys(str(c).strip() for c in co_values if str(c).strip()))
+            if co_values:
+                clause = " or ".join(f"companyName eq '{self._odq(c)}'" for c in co_values)
+                filters.append(f"({clause})" if len(co_values) > 1 else clause)
             dom = "".join(c for c in (domain or "").strip().lower() if c.isalnum() or c in ".-")
             if dom:
                 filters.append(f"endsWith(userPrincipalName,'@{dom}')")
@@ -2706,10 +3221,22 @@ class Api:
     # Overridable per shared baseline doc ("company") if ever needed.
     def _division_company(self) -> str:
         """Entra companyName of the active division (scopes people queries)."""
-        name = (self._client().division.get("company_name") or "").strip()
-        if not name:       # never default to another division's company: people queries would leak
+        names = self._division_companies()
+        if not names:       # never default to another division's company: people queries would leak
             raise RuntimeError("This division has no Entra company name configured.")
-        return name
+        return names[0]
+
+    def _division_companies(self) -> list[str]:
+        from divisions import company_names
+        return company_names(self._client().division)
+
+    def _company_filter(self, companies) -> str:
+        values = [str(c).strip() for c in (companies if isinstance(companies, list) else [companies]) if str(c).strip()]
+        values = list(dict.fromkeys(values))
+        if not values:
+            raise RuntimeError("This division has no Entra company name configured.")
+        clause = " or ".join(f"companyName eq '{self._odq(c)}'" for c in values)
+        return f"({clause})" if len(values) > 1 else clause
     _PERM_MIN_MEMBERS = 5    # a "majority" baseline off fewer people isn't meaningful
 
     def _perm_doc(self) -> dict:
@@ -2722,9 +3249,15 @@ class Api:
         except (TypeError, ValueError):
             thr = self._PERM_THRESHOLD_DEFAULT
         thr = min(max(thr, 0.0), 1.0)
-        company = (raw.get("company") or self._division_company()).strip()
+        raw_companies = raw.get("companies") if isinstance(raw.get("companies"), list) else None
+        if raw_companies is None:
+            current = self._division_companies()
+            legacy = str(raw.get("company") or "").strip()
+            raw_companies = current if not legacy or legacy.casefold() in {c.casefold() for c in current} else [legacy]
+        raw_companies = list(dict.fromkeys(str(c).strip() for c in raw_companies if str(c).strip()))
+        company = ", ".join(raw_companies)
         depts = raw.get("departments") if isinstance(raw.get("departments"), dict) else {}
-        return {"keyword": kw, "threshold": thr, "company": company, "departments": depts}
+        return {"keyword": kw, "threshold": thr, "company": company, "companies": raw_companies, "departments": depts}
 
     @staticmethod
     def _odq(v: str) -> str:
@@ -2764,10 +3297,10 @@ class Api:
         except Exception as e:
             return self._fail(e)
 
-    def _dept_users(self, gc, dept: str, company: str) -> list:
+    def _dept_users(self, gc, dept: str, company: str | list[str]) -> list:
         """Enabled NBGW teammates (Entra companyName == `company`) whose `department`
         equals `dept`. Returns [{id, display, upn}]."""
-        filt = (f"department eq '{self._odq(dept)}' and companyName eq '{self._odq(company)}'"
+        filt = (f"department eq '{self._odq(dept)}' and {self._company_filter(company)}"
                 " and accountEnabled eq true")
         out = self._users_where(gc, filt, "id,displayName,userPrincipalName")
         return [{"id": u.get("id", ""), "display": u.get("displayName", ""),
@@ -2789,10 +3322,11 @@ class Api:
             return {"ok": True, "departments": []}
         try:
             gc = self._perm_gc()
-            company = self._perm_doc()["company"]
+            doc = self._perm_doc()
+            company, companies = doc["company"], doc["companies"]
             out = self._users_where(
-                gc, f"startsWith(department,'{self._odq(p)}') and companyName eq "
-                    f"'{self._odq(company)}' and accountEnabled eq true", "department")
+                gc, f"startsWith(department,'{self._odq(p)}') and {self._company_filter(companies)}"
+                    " and accountEnabled eq true", "department")
             counts: dict[str, int] = {}
             for u in out:
                 dep = (u.get("department") or "").strip()
@@ -2810,9 +3344,10 @@ class Api:
         "Rebuild from NBGW directory" button."""
         try:
             gc = self._perm_gc()
-            company = self._perm_doc()["company"]
+            doc = self._perm_doc()
+            company, companies = doc["company"], doc["companies"]
             out = self._users_where(
-                gc, f"companyName eq '{self._odq(company)}' and accountEnabled eq true",
+                gc, f"{self._company_filter(companies)} and accountEnabled eq true",
                 "department")
             counts: dict[str, int] = {}
             for u in out:
@@ -2838,11 +3373,11 @@ class Api:
         try:
             gc = self._perm_gc()
             doc = self._perm_doc()
-            kw, thr, company = doc["keyword"], doc["threshold"], doc["company"]
-            users = self._dept_users(gc, name, company)
+            kw, thr, companies = doc["keyword"], doc["threshold"], doc["companies"]
+            users = self._dept_users(gc, name, companies)
             total = len(users)
             if not total:
-                return {"ok": False, "error": f"No enabled {company} teammates found in department “{name}”."}
+                return {"ok": False, "error": f"No enabled {doc['company']} teammates found in department “{name}”."}
             gmap = gc.groups_for_users([u["id"] for u in users], keyword=kw)
             tally: dict[str, int] = {}
             for u in users:
@@ -2858,7 +3393,7 @@ class Api:
             groups.sort(key=lambda g: (-g["count"], g["name"].lower()))
             doc["departments"][name] = {
                 "updated": datetime.now().isoformat(timespec="seconds"), "total": total,
-                "company": company, "groups": groups,
+                "company": doc["company"], "groups": groups,
             }
             kw_lbl = f"common {kw}" if kw else "common"
             self._hubc().save_perm_baselines(
@@ -2888,7 +3423,7 @@ class Api:
             doc = self._perm_doc()
             # Baselines are built from NBGW teammates only — comparing someone from
             # another division that shares the department name would be meaningless.
-            if (user["company"] or "").strip().lower() != doc["company"].lower():
+            if (user["company"] or "").strip().lower() not in {c.lower() for c in doc["companies"]}:
                 return {"ok": True, "user": user, "in_scope": False, "has_baseline": False,
                         "company": doc["company"], "keyword": doc["keyword"], "dept": dept}
             base = doc["departments"].get(dept) if dept else None
@@ -2920,7 +3455,7 @@ class Api:
             if not base or not expected:
                 return {"ok": True, "department": name, "has_baseline": False,
                         "keyword": doc["keyword"]}
-            users = self._dept_users(gc, name, doc["company"])
+            users = self._dept_users(gc, name, doc["companies"])
             gmap = gc.groups_for_users([u["id"] for u in users], keyword=doc["keyword"])
             rows, have = [], {g: 0 for g in expected}
             for u in users:
@@ -3101,6 +3636,491 @@ class Api:
         except Exception:
             pass
         return ""
+
+    # ---- OT device register: division-shared inventory, separate from Intune ----
+    _OT_ASSET_FIELDS = {
+        "name": 120, "type": 40, "controller_type": 120, "asset_tag": 80, "serial": 100,
+        "vendor": 120, "model": 160, "version": 120, "operating_system": 120, "ad_joined": 32,
+        "ip_address": 80, "subnet": 80,
+        "gateway": 80, "mac_address": 40, "vlan": 40, "switch_port": 100,
+        "protocol": 100, "site": 100, "area": 120,
+        "line": 120, "panel": 120, "criticality": 24, "status": 24, "documentation_status": 32,
+        "job_source": 500, "config_record": 120, "owner": 120, "last_verified": 10,
+        "dependencies": 2000, "notes": 2000,
+    }
+    _OT_ASSET_TYPES = {"Windows PC", "Windows Server", "PLC / Controller", "HMI / Panel",
+                       "Network device", "Sensor / Instrument", "Other"}
+    _OT_DEFAULT_TYPES = ["Windows PC", "Windows Server", "PLC / Controller", "HMI / Panel",
+                         "Network device", "Sensor / Instrument", "Other"]
+    _OT_ASSET_STATUSES = {"Active", "Spare", "Maintenance", "Retired"}
+    _OT_DOCUMENTATION_STATUSES = {"Documented", "Needs Verification"}
+    _OT_AD_STATES = {"Yes", "No", "Unknown", "Needs Verification"}
+    _OT_ASSET_CRITICALITIES = {"Low", "Medium", "High", "Critical"}
+
+    _OT_LIST_FIELDS = {"areas": "Area / location", "lines": "Line / process",
+                       "panels": "Panel / cabinet", "owners": "Owner / team"}
+    _OT_STALE_MONTHS = {3, 6, 12, 24}
+
+    @classmethod
+    def _clean_ot_stale_months(cls, value) -> int:
+        try:
+            months = int(value)
+        except (TypeError, ValueError):
+            months = 6
+        return months if months in cls._OT_STALE_MONTHS else 6
+
+    @classmethod
+    def _clean_ot_lists(cls, value, strict=False) -> dict:
+        value = value if isinstance(value, dict) else {}
+        result = {}
+        for key, label in cls._OT_LIST_FIELDS.items():
+            raw = value.get(key, [])
+            if not isinstance(raw, list):
+                if strict:
+                    raise ValueError(f"{label} choices must be a list.")
+                raw = []
+            cleaned, seen = [], set()
+            for item in raw:
+                if not isinstance(item, str):
+                    if strict:
+                        raise ValueError(f"{label} choices must be text.")
+                    continue
+                item = item.strip()
+                if len(item) > 100:
+                    if strict:
+                        raise ValueError(f"{label} choices must be 100 characters or fewer.")
+                    item = item[:100]
+                marker = item.casefold()
+                if item and marker not in seen:
+                    cleaned.append(item)
+                    seen.add(marker)
+                    if len(cleaned) >= 200:
+                        break
+            result[key] = cleaned
+        return result
+
+    def ot_assets_get(self) -> dict:
+        try:
+            gc = self._client(); gc.sign_in(interactive=False)
+            if not (gc.account_upn or "").strip():
+                return {"ok": False, "error": "Sign in to view OT device inventory."}
+            role = gc.division_role()
+            if not role:
+                return {"ok": False, "error": "You do not have access to this division."}
+            doc = self._hubc().get_named("ot-device-inventory") or {}
+            assets = doc.get("assets") if isinstance(doc.get("assets"), list) else []
+            types_doc = self._issue_hub().get_named("ot-device-types") or {}
+            types = types_doc.get("types") if isinstance(types_doc.get("types"), list) else self._OT_DEFAULT_TYPES
+            prefs = self._hubc().get_prefs()
+            sites = gc.division.get("sites", []) if isinstance(gc.division, dict) else []
+            sites = [s for s in sites if isinstance(s, dict) and s.get("code")]
+            return {"ok": True, "assets": assets, "types": types, "can_edit": role in ("super", "admin"),
+                    "sites": sites, "lists": self._clean_ot_lists(prefs.get("ot_lists")),
+                    "stale_months": self._clean_ot_stale_months(prefs.get("ot_stale_months")),
+                    "updated_at": doc.get("updated_at", ""), "updated_by": doc.get("updated_by", "")}
+        except Exception as e:
+            return self._fail(e)
+
+    @classmethod
+    def _clean_ot_asset(cls, value: dict, valid_types: list | None = None) -> dict:
+        import ipaddress
+        if not isinstance(value, dict):
+            raise ValueError("Enter OT device details and try again.")
+        raw = dict(value)
+        status_value = str(raw.get("status") or "").strip().casefold()
+        if status_value in {"pending", "needs verification", "to be captured", "unknown - confirm"}:
+            raw["documentation_status"] = "Needs Verification"
+            raw["status"] = ""
+        elif status_value == "documented":
+            raw["documentation_status"] = "Documented"
+            raw["status"] = ""
+        pending = re.compile(r"^(?:needs? verification|to be captured|unknown(?:\s*[-–—:]\s*confirm)?|not recorded|not captured|not shown(?:\s+on\s+header)?|not listed(?:\s+on\s+ot\s+list)?|yes\s*[-–—:]\s*assumed(?:\s*,?\s*confirm)?|tbd|[-–—])$", re.I)
+        asset = {key: str(raw.get(key) or "").strip()[:limit]
+                 for key, limit in cls._OT_ASSET_FIELDS.items()}
+        for key, text in asset.items():
+            if key not in {"notes", "dependencies", "documentation_status", "status"} and text and pending.fullmatch(text):
+                asset[key] = "Needs Verification"
+        if re.fullmatch(r"no\s*\(embedded\)", asset["ad_joined"], re.I):
+            asset["ad_joined"] = "No"
+        elif re.fullmatch(r"yes\s*[-–—]\s*nucorsteel\.local", asset["ad_joined"], re.I):
+            asset["ad_joined"] = "Yes"
+        if not asset["name"]:
+            raise ValueError("Device name is required.")
+        if asset["type"] not in set(valid_types or cls._OT_DEFAULT_TYPES):
+            raise ValueError("Choose a valid OT device type.")
+        if asset["status"] and asset["status"] not in cls._OT_ASSET_STATUSES:
+            raise ValueError("Choose a valid status.")
+        if asset["documentation_status"] and asset["documentation_status"] not in cls._OT_DOCUMENTATION_STATUSES:
+            raise ValueError("Choose Documented or Needs Verification for documentation status.")
+        if asset["ad_joined"] and asset["ad_joined"] not in cls._OT_AD_STATES:
+            raise ValueError("Choose Yes, No, Unknown, or Needs Verification for AD-joined.")
+        if asset["criticality"] and asset["criticality"] not in cls._OT_ASSET_CRITICALITIES:
+            raise ValueError("Choose a valid criticality.")
+        for key in ("ip_address", "gateway"):
+            if asset[key] and not pending.fullmatch(asset[key]):
+                try:
+                    ipaddress.ip_address(asset[key])
+                except ValueError as e:
+                    raise ValueError(f"{key.replace('_', ' ').title()} must be a valid IP address.") from e
+        if asset["subnet"] and not pending.fullmatch(asset["subnet"]):
+            try:
+                ipaddress.ip_network("0.0.0.0/" + asset["subnet"], strict=False)
+            except ValueError:
+                try:
+                    ipaddress.ip_network("::/" + asset["subnet"], strict=False)
+                except ValueError as e:
+                    raise ValueError("Subnet must be a prefix length (such as 24) or subnet mask (such as 255.255.255.0).") from e
+        if asset["mac_address"] and not pending.fullmatch(asset["mac_address"]):
+            compact = re.sub(r"[^0-9a-f]", "", asset["mac_address"].lower())
+            if len(compact) != 12 or not re.fullmatch(r"[0-9a-f]{12}", compact):
+                raise ValueError("MAC address must contain 12 hexadecimal digits.")
+            asset["mac_address"] = ":".join(compact[i:i + 2] for i in range(0, 12, 2)).upper()
+        if asset["last_verified"] and not pending.fullmatch(asset["last_verified"]):
+            try:
+                date.fromisoformat(asset["last_verified"])
+            except ValueError as e:
+                raise ValueError("Last verified must be a valid date.") from e
+        asset["status"] = asset["status"] or "Active"
+        asset["documentation_status"] = asset["documentation_status"] or "Needs Verification"
+        asset["criticality"] = asset["criticality"] or "Medium"
+        return asset
+
+    def _ot_asset_mutate(self, asset_id: str, asset: dict | None = None) -> dict:
+        gc = self._client(); gc.require_division_admin()
+        hub = self._hubc()
+        doc_name = "ot-device-inventory"
+        for attempt in range(3):
+            doc = hub.get_named(doc_name) or {}
+            rows = [row for row in (doc.get("assets") or []) if isinstance(row, dict)]
+            found = next((row for row in rows if str(row.get("id") or "") == asset_id), None)
+            if asset is None:
+                if not found:
+                    return {"ok": False, "error": "OT device was already removed. Refresh the list."}
+                rows = [row for row in rows if str(row.get("id") or "") != asset_id]
+                action = "removed"
+                label = found.get("name") or asset_id
+            else:
+                now = datetime.now().astimezone().isoformat()
+                saved = {**asset, "id": asset_id,
+                         "created_at": (found or {}).get("created_at") or now,
+                         "created_by": (found or {}).get("created_by") or self._actor() or gc.account_upn,
+                         "updated_at": now, "updated_by": self._actor() or gc.account_upn}
+                rows = [row for row in rows if str(row.get("id") or "") != asset_id]
+                if len(rows) >= 3000:
+                    return {"ok": False, "error": "OT inventory limit reached (3,000 devices)."}
+                rows.append(saved)
+                action = "updated" if found else "added"
+                label = saved["name"]
+            rows.sort(key=lambda row: str(row.get("name") or "").casefold())
+            new_doc = {**{k: v for k, v in doc.items() if k not in ("assets", "updated_at", "updated_by")},
+                       "assets": rows, "updated_at": datetime.now().astimezone().isoformat(),
+                       "updated_by": self._actor() or gc.account_upn}
+            try:
+                hub.put_named(doc_name, new_doc)
+                try:
+                    hub._change("OT device", f"{action}: {label}", actor=self._actor() or gc.account_upn)
+                except Exception:
+                    pass
+                return {"ok": True, "asset": saved if asset is not None else None, "assets": rows}
+            except Exception as e:
+                if e.__class__.__name__ != "HubConflict" or attempt == 2:
+                    raise
+                store = getattr(hub, "_store", None)
+                if store:
+                    store._cache.pop("ot-device-inventory", None)
+                    store._rev.pop(("ot-device-inventory", "main"), None)
+        return {"ok": False, "error": "OT inventory changed elsewhere. Refresh and try again."}
+
+    def ot_asset_save(self, value: dict) -> dict:
+        try:
+            types_doc = self._issue_hub().get_named("ot-device-types") or {}
+            valid_types = list(types_doc.get("types") or self._OT_DEFAULT_TYPES)
+            asset_id = str((value or {}).get("id") or "").strip()[:80]
+            if asset_id:
+                existing = next((a for a in (self._hubc().get_named("ot-device-inventory") or {}).get("assets", [])
+                                 if isinstance(a, dict) and str(a.get("id") or "") == asset_id), None)
+                if existing and existing.get("type") and existing["type"] not in valid_types: valid_types.append(existing["type"])
+            asset = self._clean_ot_asset(value, valid_types)
+            asset_id = asset_id or __import__("uuid").uuid4().hex
+            return self._ot_asset_mutate(asset_id, asset)
+        except Exception as e:
+            return self._fail(e)
+
+    def ot_asset_delete(self, asset_id: str) -> dict:
+        try:
+            key = str(asset_id or "").strip()[:80]
+            if not key:
+                return {"ok": False, "error": "Select an OT device to remove."}
+            return self._ot_asset_mutate(key, None)
+        except Exception as e:
+            return self._fail(e)
+
+    def ot_asset_verify(self, asset_id: str) -> dict:
+        try:
+            gc = self._client(); gc.require_division_admin()
+            key = str(asset_id or "").strip()[:80]
+            if not key:
+                return {"ok": False, "error": "Select an OT device to verify."}
+            hub = self._hubc(); name = "ot-device-inventory"
+            for attempt in range(3):
+                doc = hub.get_named(name) or {}
+                rows = [row for row in (doc.get("assets") or []) if isinstance(row, dict)]
+                asset = next((row for row in rows if str(row.get("id") or "") == key), None)
+                if not asset:
+                    return {"ok": False, "error": "OT device was removed. Refresh the list."}
+                now = datetime.now().astimezone().isoformat()
+                updated = {**asset, "last_verified": date.today().isoformat(), "updated_at": now,
+                           "updated_by": self._actor() or gc.account_upn}
+                rows = [updated if str(row.get("id") or "") == key else row for row in rows]
+                new_doc = {**{k: v for k, v in doc.items() if k not in ("assets", "updated_at", "updated_by")},
+                           "assets": rows, "updated_at": now, "updated_by": self._actor() or gc.account_upn}
+                try:
+                    hub.put_named(name, new_doc)
+                    try: hub._change("OT device", f"verified: {updated.get('name') or key}", actor=self._actor() or gc.account_upn)
+                    except Exception: pass
+                    return {"ok": True, "asset": updated, "assets": rows}
+                except Exception as e:
+                    if e.__class__.__name__ != "HubConflict" or attempt == 2:
+                        raise
+                    store = getattr(hub, "_store", None)
+                    if store:
+                        store._cache.pop(name, None); store._rev.pop((name, "main"), None)
+            return {"ok": False, "error": "OT inventory changed elsewhere. Refresh and try again."}
+        except Exception as e:
+            return self._fail(e)
+
+    def ot_device_types_get(self) -> dict:
+        try:
+            gc = self._client(); gc.sign_in(interactive=False)
+            if not gc.is_super_admin(): return {"ok": False, "error": "Super admins only."}
+            doc = self._issue_hub().get_named("ot-device-types") or {}
+            types = doc.get("types") if isinstance(doc.get("types"), list) else self._OT_DEFAULT_TYPES
+            return {"ok": True, "types": types}
+        except Exception as e:
+            return self._fail(e)
+
+    def ot_device_types_save(self, types: list) -> dict:
+        try:
+            gc = self._client(); gc.sign_in(interactive=False)
+            if not gc.is_super_admin(): return {"ok": False, "error": "Super admins only."}
+            cleaned, seen = [], set()
+            for value in (types or []):
+                label = str(value or "").strip()[:40]
+                key = label.casefold()
+                if label and key not in seen: cleaned.append(label); seen.add(key)
+            if not cleaned: return {"ok": False, "error": "Keep at least one OT device type."}
+            if len(cleaned) > 40: return {"ok": False, "error": "Maximum 40 device types."}
+            self._issue_hub().put_named("ot-device-types", {"types": cleaned, "updated_at": datetime.now().astimezone().isoformat(), "updated_by": self._actor() or gc.account_upn})
+            return {"ok": True, "types": cleaned}
+        except Exception as e:
+            return self._fail(e)
+
+    def ot_xlsx_read(self, content_base64: str, sheet_name: str = "") -> dict:
+        """Read one worksheet from a small XLSX workbook using only stdlib modules."""
+        import base64
+        import io
+        import posixpath
+        import zipfile
+        import xml.etree.ElementTree as ET
+        try:
+            if not isinstance(content_base64, str) or len(content_base64) > 7 * 1024 * 1024:
+                return {"ok": False, "error": "Excel workbook must be under 5 MB."}
+            raw = base64.b64decode(content_base64, validate=True)
+            if len(raw) > 5 * 1024 * 1024:
+                return {"ok": False, "error": "Excel workbook must be under 5 MB."}
+            with zipfile.ZipFile(io.BytesIO(raw)) as workbook:
+                if sum(item.file_size for item in workbook.infolist()) > 50 * 1024 * 1024:
+                    return {"ok": False, "error": "Expanded workbook is too large to import safely."}
+                names = set(workbook.namelist())
+                if "xl/workbook.xml" not in names or "xl/_rels/workbook.xml.rels" not in names:
+                    return {"ok": False, "error": "This file is not a valid Excel workbook."}
+                wb_ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+                doc_rel_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+                pkg_rel_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+                workbook_root = ET.fromstring(workbook.read("xl/workbook.xml"))
+                rel_root = ET.fromstring(workbook.read("xl/_rels/workbook.xml.rels"))
+                relations = {item.attrib.get("Id"): item.attrib.get("Target", "")
+                             for item in rel_root.findall(f"{{{pkg_rel_ns}}}Relationship")}
+                sheets = []
+                for item in workbook_root.findall(f".//{{{wb_ns}}}sheet"):
+                    name = item.attrib.get("name", "")
+                    target = relations.get(item.attrib.get(f"{{{doc_rel_ns}}}id"), "")
+                    if not name or not target:
+                        continue
+                    path = target.lstrip("/") if target.startswith("/") else posixpath.normpath(posixpath.join("xl", target))
+                    if path in names:
+                        sheets.append((name, path))
+                if not sheets:
+                    return {"ok": False, "error": "No worksheets found in this workbook."}
+                selected = next((pair for pair in sheets if pair[0] == sheet_name), sheets[0])
+                shared = []
+                if "xl/sharedStrings.xml" in names:
+                    strings_root = ET.fromstring(workbook.read("xl/sharedStrings.xml"))
+                    shared = ["".join(node.text or "" for node in item.findall(f".//{{{wb_ns}}}t"))
+                              for item in strings_root.findall(f"{{{wb_ns}}}si")]
+                sheet_root = ET.fromstring(workbook.read(selected[1]))
+                sparse_rows = []
+                for row_node in sheet_root.findall(f".//{{{wb_ns}}}sheetData/{{{wb_ns}}}row"):
+                    values = {}
+                    for cell in row_node.findall(f"{{{wb_ns}}}c"):
+                        ref = cell.attrib.get("r", "")
+                        match = re.match(r"([A-Z]+)", ref.upper())
+                        if not match:
+                            continue
+                        col = 0
+                        for char in match.group(1):
+                            col = col * 26 + ord(char) - 64
+                        col -= 1
+                        if col < 0 or col >= 300:
+                            continue
+                        kind = cell.attrib.get("t", "")
+                        if kind == "inlineStr":
+                            value = "".join(node.text or "" for node in cell.findall(f".//{{{wb_ns}}}t"))
+                        else:
+                            value_node = cell.find(f"{{{wb_ns}}}v")
+                            value = value_node.text or "" if value_node is not None else ""
+                            if kind == "s" and value:
+                                try:
+                                    value = shared[int(value)]
+                                except (ValueError, IndexError):
+                                    value = ""
+                            elif kind == "b":
+                                value = "TRUE" if value == "1" else "FALSE"
+                        values[col] = str(value)
+                    sparse_rows.append(values)
+                    if len(sparse_rows) > 10002:
+                        return {"ok": False, "error": "Worksheet is too large to import in one batch."}
+                width = max((max(row.keys(), default=-1) for row in sparse_rows), default=-1) + 1
+                rows = [[row.get(col, "") for col in range(width)] for row in sparse_rows]
+                rows = [row for row in rows if any(str(value).strip() for value in row)]
+                if len(rows) < 2:
+                    return {"ok": False, "error": "Selected worksheet needs a header row and at least one data row."}
+                if len(rows) > 1001:
+                    return {"ok": False, "error": "Worksheet has more than 1,000 data rows. Split it into smaller imports."}
+                return {"ok": True, "sheets": [name for name, _ in sheets], "sheet": selected[0], "rows": rows}
+        except (ValueError, zipfile.BadZipFile, ET.ParseError) as e:
+            return {"ok": False, "error": f"Could not read Excel workbook: {str(e)[:180]}"}
+        except Exception as e:
+            return self._fail(e)
+
+    def ot_assets_import(self, values: list) -> dict:
+        try:
+            gc = self._client(); gc.require_division_admin()
+            if not isinstance(values, list) or not values: return {"ok": False, "error": "Choose CSV rows to import."}
+            if len(values) > 1000: return {"ok": False, "error": "Import limit is 1,000 rows at a time."}
+            hub = self._hubc(); name = "ot-device-inventory"; doc = hub.get_named(name) or {}
+            rows = [x for x in (doc.get("assets") or []) if isinstance(x, dict)]
+            type_doc = self._issue_hub().get_named("ot-device-types") or {}
+            types = type_doc.get("types") or self._OT_DEFAULT_TYPES
+            now = datetime.now().astimezone().isoformat(); added = updated = skipped = errors = 0; row_errors = []
+            imported_choice_values = {"areas": set(), "lines": set(), "panels": set(), "owners": set()}
+            asset_choice_fields = {"area": "areas", "line": "lines", "panel": "panels", "owner": "owners"}
+            def import_identifier(raw):
+                key = str(raw or "").strip().casefold()
+                return "" if key in {"needs verification", "to be captured", "unknown", "unknown - confirm", "not recorded", "not captured", "not shown on header", "tbd", "-"} else key
+            for index, value in enumerate(values, 1):
+                try:
+                    asset = self._clean_ot_asset(value, types)
+                    serial = import_identifier(asset.get("serial")); tag = import_identifier(asset.get("asset_tag"))
+                    if not serial: asset["serial"] = ""
+                    if not tag: asset["asset_tag"] = ""
+                    old = next((x for x in rows if (value.get("id") and x.get("id") == value["id"]) or
+                                (serial and import_identifier(x.get("serial")) == serial) or
+                                (tag and import_identifier(x.get("asset_tag")) == tag)), None)
+                    if old is None and not serial and not tag and asset.get("name"):
+                        # A prior import may have stored the placeholder "Needs Verification" in an
+                        # identifier field. Reuse that record only when its name match is unambiguous.
+                        candidates = [x for x in rows if str(x.get("name") or "").strip().casefold() == asset["name"].casefold()
+                                      and not import_identifier(x.get("serial")) and not import_identifier(x.get("asset_tag"))]
+                        if len(candidates) == 1: old = candidates[0]
+                    if old:
+                        asset = {**old, **{k: v for k, v in asset.items() if v}, "id": old["id"],
+                                 "created_at": old.get("created_at") or now, "created_by": old.get("created_by") or gc.account_upn,
+                                 "updated_at": now, "updated_by": self._actor() or gc.account_upn}
+                        for key in ("serial", "asset_tag"):
+                            if not import_identifier(old.get(key)) and not import_identifier(asset.get(key)):
+                                asset[key] = ""
+                        rows = [x for x in rows if x.get("id") != old.get("id")]; updated += 1
+                    else:
+                        if len(rows) >= 3000: skipped += 1; continue
+                        asset.update({"id": __import__("uuid").uuid4().hex, "created_at": now, "created_by": self._actor() or gc.account_upn,
+                                      "updated_at": now, "updated_by": self._actor() or gc.account_upn}); added += 1
+                    for asset_field, list_field in asset_choice_fields.items():
+                        choice = str(asset.get(asset_field) or "").strip()
+                        if choice and choice.casefold() != "needs verification":
+                            imported_choice_values[list_field].add(choice[:100])
+                    rows.append(asset)
+                except Exception as e:
+                    errors += 1; skipped += 1
+                    if len(row_errors) < 10: row_errors.append(f"Row {index + 1}: {str(e)[:160]}")
+            rows.sort(key=lambda row: str(row.get("name") or "").casefold())
+            new_doc = {**{k: v for k, v in doc.items() if k not in ("assets", "updated_at", "updated_by")}, "assets": rows,
+                       "updated_at": now, "updated_by": self._actor() or gc.account_upn}
+            hub.put_named(name, new_doc)
+            prefs = hub.get_prefs()
+            lists = self._clean_ot_lists(prefs.get("ot_lists"))
+            added_choices = 0
+            for list_field, incoming in imported_choice_values.items():
+                existing = {choice.casefold() for choice in lists[list_field]}
+                for choice in sorted(incoming, key=str.casefold):
+                    marker = choice.casefold()
+                    if marker in existing or len(lists[list_field]) >= 200:
+                        continue
+                    lists[list_field].append(choice)
+                    existing.add(marker)
+                    added_choices += 1
+            choice_error = ""
+            if added_choices:
+                prefs["ot_lists"] = lists
+                try:
+                    hub.save_prefs(prefs, {"action": "import", "target": "OT division choices",
+                                           "detail": f"Added {added_choices} choices from OT device import"})
+                    gc.__dict__.pop("_prefs_cache", None)
+                except Exception as e:
+                    choice_error = str(e)[:180]
+            return {"ok": True, "assets": rows, "added": added, "updated": updated, "skipped": skipped,
+                    "errors": errors, "row_errors": row_errors, "lists": lists,
+                    "added_choices": added_choices if not choice_error else 0, "choice_error": choice_error}
+        except Exception as e:
+            return self._fail(e)
+
+    def ot_assets_send_reminders(self) -> dict:
+        try:
+            import notify
+            gc = self._client(); gc.require_division_admin()
+            hub = self._hubc(); doc = hub.get_named("ot-device-inventory") or {}
+            assets = [a for a in (doc.get("assets") or []) if isinstance(a, dict)]
+            stale, missing = [], []
+            months = self._clean_ot_stale_months((hub.get_prefs() or {}).get("ot_stale_months"))
+            today = date.today()
+            target_month = today.month - months
+            target_year = today.year + (target_month - 1) // 12
+            target_month = (target_month - 1) % 12 + 1
+            import calendar
+            cutoff = date(target_year, target_month, min(today.day, calendar.monthrange(target_year, target_month)[1]))
+            for a in assets:
+                try:
+                    verified = str(a.get("last_verified") or "").strip()
+                    reviewed = date.fromisoformat(verified) if verified else datetime.fromisoformat(str(a.get("updated_at") or a.get("created_at") or "").replace("Z", "+00:00")).date()
+                except Exception:
+                    reviewed = date.min
+                if reviewed < cutoff: stale.append(a)
+                if any(not str(a.get(k) or "").strip() for k in ("vendor", "model", "site", "version", "last_verified")): missing.append(a)
+            if not stale and not missing: return {"ok": True, "message": "All OT records are current and complete. No reminder sent."}
+            prefs = hub.get_prefs()
+            recipients = notify.division_recipients(notify.division_subscribers_doc(prefs.get("issue_subscribers")), "ot")
+            if not recipients: return {"ok": False, "error": "No recipients enabled. Add people under Settings > General > Division email notifications and enable OT asset review reminders."}
+            lines = [f"{len(assets)} OT assets reviewed.", f"{len(stale)} have not been verified in {months} months or more.", f"{len(missing)} are missing key information (vendor, model, site, version, or verification date).", "", "Open NBG Hub > OT Devices and filter for stale or missing information."]
+            for a in (stale + [x for x in missing if x not in stale])[:60]:
+                gaps = [k.replace("_", " ") for k in ("vendor", "model", "site", "version", "last_verified") if not str(a.get(k) or "").strip()]
+                lines.append(f"• {a.get('name') or 'Unnamed device'} — {'stale' if a in stale else 'updated recently'}" + (f"; missing {', '.join(gaps)}" if gaps else ""))
+            division = (gc.division or {}).get("name") or (gc.division or {}).get("id") or "Division"
+            subject, text, html = notify.render_notice(division, "OT asset information needs review", "\n".join(lines), "ot")
+            result = notify.deliver(gc, recipients, subject, text, html, "ot", {"title": "OT asset information needs review", "division": {"name": division}})
+            if not result.get("sent"): return {"ok": False, "error": result.get("error") or "No reminder was sent."}
+            return {"ok": True, "message": f"Reminder sent to {result['sent']} recipient(s) via {result.get('via')}. {len(stale)} stale and {len(missing)} incomplete records."}
+        except Exception as e:
+            return self._fail(e)
 
     def hub_get_upgrades(self) -> dict:
         try:
@@ -3460,6 +4480,12 @@ class Api:
             except Exception:
                 hot_serials_u = set()
             reserved_serials_u = {s.strip().upper() for s in reservations}
+            try:
+                checked_out_u = {str(serial).strip().upper() for serial, item in
+                                 (self._hubc().get_named("device-lifecycle-index") or {}).get("devices", {}).items()
+                                 if item.get("status") == "checked_out"}
+            except Exception:
+                checked_out_u = set()
             reserved_devs = []
             if reservations:
                 _by_serial_u = {(r.get("serial") or "").strip().upper(): r for r in new_stock_full}
@@ -3472,7 +4498,7 @@ class Api:
                         "site": src.get("site_tag", ""), "subject": info.get("subject", ""),
                         "dept": info.get("dept", ""), "by": info.get("by", ""),
                     })
-            held_u = reserved_serials_u | hot_serials_u
+            held_u = reserved_serials_u | hot_serials_u | checked_out_u
             if held_u:
                 new_stock = [r for r in new_stock_full
                              if (r.get("serial") or "").strip().upper() not in held_u]
@@ -3502,12 +4528,14 @@ class Api:
             div_sites = set(__import__("divisions").site_codes(self._client().division))
             stock_by_dept_site = {}   # dept -> {<site code>: n, "Other": n}
             for r in new_stock:
-                dep = dept_map.get((r.get("model") or "").strip()) or "Unassigned"
-                stock_by_dept[dep] = stock_by_dept.get(dep, 0) + 1
                 site = (r.get("site_tag") or "").strip().upper()
                 skey = site if site in div_sites else "Other"
-                d = stock_by_dept_site.setdefault(dep, {})
-                d[skey] = d.get(skey, 0) + 1
+                raw_depts = dept_map.get((r.get("model") or "").strip()) or []
+                depts = raw_depts if isinstance(raw_depts, list) else [raw_depts]
+                for dep in [str(d).strip() for d in depts if str(d).strip()] or ["Unassigned"]:
+                    stock_by_dept[dep] = stock_by_dept.get(dep, 0) + 1
+                    d = stock_by_dept_site.setdefault(dep, {})
+                    d[skey] = d.get(skey, 0) + 1
             # devices whose primary user is NOT at an NBGW site (LTR/BRI): their
             # resolved "site" is an office location elsewhere. Surfaced on the dashboard
             # with a drill-down.
@@ -3618,7 +4646,7 @@ def _long_op(fn):
     return wrapper
 
 
-for _n in ("run_sync", "enrich_inventory", "master_sync", "populate_mfa", "boneyard_sweep", "sync_all_divisions", "software_refresh", "mfa_people_refresh", "sharepoint_permissions_scan", "sharepoint_permissions_search_sites"):
+for _n in ("run_sync", "enrich_inventory", "master_sync", "populate_mfa", "boneyard_sweep", "sync_all_divisions", "software_refresh", "mfa_people_refresh", "windows_updates_refresh", "sharepoint_permissions_scan", "sharepoint_permissions_search_sites"):
     setattr(Api, _n, _long_op(getattr(Api, _n)))
 
 
@@ -3714,6 +4742,7 @@ def main() -> None:
         height=900,
         min_size=(1080, 640),
     )
+    api._window = window
 
     # When the main window is showing an NBT site, inject the "Back to Hub"
     # button after each load (auth redirects fire this several times).

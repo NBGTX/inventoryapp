@@ -37,6 +37,11 @@ function NewSearcher($filter, $size) {
   $s.ServerTimeLimit = [TimeSpan]::FromSeconds(20)
   return $s
 }
+function EscapeLdap($value) {
+  $v = [string]$value
+  $v = $v.Replace('\', '\5c').Replace('*', '\2a').Replace('(', '\28').Replace(')', '\29')
+  return $v.Replace([string][char]0, '\00')
+}
 
 # SENTINEL: confirm AD is actually answering (not unreachable / silently empty).
 # A broad computer search must return at least one result. This does NOT require the
@@ -52,7 +57,8 @@ $out = @{}
 foreach ($n in $cfg.names) {
   $rec = @{ found = $false }
   try {
-    $s = NewSearcher "(&(objectCategory=computer)(cn=$n))" 1
+    $safeName = EscapeLdap $n
+    $s = NewSearcher "(&(objectCategory=computer)(cn=$safeName))" 1
     foreach ($p in "distinguishedName","lastLogonTimestamp","userAccountControl","operatingSystem") { $null = $s.PropertiesToLoad.Add($p) }
     $r = $s.FindOne()
     if ($null -ne $r) {
@@ -69,7 +75,7 @@ foreach ($n in $cfg.names) {
         dn = [string]($p["distinguishedName"][0])
       }
     }
-  } catch { $rec = @{ found = $false } }
+  } catch { Fail "AD lookup failed for '$n': $($_.Exception.Message)" }
   $out[[string]$n] = $rec
 }
 Write-Output ($out | ConvertTo-Json -Depth 4 -Compress)

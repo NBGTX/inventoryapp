@@ -21,6 +21,11 @@ import requests
 import issues as _iss
 
 SUBJECT = {"new": "New {kind}", "status": "{kind} updated", "comment": "New comment on {kind}"}
+DIVISION_EVENTS = ("new", "status", "comment", "boneyard", "sharepoint", "software", "device", "inventory", "ot")
+DIVISION_EVENT_LABELS = {"new": "New issue", "status": "Issue status changes", "comment": "Issue comments",
+                        "boneyard": "Boneyard device moves", "sharepoint": "SharePoint permission changes",
+                        "software": "Not allowed software policy changes", "device": "Device checkout and return",
+                        "inventory": "Inventory and data quality alerts", "ot": "OT asset review reminders"}
 
 
 def subscribers_doc(doc) -> list:
@@ -34,6 +39,25 @@ def subscribers_doc(doc) -> list:
         ev = [e for e in (s.get("events") or []) if e in _iss.EVENTS] or list(_iss.EVENTS)
         out.append({"upn": upn, "name": str(s.get("name") or upn)[:80], "events": ev})
     return out
+
+
+def division_subscribers_doc(doc) -> list:
+    """Clean division-scoped recipients and event choices."""
+    out, seen = [], set()
+    for s in (doc or []):
+        if not isinstance(s, dict):
+            continue
+        upn = str(s.get("upn") or "").strip().lower()
+        if "@" not in upn or upn in seen:
+            continue
+        seen.add(upn)
+        events = list(dict.fromkeys(e for e in (s.get("events") or []) if e in DIVISION_EVENTS))
+        out.append({"upn": upn, "name": str(s.get("name") or upn)[:80], "events": events})
+    return out
+
+
+def division_recipients(subscribers: list, event: str) -> list:
+    return [{"upn": s["upn"], "name": s["name"]} for s in subscribers if event in s["events"]]
 
 
 def recipients(issue: dict, event: str, subs: list, actor_upn: str = "") -> list:
@@ -62,19 +86,64 @@ def recipients(issue: dict, event: str, subs: list, actor_upn: str = "") -> list
 def render(issue: dict, event: str, actor_name: str, extra: str = "") -> tuple:
     kind = "bug" if issue.get("type") == "bug" else "feature request"
     status = dict(_iss.STATUSES).get(issue.get("status"), issue.get("status", ""))
-    subject = f"[NBG Hub] {SUBJECT[event].format(kind=kind).capitalize()} {_iss.short_id(issue['id'])}: {issue.get('title', '')}"[:200]
-    lines = [f"{issue.get('title', '')}", f"Type: {kind}   Status: {status}   Division: {(issue.get('division') or {}).get('name', '')}",
-             f"Reported by {(issue.get('reporter') or {}).get('name', '')}"]
+    short = _iss.short_id(issue.get("id", ""))
+    division = (issue.get("division") or {}).get("name", "")
+    reporter = (issue.get("reporter") or {}).get("name", "")
+    event_title = SUBJECT[event].format(kind=kind).capitalize()
+    subject = f"[NBG Hub] {event_title} {short}: {issue.get('title', '')}"[:200]
+    lines = [f"{issue.get('title', '')}", f"{event_title} · {short}", f"Type: {kind}   Status: {status}   Division: {division}",
+             f"Reported by {reporter}"]
     if event == "comment":
-        lines.append(f"{actor_name} commented: {extra}")
+        lines.append(f"{actor_name} commented:\n{extra}")
     elif event == "status":
         asg = (issue.get("assignee") or {}).get("name")
-        lines.append(f"Updated by {actor_name}. Now: {status}" + (f", assigned to {asg}" if asg else ""))
+        lines.append(f"Updated by {actor_name}. Now: {status}" + (f" · Assigned to {asg}" if asg else ""))
     elif event == "new" and issue.get("detail"):
         lines.append(issue["detail"][:1500])
-    lines.append("Open NBG Hub > Issues to read and reply.")
+    lines.append(f"Open NBG Hub > Issues and search for {short} to view or reply.")
     text = "\n".join(lines)
-    body = "".join(f"<p>{_html.escape(l)}</p>" for l in lines)
+    esc = _html.escape
+    status_color = "#166534" if issue.get("status") in ("done", "closed") else "#92400e"
+    status_bg = "#dcfce7" if issue.get("status") in ("done", "closed") else "#fef3c7"
+    detail = ""
+    if event == "new" and issue.get("detail"):
+        detail = f"<div style=\"margin:20px 0;padding:16px 18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;white-space:pre-line;line-height:1.6;color:#334155\">{esc(issue['detail'][:1500])}</div>"
+    elif event == "comment" and extra:
+        detail = ("<div style=\"margin:20px 0;padding:16px 18px;background:#f8fafc;border-left:4px solid #0b7a3b;border-radius:8px\">"
+                  f"<div style=\"font-size:12px;color:#64748b;margin-bottom:7px\">{esc(actor_name)} commented</div>"
+                  f"<div style=\"white-space:pre-line;line-height:1.6;color:#334155\">{esc(extra)}</div></div>")
+    elif event == "status":
+        assignee = (issue.get("assignee") or {}).get("name") or "Unassigned"
+        detail = ("<div style=\"margin:20px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;line-height:1.6;color:#334155\">"
+                  f"Updated by <b>{esc(actor_name)}</b><br>Current assignee: <b>{esc(assignee)}</b></div>")
+    body = ("<!doctype html><html><body style=\"margin:0;padding:0;background:#eef3f1;font-family:Segoe UI,Arial,sans-serif;color:#15231f\">"
+            "<div style=\"max-width:680px;margin:28px auto;padding:0 14px\"><div style=\"overflow:hidden;border:1px solid #d7e2dd;border-radius:14px;background:#fff;box-shadow:0 8px 26px rgba(15,35,29,.08)\">"
+            "<div style=\"padding:22px 26px;background:#17382f;color:#fff\"><div style=\"font-size:12px;letter-spacing:1.2px;color:#a7f3d0;font-weight:700\">NBG HUB · ISSUES</div>"
+            f"<div style=\"font-size:20px;font-weight:700;margin-top:8px\">{esc(event_title)}</div></div>"
+            f"<div style=\"padding:26px\"><div style=\"font-size:11px;font-weight:700;letter-spacing:.7px;color:#64748b\">ISSUE {esc(short)}</div>"
+            f"<h1 style=\"font-size:23px;line-height:1.3;margin:7px 0 16px;color:#10251e\">{esc(issue.get('title', ''))}</h1>"
+            f"<div style=\"margin-bottom:20px\"><span style=\"display:inline-block;padding:5px 11px;border-radius:999px;background:{status_bg};color:{status_color};font-size:12px;font-weight:700\">{esc(status)}</span>"
+            f"<span style=\"margin-left:8px;color:#64748b;font-size:13px\">{esc(kind.title())}</span></div>"
+            "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;border-collapse:collapse;background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px\"><tr>"
+            f"<td style=\"padding:12px 14px;width:50%;vertical-align:top\"><div style=\"font-size:11px;color:#64748b\">DIVISION</div><div style=\"font-size:13px;font-weight:600;margin-top:4px\">{esc(division or '—')}</div></td>"
+            f"<td style=\"padding:12px 14px;width:50%;vertical-align:top;border-left:1px solid #e2e8f0\"><div style=\"font-size:11px;color:#64748b\">REPORTED BY</div><div style=\"font-size:13px;font-weight:600;margin-top:4px\">{esc(reporter or '—')}</div></td></tr></table>"
+            f"{detail}<div style=\"margin-top:22px;padding-top:16px;border-top:1px solid #e2e8f0;color:#475569;font-size:13px;line-height:1.6\">Open NBG Hub &gt; Issues and search for <b>{esc(short)}</b> to view the full report and reply.</div>"
+            "</div><div style=\"padding:14px 26px;background:#f8fafc;border-top:1px solid #e2e8f0;color:#64748b;font-size:11px\">Sent by NBG Hub. Replies are not monitored; respond in the app.</div>"
+            "</div></div></body></html>")
+    return subject, text, body
+
+
+def render_notice(division: str, title: str, detail: str, event: str) -> tuple:
+    """Polished HTML + readable plain text for a division operational notice."""
+    subject = f"[NBG Hub] {title} — {division}"[:200]
+    text = f"{title}\nDivision: {division}\n\n{detail}\n\nOpen NBG Hub to review."
+    body = ("<!doctype html><html><body style=\"margin:0;background:#f1f5f9;font-family:Segoe UI,Arial,sans-serif;color:#0f172a\">"
+            "<div style=\"max-width:680px;margin:28px auto;padding:0 16px\"><div style=\"background:#12372f;color:#fff;padding:20px 24px;border-radius:12px 12px 0 0\">"
+            "<div style=\"font-size:12px;letter-spacing:1px;color:#a7f3d0;font-weight:700\">NBG HUB · " + _html.escape(division) + "</div>"
+            "<div style=\"font-size:20px;font-weight:700;margin-top:8px\">" + _html.escape(title) + "</div></div>"
+            "<div style=\"background:#fff;padding:24px;border:1px solid #dbe5e1;border-top:0;border-radius:0 0 12px 12px\">"
+            "<div style=\"white-space:pre-line;line-height:1.6;color:#334155\">" + _html.escape(detail) + "</div>"
+            "<div style=\"margin-top:22px;color:#64748b;font-size:12px\">Sent by NBG Hub · " + _html.escape(DIVISION_EVENT_LABELS.get(event, event)) + "</div></div></div></body></html>")
     return subject, text, body
 
 

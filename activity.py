@@ -15,7 +15,7 @@ _AREA_RULES = [
     ("sign in", "Access"), ("signed", "Access"), ("super admin", "Access"), ("role access", "Access"),
     ("nbt site", "NBT Sites"), ("upgrade", "Upgrades"), ("software", "Software"), ("mfa", "Teammates"),
     ("timesheet", "BG Tools"), ("ad add", "BG Tools"), ("ad copy", "BG Tools"),
-    ("issue", "Issues"), ("setup", "Provisioning"), ("checklist", "Provisioning"),
+    ("issue", "Issues"), ("sharepoint", "SharePoint Permissions"), ("setup", "Provisioning"), ("checklist", "Provisioning"),
     ("hot spare", "Devices"), ("coil", "Devices"), ("bulk", "Devices"), ("device", "Devices"),
     ("division", "Settings"), ("master setting", "Settings"), ("setting", "Settings"), ("scope", "Settings"),
     ("baseline", "Settings"), ("department", "Settings"), ("data mode", "Settings"), ("snapshot", "Settings"),

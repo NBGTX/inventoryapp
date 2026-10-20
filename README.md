@@ -75,7 +75,8 @@ The app uses the single-tenant registration **"Inventory Dashboard"**:
 2. **Allow public client flows = Yes.**
 3. **Delegated Microsoft Graph permissions, with admin consent granted.**
    - **Core:** `User.Read`, `DeviceManagementManagedDevices.Read.All`, `Sites.ReadWrite.All`.
-   - **Optional:** `Directory.Read.All`, `User.Read.All`, `AuditLog.Read.All`, `UserAuthenticationMethod.Read.All`. These light up Entra, Missing Groups, city→site and MFA.
+   - **Optional:** `Directory.Read.All`, `User.Read.All`, `AuditLog.Read.All`, `UserAuthenticationMethod.Read.All`, `WindowsUpdates.Read.All`. These light up Entra, Missing Groups, city→site, MFA, and Windows Update Watch.
+   - Windows Update Watch also requires the signed-in user to hold **Intune Administrator** or **Windows Update Deployment Administrator**. It reads Microsoft’s Windows security-update catalog through the Microsoft Graph beta endpoint; Microsoft may change that endpoint.
    - The app requests all of them and **falls back to core** if they aren't granted (`graph.py:72-100, 226-264`).
    - **Never add an unconsented scope to the request.** Every user would then hit "Approval required".
 

@@ -15,6 +15,7 @@
 
 param(
     [string]$Python = "",
+    [string]$WhatsNewBaseline = "",
     [switch]$SkipTests,
     [switch]$NoInstaller,
     [switch]$Sign
@@ -29,9 +30,10 @@ function Step($text) { Write-Host ""; Write-Host "== $text" -ForegroundColor Cya
 function Run([string]$exe, [string[]]$arguments) {
     $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
     & $exe @arguments
+    $success = $?
     $code = $LASTEXITCODE
     $ErrorActionPreference = $prev
-    if ($code -ne 0) { throw "$exe failed (exit $code): $($arguments -join ' ')" }
+    if (-not $success -or $code -ne 0) { throw "$exe failed to launch or exited with code ${code}: $($arguments -join ' ')" }
 }
 
 # ---- 1. Python 3.12 -------------------------------------------------------------------------
@@ -67,6 +69,41 @@ if (-not $SkipTests) {
 Step "Shipped config (scrub + secret scan)"
 New-Item -ItemType Directory -Force -Path build | Out-Null
 Run $py @("tools\check_release.py", "config.json", "--write", "build\config.release.json")
+
+if (-not $NoInstaller) {
+    Step "Set What's New baseline from previous installer"
+    $installerPattern = '^NBG-Hub-Setup-(\d{4}\.\d{2}\.\d{2}(?:\.\d+)?)\.exe$'
+    $currentVersion = [Version]$version
+    $previous = @(Get-ChildItem -Path "release\NBG-Hub-Setup-*.exe" -File -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            if ($_.Name -match $installerPattern) {
+                $parsed = [Version]$Matches[1]
+                if ($parsed -lt $currentVersion) { [PSCustomObject]@{ Version = $parsed; Text = $Matches[1] } }
+            }
+        } | Sort-Object Version | Select-Object -Last 1)
+    $baseline = if ($WhatsNewBaseline) {
+        if ($WhatsNewBaseline -notmatch '^\d{4}\.\d{2}\.\d{2}(?:\.\d+)?$') {
+            throw "What's New baseline must look like YYYY.MM.DD or YYYY.MM.DD.N."
+        }
+        if ([Version]$WhatsNewBaseline -gt $currentVersion) {
+            throw "What's New baseline cannot be newer than this build ($version)."
+        }
+        $WhatsNewBaseline
+    } elseif ($previous.Count) { $previous[0].Text } else { $null }
+    if ($baseline) {
+        $jsPath = Join-Path $PSScriptRoot "web\app.js"
+        $js = [System.IO.File]::ReadAllText($jsPath)
+        $baselineLine = 'const APP_LAST_INSTALLER_VERSION = "' + $baseline + '";'
+        if ($js -notmatch '(?m)^const APP_LAST_INSTALLER_VERSION = "[^"]+";$') {
+            throw "APP_LAST_INSTALLER_VERSION was not found in web\app.js."
+        }
+        $js = [regex]::Replace($js, '(?m)^const APP_LAST_INSTALLER_VERSION = "[^"]+";$', $baselineLine)
+        [System.IO.File]::WriteAllText($jsPath, $js, [System.Text.UTF8Encoding]::new($false))
+        Write-Host "What's New will include releases after $baseline."
+    } else {
+        Write-Host "No prior installer found; retaining APP_LAST_INSTALLER_VERSION from web\app.js."
+    }
+}
 
 # ---- 4. PyInstaller (folder build: faster start, fewer antivirus false positives) ------------
 Step "PyInstaller"

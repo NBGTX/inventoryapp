@@ -66,9 +66,11 @@ const ChipInput = {
 
 /* ---- site editor (shared by the tenant tab and the platform division editor) ---------------- */
 const SitesEditor = {
-  m: null, host: "", onDirty: () => {},
-  render(hostId, m, onDirty) {
+  m: null, host: "", onDirty: () => {}, allowScopeEdit: false, categories: [],
+  render(hostId, m, onDirty, options = {}) {
     this.m = m; this.host = hostId; this.onDirty = onDirty || (() => {});
+    this.allowScopeEdit = !!options.allowScopeEdit;
+    this.categories = options.categories || [];
     const host = document.getElementById(hostId);
     if (!host) return;
     if (!m.sites) m.sites = [];
@@ -81,17 +83,36 @@ const SitesEditor = {
         <div class="set-site-grid">
           <div class="field"><label>User city starts with <span class="muted">(Entra city &rarr; this site)</span></label><div id="${hostId}-c${k}"></div></div>
           <div class="field"><label>Device name starts with <span class="muted">(e.g. BGTER)</span></label><div id="${hostId}-d${k}"></div></div>
-        </div></div>`).join("") || `<div class="empty" style="padding:16px">No sites yet.</div>`) +
+        </div>${this.allowScopeEdit ? `<div class="set-site-grid" style="margin-top:12px">
+          <div class="field"><label>Entra company names</label><div id="${hostId}-co${k}"></div></div>
+          <div class="field"><label>Intune device categories</label><div id="${hostId}-cat${k}"></div></div>
+        </div>` : ""}</div>`).join("") || `<div class="empty" style="padding:16px">No sites yet.</div>`) +
       `<button class="ghost" type="button" style="margin-top:10px" onclick="SitesEditor.add()">+ Add site</button>`;
     m.sites.forEach((s, k) => {
       s.city_prefixes = s.city_prefixes || []; s.device_prefixes = s.device_prefixes || [];
       ChipInput.mount(`${hostId}-c${k}`, s.city_prefixes, () => this.onDirty(), "city, Enter");
       ChipInput.mount(`${hostId}-d${k}`, s.device_prefixes, () => this.onDirty(), "prefix, Enter");
+      if (this.allowScopeEdit) {
+        s.company_names = s.company_names || []; s.intune_categories = s.intune_categories || [];
+        const coHost = document.getElementById(`${hostId}-co${k}`);
+        if (coHost) {
+          coHost.innerHTML = `<div class="dp-chips">${s.company_names.map((n, i) => `<span class="dp-chip">${esc(n)} <button type="button" title="Remove" onclick="SitesEditor.removeScope(${k},'company_names',${i})">&times;</button></span>`).join("")}</div><div id="${hostId}-coPick${k}"></div>`;
+          DirPicker.mount(`${hostId}-coPick${k}`, "company", it => this.addCompany(k, it.name), "Search Entra company names…");
+        }
+        const catHost = document.getElementById(`${hostId}-cat${k}`);
+        if (catHost) {
+          catHost.innerHTML = `<div class="dp-chips">${s.intune_categories.map((n, i) => `<span class="dp-chip">${esc(n)} <button type="button" title="Remove" onclick="SitesEditor.removeScope(${k},'intune_categories',${i})">&times;</button></span>`).join("")}</div>
+            ${this.categories.length ? SetUI.select(`${hostId}-catPick${k}`, this.categories.map(c => ({ id: c, label: c })), "", `SitesEditor.addCategory(${k},this.value);this.value=''`, "Add a category…") : `<input placeholder="Type exact Intune category" onkeydown="if(event.key==='Enter'){event.preventDefault();SitesEditor.addCategory(${k},this.value);this.value=''}">`}`;
+        }
+      }
     });
   },
   set(k, f, v) { this.m.sites[k][f] = v; this.onDirty(); },
-  add() { this.m.sites.push({ code: "", name: "", city_prefixes: [], device_prefixes: [] }); this.onDirty(); this.render(this.host, this.m, this.onDirty); },
-  del(k) { this.m.sites.splice(k, 1); this.onDirty(); this.render(this.host, this.m, this.onDirty); },
+  addCompany(k, name) { const a = this.m.sites[k].company_names; if (name && !a.some(x => x.toLowerCase() === name.toLowerCase())) a.push(name); this.onDirty(); this.render(this.host, this.m, this.onDirty, { allowScopeEdit: this.allowScopeEdit, categories: this.categories }); },
+  addCategory(k, name) { const a = this.m.sites[k].intune_categories, v = String(name || "").trim(); if (v && !a.some(x => x.toLowerCase() === v.toLowerCase())) a.push(v); this.onDirty(); this.render(this.host, this.m, this.onDirty, { allowScopeEdit: this.allowScopeEdit, categories: this.categories }); },
+  removeScope(k, field, i) { this.m.sites[k][field].splice(i, 1); this.onDirty(); this.render(this.host, this.m, this.onDirty, { allowScopeEdit: this.allowScopeEdit, categories: this.categories }); },
+  add() { this.m.sites.push({ code: "", name: "", city_prefixes: [], device_prefixes: [], company_names: [], intune_categories: [] }); this.onDirty(); this.render(this.host, this.m, this.onDirty, { allowScopeEdit: this.allowScopeEdit, categories: this.categories }); },
+  del(k) { this.m.sites.splice(k, 1); this.onDirty(); this.render(this.host, this.m, this.onDirty, { allowScopeEdit: this.allowScopeEdit, categories: this.categories }); },
 };
 
 /* ---- directory + SQL editor (shared) -------------------------------------------------------- */
@@ -178,7 +199,7 @@ const SyncLine = {
 
 /* ---- the page ------------------------------------------------------------------------------- */
 const Settings = {
-  su: false, role: "user", tab: "general", dirty: false, own: null, prefs: null,
+  su: false, role: "user", tab: "general", dirty: false, own: null, prefs: null, searchQuery: "",
   THEME_KEY: "nbg_hub_theme",
   THEMES: [
     { id: "nbg-green", name: "NBG Green", note: "Current Hub theme" },
@@ -227,14 +248,31 @@ const Settings = {
     const hb = document.getElementById("dashHealth"); if (hb) hb.classList.toggle("hidden", !(this.su || this.role === "super" || this.role === "admin"));          // so is the Health check
   },
   can(min) { return (this.RANK[this.role] || 0) >= this.RANK[min]; },
-  open(tab) { if (tab) this.tab = tab; Nav.go("settings"); },
+  open(tab) {
+    if (Nav._cur === "settings") return this.go(tab || this.tab);
+    if (tab) this.tab = tab;
+    Nav.go("settings");
+  },
   /* every division section; General is always shown, the rest depend on Platform > Role access */
   SECTIONS: [["general", "General"], ["models", "Model departments"], ["access", "Who has access"],
              ["sites", "Sites"], ["sql", "Directory & SQL"], ["perms", "Group baselines"], ["storage", "Storage"]],
+  GENERAL_SEARCH: [
+    ["about", "About division", "identity company name sites division"], ["personal", "My preferences", "default division appearance theme"],
+    ["timezone", "Time zone", "clock date time"], ["inventory", "Inventory", "stock device options department"],
+    ["ot", "OT devices", "controller stale verification areas lines panels owners"], ["mail", "Mail delivery", "smtp relay server from address"],
+    ["alerts", "Recipients & tests", "email notification recipients test messages"], ["project", "Project Hub", "project address url"],
+  ],
+  SEARCH_TERMS: {
+    models: "model department software hardware models", access: "members roles permissions administrators", sites: "site location code city Entra company Intune category",
+    sql: "directory active directory SQL server database connection", perms: "group baseline permissions security groups", storage: "data storage files folder backup",
+    divisions: "division company identity sites", admins: "super admin administrators", sync: "sync refresh all divisions", issuenotify: "issue notifications email recipients",
+    scopes: "people search scope directory visibility", links: "NBT Sites links", template: "checklist template provisioning", ottypes: "OT device types controllers",
+    roles: "role access permissions", integrations: "integrations options settings",
+  },
   groups() {
     return [
       { title: Divisions.label(), items: this.SECTIONS.filter(x => x[0] === "general" || this.allowed.includes(x[0])) },
-      ...(this.su ? [{ title: "Platform (super admin)", items: [["divisions", "Divisions"], ["admins", "Super admins"], ["sync", "Sync all divisions"], ["issuenotify", "Issue notifications"], ["scopes", "People-search scopes"], ["links", "NBT Sites"], ["template", "Template checklists"], ["roles", "Role access"], ["integrations", "Integrations & options"]] }] : []),
+      ...(this.su ? [{ title: "Platform (super admin)", items: [["divisions", "Divisions"], ["admins", "Super admins"], ["sync", "Sync all divisions"], ["issuenotify", "Issue notifications"], ["scopes", "People-search scopes"], ["links", "NBT Sites"], ["template", "Template checklists"], ["ottypes", "OT device types"], ["roles", "Role access"], ["integrations", "Integrations & options"]] }] : []),
     ];
   },
   async load() {
@@ -243,28 +281,66 @@ const Settings = {
     if (!valid) this.tab = "general";
     document.querySelectorAll(".side-config[data-view]").forEach(b => b.classList.toggle("active", b.dataset.view === "settings"));
     document.getElementById("setSub").textContent = "Settings for " + Divisions.label() + (this.su ? " and the whole platform." : ".");
-    this.dirty = false;
     this.rail();
     await this.show(this.tab, true);
   },
   rail() {
-    document.getElementById("setRail").innerHTML = this.groups().map(g =>
-      `<div class="set-rail-title">${esc(g.title)}</div>` + g.items.map(([id, label]) =>
-        `<button class="set-rail-item${id === this.tab ? " active" : ""}" onclick="Settings.go('${id}')">${esc(label)}</button>`).join("")).join("");
+    const query = String(this.searchQuery || "").trim().toLocaleLowerCase();
+    if (query) {
+      const terms = query.split(/\s+/).filter(Boolean);
+      const hits = this.searchItems().filter(item => terms.every(term => item.search.toLocaleLowerCase().includes(term)));
+      document.getElementById("setRail").innerHTML = hits.length
+        ? `<div class="set-search-results" role="list">${hits.map(item => `<button type="button" class="set-rail-item set-search-result" role="listitem" onclick="Settings.searchGo('${item.tab}'${item.sub ? `,'${item.sub}'` : ""})"><span>${esc(item.label)}</span><small>${esc(item.breadcrumb)}</small></button>`).join("")}</div>`
+        : `<p class="set-search-empty">No settings match “${esc(this.searchQuery)}”.</p>`;
+      return;
+    }
+    document.getElementById("setRail").innerHTML = this.groups().map(g => {
+      const items = g.items.map(([id, label]) =>
+        `<button class="set-rail-item${id === this.tab ? " active" : ""}"${id === this.tab ? ` aria-current="page"` : ""} onclick="Settings.go('${id}')">${esc(label)}</button>`).join("");
+      if (g.title.startsWith("Platform")) return `<details class="set-rail-group"${g.items.some(([id]) => id === this.tab) ? " open" : ""}><summary>${esc(g.title)}</summary><div>${items}</div></details>`;
+      return `<div class="set-rail-title">${esc(g.title)}</div>${items}`;
+    }).join("");
+  },
+  searchItems() {
+    const items = [];
+    for (const group of this.groups()) for (const [tab, label] of group.items) {
+      items.push({ tab, label, breadcrumb: group.title, search: `${label} ${group.title} ${this.SEARCH_TERMS[tab] || ""}` });
+      if (tab === "general") for (const [sub, subLabel, keywords] of this.GENERAL_SEARCH)
+        items.push({ tab: "general", sub, label: subLabel, breadcrumb: `${group.title} · General`, search: `${subLabel} ${group.title} General ${keywords}` });
+    }
+    return items;
+  },
+  filterRail(value) { this.searchQuery = String(value || ""); this.rail(); },
+  async searchGo(tab, subsection) {
+    this.searchQuery = "";
+    const input = document.getElementById("setSearch"); if (input) input.value = "";
+    if (tab !== this.tab) {
+      if (!this.confirmLeave()) { this.rail(); return; }
+      this.tab = tab; this.dirty = false; this.rail(); await this.show(tab);
+    }
+    if (subsection) { this.generalSection = subsection; this.selectGeneralSection(subsection); }
+    this.rail();
+  },
+  confirmLeave() {
+    if (!this.dirty) return true;
+    if (!confirm("You have unsaved settings changes. Leave and discard them?")) return false;
+    this.dirty = false;
+    this.catDraft = {}; this.otherDraft = {}; this.customDraft = {};
+    return true;
   },
   /* "Discard changes": reload the saved version of the section and say so */
   async discard(tab) { this.dirty = false; await this.show(tab); App.toast("Changes discarded: showing the saved version."); },
   async go(tab) {
     if (tab === this.tab && !this.dirty) return;
-    if (this.dirty && !confirm("You have unsaved changes on this page. Leave without saving?")) return;
+    if (!this.confirmLeave()) return;
     this.tab = tab; this.dirty = false; this.rail();
     await this.show(tab);
   },
   markDirty(btnId) { this.dirty = true; const b = document.getElementById(btnId || "setSave"); if (b) b.disabled = false; },
-  pane(owner, html) {
+  pane(owner, html, helpKey) {
     const p = document.getElementById("setPane");
     p.dataset.owner = owner;
-    if (html !== undefined) p.innerHTML = (owner === "settings" ? Help.box("set-" + this.tab) : "") + html;
+    if (html !== undefined) p.innerHTML = (owner === "settings" ? Help.box(helpKey || "set-" + this.tab) : "") + html;
     return p;
   },
   async show(tab, force) {
@@ -272,7 +348,7 @@ const Settings = {
     this.pane("settings", `<div class="empty">Loading…</div>`);
     const dep = { models: "models", links: "sites", perms: "perms", storage: "storage" }[tab];
     if (dep) { this.pane("depts"); Depts._page = true; await Depts.openPage(dep); return; }
-    const fn = { general: "general", access: "accessTab", sites: "sitesTab", sql: "sqlTab", divisions: "divisions", admins: "admins", roles: "roles", template: "templateTab", scopes: "scopesTab", issuenotify: "issueNotifyTab", sync: "syncAll", integrations: "integrations" }[tab];
+    const fn = { general: "general", access: "accessTab", sites: "sitesTab", sql: "sqlTab", divisions: "divisions", admins: "admins", roles: "roles", template: "templateTab", scopes: "scopesTab", issuenotify: "issueNotifyTab", ottypes: "otTypesTab", sync: "syncAll", integrations: "integrations" }[tab];
     try { await this[fn](); } catch (e) { this.pane("settings", `<div class="empty">Could not open this section: ${esc(String(e && e.message || e))}</div>`); }
   },
 
@@ -288,48 +364,103 @@ const Settings = {
     const mp = await Backend.call("get_my_prefs");
     this.my = (mp && mp.ok) ? mp : { divisions: [], default_division: "" };
     const fact = (k, v) => `<div class="set-fact"><span>${k}</span><b>${v || "<i class='muted'>not set</i>"}</b></div>`;
-    this.pane("settings",
-      SetUI.card("About this division", this.su ? "Identity is changed under <b>Platform &rarr; Divisions</b>." : "Identity (name, Entra company, Intune category) is managed by a super admin.",
-        `<div class="set-facts">${fact("Name", esc(o.name))}${fact("Id", esc(o.id))}${fact("Entra company", esc(o.company_name))}${fact("Intune category", esc(o.intune_category))}</div>
-         <div style="margin-top:12px"><span class="muted" style="font-size:12px">Sites</span><div class="dp-chips" style="margin-top:6px">${sites}</div></div>`) +
-      this.themeCard() +
+    const about = SetUI.card("About this division", "Division name and ID are managed by a super admin. Site-specific Entra company names and Intune categories are managed under <b>Sites</b>.",
+        `<div class="set-facts">${fact("Name", esc(o.name))}${fact("Id", esc(o.id))}${fact("Entra companies", esc((o.company_names || [o.company_name].filter(Boolean)).join(", ")))}${fact("Intune categories", esc((o.intune_categories || [o.intune_category].filter(Boolean)).join(", ")))}</div>
+         <div style="margin-top:12px"><span class="muted" style="font-size:12px">Sites</span><div class="dp-chips" style="margin-top:6px">${sites}</div></div>`);
+    const personal = this.themeCard() +
       (this.my.divisions.length > 1 ? SetUI.card("My default division", "The division NBG Hub opens in each time you start it. Only you see this choice.",
         `<div class="field" style="max-width:420px"><label>Open in</label>
            ${SetUI.select("mdSel", this.my.divisions.map(d => ({ id: d.id, label: d.name })), this.my.default_division, "Settings.markDirty('mdSave')", "The last division I used")}</div>`,
-        `<button class="primary" id="mdSave" onclick="Settings.saveMyDiv()" disabled>Save my default</button>`) : "") +
-      SetUI.card("Time zone", "Every date and time in the app for this division is shown in this zone." + (canEdit ? "" : " Division admins can change it."),
+        `<button class="primary" id="mdSave" onclick="Settings.saveMyDiv()" disabled>Save my default</button>`) : "");
+    const timezone = SetUI.card("Time zone", "Every date and time in the app for this division is shown in this zone." + (canEdit ? "" : " Division admins can change it."),
         `<div class="field" style="max-width:420px"><label>Time zone for ${esc(Divisions.label())}</label>
            ${SetUI.select("tzSel", zl.map(z => ({ id: z.id, label: z.label })), this.prefs.timezone, "Settings.tzPreview()", "Use the default (" + def + ")", !canEdit)}</div>
          <p id="tzPrev" class="muted" style="margin:10px 0 0"></p>`,
-        canEdit ? `<button class="primary" id="setSave" onclick="Settings.saveTz()" disabled>Save time zone</button>` : "") +
-      (canEdit ? SetUI.card("Inventory options", "How this division's devices are synced and grouped.",
+        canEdit ? `<button class="primary" id="setSave" onclick="Settings.saveTz()" disabled>Save time zone</button>` : "");
+    const inventory = (canEdit ? SetUI.card("Inventory options", "How this division's devices are synced and grouped.",
         `<div class="field" style="max-width:460px"><label>Devices to sync from Intune</label>
            ${SetUI.select("ioOs", this.prefs.device_os_options || [], this.prefs.device_os, "Settings.markDirty('ioSave')")}</div>
          <div class="field"><label>Hot spare departments <span class="muted">(Other is always added at the end)</span></label>
            <div id="ioDepts" style="max-width:560px"></div>
-           <p class="muted" style="margin:6px 0 0;font-size:12px">These are the department groups on the Hot spares window. Press Enter after each name; click &times; to remove one.</p></div>`,
-        `<button class="primary" id="ioSave" onclick="Settings.saveInv()" disabled>Save inventory options</button>`) : "") +
-      SetUI.card("SMTP mail", "Each division can use its own mail relay.",
-        `<p class="muted" style="margin:0 0 12px">Used for Issue notification emails and the test message in Settings &gt; Issue notifications. Anonymous relay; Hub stores no SMTP credentials. Prefer STARTTLS when server supports it; use None only for trusted internal relays.</p>
-         <label class="field" style="display:flex;align-items:center;gap:9px;max-width:460px"><input id="smtpEnabled" type="checkbox" style="width:auto;padding:0;border:0;background:transparent" ${this.prefs.smtp && this.prefs.smtp.enabled ? "checked" : ""} ${canEdit ? "" : "disabled"} onchange="Settings.markDirty('smtpSave')"><span>Enable this division's SMTP relay</span></label>
+           <p class="muted" style="margin:6px 0 0;font-size:12px">These are the department groups on the Hot spares window. Press Enter after each name; click &times; to remove one.</p></div>
+         <div class="field" style="max-width:240px"><label>Minimum hot spare stock</label><input id="ioMinimum" type="number" min="0" max="500" value="${Number(this.prefs.hot_spare_minimum || 0)}" oninput="Settings.markDirty('ioSave')"><p class="muted" style="font-size:12px">Dashboard flags stock below this number. Zero disables alert.</p></div>`,
+        `<button class="primary" id="ioSave" onclick="Settings.saveInv()" disabled>Save inventory options</button>`) : "");
+    const otSettings = canEdit ? SetUI.card("OT device choices and review cycle", "Maintain standard choices used when adding or editing OT devices. Existing records keep their current values.",
+        `<div class="ot-settings-lists">
+          <div class="field"><label>Area / location</label><div id="otAreas"></div></div>
+          <div class="field"><label>Line / process</label><div id="otLines"></div></div>
+          <div class="field"><label>Panel / cabinet</label><div id="otPanels"></div></div>
+          <div class="field"><label>Owner / team</label><div id="otOwners"></div></div>
+         </div><div class="field" style="max-width:320px;margin-top:14px"><label for="otStaleMonths">Mark device information stale after</label>
+           <select id="otStaleMonths" onchange="Settings.markDirty('otListsSave')"><option value="3" ${Number(this.prefs.ot_stale_months || 6) === 3 ? "selected" : ""}>3 months</option><option value="6" ${Number(this.prefs.ot_stale_months || 6) === 6 ? "selected" : ""}>6 months</option><option value="12" ${Number(this.prefs.ot_stale_months || 6) === 12 ? "selected" : ""}>1 year</option><option value="24" ${Number(this.prefs.ot_stale_months || 6) === 24 ? "selected" : ""}>2 years</option></select>
+           <p class="muted" style="font-size:12px">Records need a fresh verification within this period.</p></div>
+         <p class="muted" style="font-size:12px;margin:8px 0 0">Press Enter after each choice; click &times; to remove one. Site choices come from this division's Sites settings.</p>`,
+        `<button class="primary" id="otListsSave" onclick="Settings.saveOtLists()" disabled>Save OT choices</button>`) : "";
+    const mail = SetUI.card("Mail delivery", "Each division can use its own mail relay. If relay is off or incomplete, delivery falls back to the platform route.",
+        `<div id="smtpState" class="smtp-state ${this.prefs.smtp && this.prefs.smtp.enabled && this.prefs.smtp.server && this.prefs.smtp.from_address ? "ok" : "warn"}">${this.prefs.smtp && this.prefs.smtp.enabled && this.prefs.smtp.server && this.prefs.smtp.from_address ? "SMTP relay enabled for this division" : this.prefs.smtp && this.prefs.smtp.enabled ? "SMTP enabled, but server or From address is missing" : "SMTP relay off — platform delivery route will be used"}</div>
+          <p class="muted" style="margin:0 0 12px">Anonymous relay; Hub stores no SMTP credentials. Prefer STARTTLS when server supports it; use None only for trusted internal relays.</p>
+          <label class="field" style="display:flex;align-items:center;gap:9px;max-width:460px"><input id="smtpEnabled" type="checkbox" style="width:auto;padding:0;border:0;background:transparent" ${this.prefs.smtp && this.prefs.smtp.enabled ? "checked" : ""} ${canEdit ? "" : "disabled"} onchange="Settings.markDirty('smtpSave');Settings.smtpPreview()"><span>Enable this division's SMTP relay</span></label>
          <div class="fields" style="margin-top:10px">
-           <div class="field" style="min-width:260px;flex:2"><label>SMTP server</label><input id="smtpServer" value="${attr((this.prefs.smtp || {}).server || "")}" placeholder="smtp.division.example" ${canEdit ? "" : "disabled"} oninput="Settings.markDirty('smtpSave')"></div>
+            <div class="field" style="min-width:260px;flex:2"><label>SMTP server</label><input id="smtpServer" value="${attr((this.prefs.smtp || {}).server || "")}" placeholder="smtp.division.example" ${canEdit ? "" : "disabled"} oninput="Settings.markDirty('smtpSave');Settings.smtpPreview()"></div>
            <div class="field" style="max-width:150px"><label>Port</label><input id="smtpPort" type="number" min="1" max="65535" value="${attr((this.prefs.smtp || {}).port || 25)}" ${canEdit ? "" : "disabled"} oninput="Settings.markDirty('smtpSave')"></div>
            <div class="field" style="min-width:190px"><label>Connection security</label>${SetUI.select("smtpSecurity", [{ id: "none", label: "None (internal relay)" }, { id: "starttls", label: "STARTTLS" }, { id: "ssl", label: "SSL/TLS" }], (this.prefs.smtp || {}).security || "none", "Settings.markDirty('smtpSave')", undefined, !canEdit)}</div>
-           <div class="field" style="min-width:260px;flex:2"><label>From address</label><input id="smtpFrom" type="email" value="${attr((this.prefs.smtp || {}).from_address || "")}" placeholder="hub-notifications@division.example" ${canEdit ? "" : "disabled"} oninput="Settings.markDirty('smtpSave')"></div>
+            <div class="field" style="min-width:260px;flex:2"><label>From address</label><input id="smtpFrom" type="email" value="${attr((this.prefs.smtp || {}).from_address || "")}" placeholder="hub-notifications@division.example" ${canEdit ? "" : "disabled"} oninput="Settings.markDirty('smtpSave');Settings.smtpPreview()"></div>
          </div>`,
-        canEdit ? `<button class="primary" id="smtpSave" onclick="Settings.saveSmtp()" disabled>Save SMTP settings</button>` : "") +
-      SetUI.card("Project Hub", "Where the Project Hub item in the sidebar opens for " + esc(Divisions.label()) + (canEdit ? "." : ". Division admins can change it."),
+         (canEdit ? `<button class="primary" id="smtpSave" onclick="Settings.saveSmtp()" disabled>Save SMTP settings</button>` : ""));
+    const alerts = SetUI.card("Recipients and test emails", "Platform recipients receive selected issue events across divisions. This list adds recipients for this division's issue events and operational alerts.",
+        `<div id="divNotifyTable"></div><div style="margin-top:12px;max-width:520px" id="divNotifyPick"></div>
+          <p class="muted" style="font-size:12px;margin:8px 0 12px">Operational alerts are sent as one summary per change or sweep. Delivery uses this division's SMTP relay when enabled, otherwise the platform route.</p>
+         <div class="fields" style="align-items:end">
+           <div class="field" style="max-width:340px;flex:1"><label for="divNotifyTestEvent">Preview an email type</label>
+             <select id="divNotifyTestEvent">${Object.entries(this.prefs.notification_events || {}).map(([id, label]) => `<option value="${attr(id)}">${esc(label)}</option>`).join("")}</select></div>
+           <button class="ghost" onclick="Settings.testDivisionMail()">Send selected sample</button>
+           <button class="ghost" onclick="Settings.testAllDivisionMail()">Send all ${Object.keys(this.prefs.notification_events || {}).length} samples</button>
+         </div>
+         <p class="muted" style="font-size:12px;margin:8px 0 0">Sends only to your signed-in account. Sample creates no issue or permission change.</p>`,
+         canEdit ? `<button class="primary" id="divNotifySave" onclick="Settings.saveDivNotify()" disabled>Save division recipients</button>` : "");
+    const integrations = SetUI.card("Project Hub", "Where the Project Hub item in the sidebar opens for " + esc(Divisions.label()) + (canEdit ? "." : ". Division admins can change it."),
         `<div class="field" style="max-width:560px"><label>Project Hub address</label>
            <input id="phUrl" value="${attr(this.prefs.project_hub_url || "")}" placeholder="${attr(this.prefs.project_hub_default)}" ${canEdit ? "" : "disabled"} oninput="Settings.markDirty('phSave')"></div>
          <p class="muted" style="margin:8px 0 0;font-size:12px">Leave blank to use the platform default: ${esc(this.prefs.project_hub_default)}. Must start with https://.</p>`,
-        `<button class="ghost" onclick="Settings.phOpen()">Open this address</button>` + (canEdit ? `<button class="primary" id="phSave" onclick="Settings.savePh()" disabled>Save address</button>` : "")));
-    document.getElementById("tzSel").addEventListener("change", () => this.markDirty());
+        `<button class="ghost" onclick="Settings.phOpen()">Open this address</button>` + (canEdit ? `<button class="primary" id="phSave" onclick="Settings.savePh()" disabled>Save address</button>` : ""));
+    const sections = [
+      ["about", "About division", about],
+      ["personal", "My preferences", personal],
+      ["timezone", "Time zone", timezone],
+      ["inventory", "Inventory", inventory],
+      ["ot", "OT devices", otSettings],
+      ["mail", "Mail delivery", mail],
+      ["alerts", "Recipients & tests", alerts],
+      ["project", "Project Hub", integrations],
+    ].filter(([, , content]) => content);
+    if (!sections.some(([id]) => id === this.generalSection)) this.generalSection = "about";
+    this.pane("settings", `<div class="settings-general-tabs" role="tablist" aria-label="Division settings sections">${sections.map(([id, label]) => `<button type="button" role="tab" aria-selected="${id === this.generalSection}" aria-controls="generalPanel-${id}" id="generalTab-${id}" class="settings-general-tab${id === this.generalSection ? " active" : ""}" onclick="Settings.selectGeneralSection('${id}')">${label}</button>`).join("")}</div>
+      ${sections.map(([id, label, content]) => `<section id="generalPanel-${id}" class="settings-general-panel${id === this.generalSection ? "" : " hidden"}" role="tabpanel" aria-labelledby="generalTab-${id}">${content}</section>`).join("")}`, "set-general-" + this.generalSection);
+    document.getElementById("tzSel")?.addEventListener("change", () => this.markDirty());
     if (document.getElementById("ioDepts")) {
       this.ioDepts = ((this.prefs.hot_spare_depts || []).length ? this.prefs.hot_spare_depts : (this.prefs.hot_spare_default || [])).slice();
       ChipInput.mount("ioDepts", this.ioDepts, () => this.markDirty("ioSave"), "department, Enter");
     }
+    if (document.getElementById("otAreas")) {
+      const lists = this.prefs.ot_lists || {};
+      this.otLists = { areas: [...(lists.areas || [])], lines: [...(lists.lines || [])], panels: [...(lists.panels || [])], owners: [...(lists.owners || [])] };
+      [["otAreas", "areas", "area / location"], ["otLines", "lines", "line / process"], ["otPanels", "panels", "panel / cabinet"], ["otOwners", "owners", "owner / team"]]
+        .forEach(([host, key, placeholder]) => ChipInput.mount(host, this.otLists[key], () => this.markDirty("otListsSave"), placeholder + ", Enter"));
+    }
+    this.divSubs = (this.prefs.issue_subscribers || []).map(s => ({ ...s, events: [...(s.events || [])] }));
+    this.divEvents = this.prefs.notification_events || {};
+    this.divNotifyDraw(!canEdit);
     this.tzPreview();
+  },
+  selectGeneralSection(id) {
+    const panel = document.getElementById(`generalPanel-${id}`);
+    if (!panel) return;
+    this.generalSection = id;
+    document.querySelectorAll(".settings-general-tab").forEach(tab => {
+      const active = tab.id === `generalTab-${id}`;
+      tab.classList.toggle("active", active); tab.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    document.querySelectorAll(".settings-general-panel").forEach(section => section.classList.toggle("hidden", section.id !== `generalPanel-${id}`));
   },
   async saveMyDiv() {
     const r = await Backend.call("save_my_prefs", document.getElementById("mdSel").value);
@@ -351,11 +482,22 @@ const Settings = {
     Backend.call("open_external", /^https?:\/\//i.test(v) ? v : "https://" + v).then(r => { if (r && !r.ok) App.toast(r.error || "Could not open it.", true); });
   },
   async saveInv() {
-    const r = await Backend.call("save_division_prefs", null, null, document.getElementById("ioOs").value, this.ioDepts);
+    const r = await Backend.call("save_division_prefs", null, null, document.getElementById("ioOs").value, this.ioDepts, null, null, Number(document.getElementById("ioMinimum").value || 0));
     if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
     this.dirty = false;
     await Tz.load();
     App.toast("Inventory options saved.");
+    this.general();
+  },
+  async saveOtLists() {
+    const lists = this.otLists || { areas: [], lines: [], panels: [], owners: [] };
+    const staleMonths = Number(document.getElementById("otStaleMonths")?.value || 6);
+    const r = await Backend.call("save_division_prefs", null, null, null, null, null, null, null, lists, staleMonths);
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save OT choices.", true);
+    this.prefs.ot_lists = lists;
+    this.prefs.ot_stale_months = staleMonths;
+    this.dirty = false;
+    App.toast("OT device choices saved.");
     this.general();
   },
   async savePh() {
@@ -387,6 +529,62 @@ const Settings = {
     this.dirty = false;
     App.toast("SMTP settings saved for " + Divisions.label() + ".");
     this.general();
+  },
+  smtpPreview() {
+    const state = document.getElementById("smtpState"); if (!state) return;
+    const enabled = !!document.getElementById("smtpEnabled")?.checked;
+    const ready = enabled && !!document.getElementById("smtpServer")?.value.trim() && !!document.getElementById("smtpFrom")?.value.trim();
+    state.className = `smtp-state ${ready ? "ok" : "warn"}`;
+    state.textContent = ready ? "SMTP relay enabled for this division" : enabled ? "SMTP enabled, but server or From address is missing" : "SMTP relay off — platform delivery route will be used";
+  },
+  async testDivisionMail() {
+    const event = document.getElementById("divNotifyTestEvent")?.value || "new";
+    const label = (this.divEvents || {})[event] || event;
+    const r = await Backend.call("division_notify_test", event);
+    App.toast(r && r.ok ? `${label} sample sent to you via ${r.via}.` : ((r && r.error) || "Could not send sample email."), !(r && r.ok));
+  },
+  async testAllDivisionMail() {
+    const events = Object.keys(this.divEvents || {});
+    const results = [];
+    for (const event of events) {
+      const result = await Backend.call("division_notify_test", event);
+      results.push({ event, ok: !!(result && result.ok), via: result && result.via, error: result && result.error });
+    }
+    const sent = results.filter(x => x.ok).length;
+    const failed = results.filter(x => !x.ok);
+    const message = failed.length
+      ? `Sent ${sent} of ${events.length} samples. Failed: ${failed.map(x => (this.divEvents || {})[x.event] || x.event).join(", ")}. ${failed[0].error || "Check email settings."}`
+      : `Sent all ${sent} email samples to you.`;
+    App.toast(message, failed.length > 0);
+  },
+  divNotifyDraw(readOnly) {
+    const root = document.getElementById("divNotifyTable"); if (!root) return;
+    const events = Object.keys(this.divEvents || {});
+    const shortLabel = { new: "New issue", status: "Status", comment: "Comments", boneyard: "Boneyard", sharepoint: "SharePoint", software: "Not allowed software", device: "Device checkout", inventory: "Inventory alerts", ot: "OT review" };
+    root.innerHTML = this.divSubs.length
+      ? `<div style="overflow:auto"><table class="ms-table"><thead><tr><th>Person</th>${events.map(e => `<th style="text-align:center" title="${attr(this.divEvents[e])}">${esc(shortLabel[e] || this.divEvents[e])}</th>`).join("")}<th></th></tr></thead><tbody>` +
+        this.divSubs.map((s, i) => `<tr><td>${esc(s.name)} <span class="muted">${esc(s.upn)}</span></td>` +
+          events.map(e => `<td style="text-align:center"><input type="checkbox" class="cb"${s.events.includes(e) ? " checked" : ""} ${readOnly ? "disabled" : ""} onchange="Settings.divNotifyEvent(${i},'${e}',this.checked)"></td>`).join("") +
+          `<td style="text-align:right">${readOnly ? "" : `<button class="cfg-del" onclick="Settings.divNotifyRemove(${i})" title="Remove">&times;</button>`}</td></tr>`).join("") + `</tbody></table></div>`
+      : `<p class="muted">No division-specific recipients yet.</p>`;
+    if (!readOnly) DirPicker.mount("divNotifyPick", "user", it => this.divNotifyAdd(it), "Add a person to notify (name or sign-in)…");
+  },
+  divNotifyAdd(it) {
+    const upn = (it.upn || "").trim().toLowerCase();
+    if (!upn || this.divSubs.some(s => s.upn === upn)) return App.toast("Already on this division's list.");
+    this.divSubs.push({ upn, name: it.name || upn, events: [] });
+    this.markDirty("divNotifySave"); this.divNotifyDraw(false);
+  },
+  divNotifyRemove(i) { this.divSubs.splice(i, 1); this.markDirty("divNotifySave"); this.divNotifyDraw(false); },
+  divNotifyEvent(i, event, enabled) {
+    const events = this.divSubs[i].events, idx = events.indexOf(event);
+    if (enabled && idx < 0) events.push(event); else if (!enabled && idx >= 0) events.splice(idx, 1);
+    this.markDirty("divNotifySave");
+  },
+  async saveDivNotify() {
+    const r = await Backend.call("save_division_prefs", null, null, null, null, null, this.divSubs);
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save recipients.", true);
+    this.dirty = false; App.toast("Division notification list saved."); this.general();
   },
 
   /* ---- tenant: sites ---- */
@@ -425,11 +623,11 @@ const Settings = {
 
   async sitesTab() {
     const o = await this.ownLoad(); if (!o) return;
-    this.pane("settings", SetUI.card("Sites", "Each site has a short code. The prefixes tell the app which site a user (by Entra city) or a device (by name) belongs to.",
+    this.pane("settings", SetUI.card("Sites", "Manage site codes and the matching rules used to place Entra users and Intune devices at the right site.",
       `${o.can_edit ? "" : `<div class="cfg-warn">Read-only here (Local data mode or no central site).</div>`}<div id="seSites"></div>
-       <p class="muted" style="margin-top:12px;font-size:12px">Changing a code regroups devices on the dashboard and lists; existing records keep their old code until a sync updates them.</p>`,
+       <p class="muted" style="margin-top:12px;font-size:12px">Entra company names and Intune device categories are matched per site. Changes affect matching on the next sync. Changing a site code can regroup devices; existing records keep their old code until sync updates them.</p>`,
       `<button class="ghost" onclick="Settings.discard('sites')">Discard changes</button><button class="primary" id="setSave" onclick="Settings.saveOwn(['sites'])" disabled>Save sites</button>`));
-    SitesEditor.render("seSites", o, () => this.markDirty());
+    SitesEditor.render("seSites", o, () => this.markDirty(), { allowScopeEdit: true });
   },
   async sqlTab() {
     const o = await this.ownLoad(); if (!o) return;
@@ -486,11 +684,12 @@ const Settings = {
   async issueNotifyTab() {
     const r = await Backend.call("get_issue_notifications");
     if (!r || !r.ok || !r.super_admin) return this.pane("settings", `<div class="empty">${esc((r && r.error) || "Super admins only.")}</div>`);
-    this.inf = { subs: r.subscribers.map(x => ({ ...x, events: [...x.events] })), webhook: r.webhook_set, smtp: r.smtp_enabled, mail: r.can_mail, events: r.events };
-    const how = r.smtp_enabled ? SetUI.pill("ok", "SMTP relay enabled for this division") : r.webhook_set ? SetUI.pill("ok", "Webhook set") : r.can_mail ? SetUI.pill("ok", "Direct mail available") : SetUI.pill("warn", "Nothing can send e-mail yet");
-    this.pane("settings", SetUI.card("Issue notifications", "",
-      `<p style="margin:0 0 12px">${how}${r.smtp_enabled ? `<span class="muted" style="margin-left:8px">SMTP takes priority for this division.</span>` : ""}
-         <button class="ghost" style="margin-left:10px" onclick="Settings.open('integrations')">Set the webhook</button>
+    this.inf = { subs: r.subscribers.map(x => ({ ...x, events: [...x.events] })), webhook: r.webhook_set, smtp: r.smtp_ready, smtpEnabled: r.smtp_enabled, mail: r.can_mail, events: r.events };
+    const how = r.smtp_ready ? SetUI.pill("ok", `SMTP ready for ${Divisions.label()}`) : r.smtp_enabled ? SetUI.pill("warn", `SMTP enabled for ${Divisions.label()} but missing server or From address`) : r.webhook_set ? SetUI.pill("ok", "Platform webhook set") : r.can_mail ? SetUI.pill("ok", "Platform direct mail available") : SetUI.pill("warn", "No platform mail route configured");
+    this.pane("settings", SetUI.card("Platform issue recipients", "This list receives selected issue events across all divisions. Division-specific recipients and operational alerts are managed in the division's General > Recipients & tests tab.",
+      `<p style="margin:0 0 12px">${how}${r.smtp_ready ? `<span class="muted" style="margin-left:8px">SMTP status shown for ${esc(Divisions.label())}; each division can use its own relay.</span>` : ""}
+         <button class="ghost" style="margin-left:10px" onclick="Settings.open('general')">Division SMTP settings</button>
+         <button class="ghost" onclick="Settings.open('integrations')">Set the webhook</button>
          <button class="ghost" onclick="Settings.inTest()">Send a test</button></p>
        <div id="inTable"></div>
        <div style="margin-top:12px;max-width:520px" id="inPick"></div>
@@ -636,10 +835,42 @@ const Settings = {
   },
 
   /* ---- platform: integrations & options (master settings as forms) ---- */
+  async otTypesTab() {
+    const r = await Backend.call("ot_device_types_get");
+    if (!r || !r.ok) return this.pane("settings", `<div class="empty">${esc((r && r.error) || "Could not load OT device types.")}</div>`);
+    this.otTypes = (r.types || []).slice();
+    this.pane("settings", SetUI.card("OT device types", "Shared across divisions. Keep names aligned with your CSV imports and existing OT asset records. Renaming/removing a type does not delete devices already using it.",
+      `<div id="otTypesList" class="ot-type-list"></div><div class="fields" style="max-width:620px;align-items:end"><div class="field" style="flex:1"><label for="otTypeNew">Add a device type</label><input id="otTypeNew" maxlength="40" placeholder="e.g. Safety relay"></div><button class="ghost" onclick="Settings.otTypeAdd()">Add type</button></div><p class="muted">Up to 40 types. Types are managed by super admins.</p>`,
+      `<button class="primary" id="otTypesSave" onclick="Settings.otTypesSave()" disabled>Save device types</button>`));
+    this.otTypesDraw();
+  },
+  otTypesDraw() {
+    const root = document.getElementById("otTypesList"); if (!root) return;
+    root.innerHTML = this.otTypes.map((type, i) => `<div class="ot-type-row"><input maxlength="40" value="${attr(type)}" aria-label="Device type ${i + 1}" oninput="Settings.otTypeEdit(${i},this.value)"><button class="cfg-del" title="Remove ${attr(type)}" onclick="Settings.otTypeRemove(${i})">&times;</button></div>`).join("");
+  },
+  otTypesDirty() { this.markDirty("otTypesSave"); },
+  otTypeEdit(i, value) { this.otTypes[i] = value.slice(0, 40); this.otTypesDirty(); },
+  otTypeAdd() {
+    const input = document.getElementById("otTypeNew"), value = (input.value || "").trim();
+    if (!value || this.otTypes.some(x => x.toLowerCase() === value.toLowerCase())) return App.toast("Enter a new, unique device type.", true);
+    if (this.otTypes.length >= 40) return App.toast("Maximum 40 device types.", true);
+    this.otTypes.push(value); input.value = ""; this.otTypesDraw(); this.otTypesDirty();
+  },
+  otTypeRemove(i) { this.otTypes.splice(i, 1); this.otTypesDraw(); this.otTypesDirty(); },
+  async otTypesSave() {
+    const cleaned = this.otTypes.map(x => x.trim()).filter(Boolean);
+    if (!cleaned.length) return App.toast("Keep at least one device type.", true);
+    const r = await Backend.call("ot_device_types_save", cleaned);
+    if (!r || !r.ok) return App.toast((r && r.error) || "Could not save device types.", true);
+    this.dirty = false; this.otTypes = r.types; App.toast("OT device types saved."); this.otTypesDraw();
+    const save = document.getElementById("otTypesSave"); if (save) save.disabled = true;
+  },
+  /* ---- platform: integrations & options (master settings as forms) ---- */
   async integrations() {
     const r = await Backend.call("get_master_settings");
     if (!r || !r.ok || !r.super_admin) return this.pane("settings", `<div class="empty">${esc((r && r.error) || "Super admins only.")}</div>`);
     this.cat = r.catalog || []; this.other = r.other || [];
+    this.catDraft = this.catDraft || {}; this.otherDraft = this.otherDraft || {}; this.customDraft = this.customDraft || {};
     const order = []; this.cat.forEach(c => { if (!order.includes(c.group)) order.push(c.group); });
     const blurb = { "Vendor APIs": "Credentials for warranty and spec lookups. Secrets are stored hidden and are never shown again; type a new value to replace one.",
                     "Regional": "Platform-wide defaults.", "Sync": "How the Intune sync behaves.",
@@ -649,50 +880,86 @@ const Settings = {
                     "Notifications": "How e-mails about Issues are sent. Choose who gets them under Issue notifications." };
     const row = (c, i) => {
       const st = c.status === "planned" ? SetUI.pill("plan", "Not used yet") : (c.kind === "secret" ? (c.is_set ? SetUI.pill("ok", "Set") : SetUI.pill("warn", "Not set")) : "");
+      const draft = Object.prototype.hasOwnProperty.call(this.catDraft, c.key);
+      const value = draft ? this.catDraft[c.key] : c.value || "";
+      const saveId = `igSave${i}`;
       let ctl;
-      if (c.kind === "secret") ctl = `<input id="ig${i}" type="password" autocomplete="new-password" placeholder="${c.is_set ? "•••••• set - type to replace" : "paste the value"}">`;
-      else if (c.kind === "url") ctl = `<input id="ig${i}" value="${attr(c.value || "")}" placeholder="https://projecthub.example.com/">`;
-      else if (c.kind === "text") ctl = `<input id="ig${i}" value="${attr(c.value || "")}" placeholder="server.domain.local">`;
-      else if (c.kind === "version") ctl = `<input id="ig${i}" value="${attr(c.value || "")}" placeholder="2026.10.15">`;
-      else if (c.kind === "choice") ctl = SetUI.select("ig" + i, c.options || [], c.value, "", "(none - use each PC's own)");
-      else ctl = `<input id="ig${i}" type="number" min="${c.min}" max="${c.max}" value="${attr(c.value || "")}" placeholder="${c.default} (default)">`;
-      return `<div class="set-row"><div class="set-row-main"><b>${esc(c.label)}</b> ${st}<p>${esc(c.help)}</p></div>
-        <div class="set-row-ctl">${ctl}<button class="primary" onclick="Settings.saveCat(${i})">Save</button></div></div>`;
+      const change = `Settings.integrationEdit('cat','${c.key}',this.value,'${saveId}')`;
+      if (c.kind === "secret") ctl = `<input id="ig${i}" type="password" autocomplete="new-password" oninput="${change}" placeholder="${c.is_set ? "•••••• set - type to replace" : "paste the value"}">`;
+      else if (c.kind === "url") ctl = `<input id="ig${i}" value="${attr(value)}" placeholder="https://projecthub.example.com/" oninput="${change}">`;
+      else if (c.kind === "text") ctl = `<input id="ig${i}" value="${attr(value)}" placeholder="server.domain.local" oninput="${change}">`;
+      else if (c.kind === "version") ctl = `<input id="ig${i}" value="${attr(value)}" placeholder="2026.10.15" oninput="${change}">`;
+      else if (c.kind === "choice") ctl = SetUI.select("ig" + i, c.options || [], value, change);
+      else ctl = `<input id="ig${i}" type="number" min="${c.min}" max="${c.max}" value="${attr(value)}" placeholder="${c.default} (default)" oninput="${change}">`;
+      return `<div class="set-row" data-integration-row data-search="${attr([c.group, c.key, c.label, c.help].join(" ").toLowerCase())}"><div class="set-row-main"><b>${esc(c.label)}</b> ${st}<p>${esc(c.help)}</p></div>
+        <div class="set-row-ctl">${ctl}<button class="primary" id="${saveId}" onclick="Settings.saveCat(${i})"${draft ? "" : " disabled"}>Save</button></div></div>`;
     };
-    const cards = order.map(g => SetUI.card(g, blurb[g] || "", this.cat.map((c, i) => c.group === g ? row(c, i) : "").join(""))).join("");
+    const cards = order.map((g, n) => `<details class="set-adv set-integration-group"${n === 0 ? " open" : ""}><summary>${esc(g)} <span class="muted">${esc(blurb[g] || "")}</span></summary>${this.cat.map((c, i) => c.group === g ? row(c, i) : "").join("")}</details>`).join("");
     const others = this.other.length ? SetUI.card("Other stored settings", "Present in the Master Settings list but not known to this screen.",
-      this.other.map((o, i) => `<div class="set-row"><div class="set-row-main"><b>${esc(o.key)}</b> ${o.secret ? SetUI.pill("warn", "secret") : ""}</div>
-        <div class="set-row-ctl"><input id="igo${i}" ${o.secret ? `type="password" placeholder="${o.is_set ? "•••••• set - type to replace" : "value"}"` : `value="${attr(o.value || "")}"`}>
-        <button class="primary" onclick="Settings.saveOther(${i})">Save</button></div></div>`).join("")) : "";
+      this.other.map((o, i) => {
+        const draft = Object.prototype.hasOwnProperty.call(this.otherDraft, o.key);
+        const value = draft ? this.otherDraft[o.key] : o.value || "", saveId = `igoSave${i}`;
+        const change = `Settings.integrationEdit('other','${o.key}',this.value,'${saveId}')`;
+        return `<div class="set-row" data-integration-row data-search="${attr([o.key, o.description || ""].join(" ").toLowerCase())}"><div class="set-row-main"><b>${esc(o.key)}</b> ${o.secret ? SetUI.pill("warn", "secret") : ""}</div>
+          <div class="set-row-ctl"><input id="igo${i}" ${o.secret ? `type="password" placeholder="${o.is_set ? "•••••• set - type to replace" : "value"}" oninput="${change}"` : `value="${attr(value)}" oninput="${change}"`}>
+          <button class="primary" id="${saveId}" onclick="Settings.saveOther(${i})"${draft ? "" : " disabled"}>Save</button></div></div>`;
+      }).join("")) : "";
     const custom = `<details class="set-adv"><summary>Advanced: add a setting this screen does not know yet</summary>
-      <div class="set-grid2"><div class="field"><label>Key</label><input id="igcKey" placeholder="e.g. new_vendor_key"></div>
-        <div class="field"><label>Value</label><input id="igcVal"></div></div>
-      <label class="set-check"><input type="checkbox" id="igcSec"> Secret (hide the value after saving)</label>
-      <div><button class="primary" style="margin-top:10px" onclick="Settings.saveCustom()">Add setting</button></div></details>`;
-    this.pane("settings", cards + others + custom);
+      <div class="set-grid2"><div class="field"><label>Key</label><input id="igcKey" value="${attr(this.customDraft.key || "")}" placeholder="e.g. new_vendor_key" oninput="Settings.integrationCustomEdit('key',this.value)"></div>
+        <div class="field"><label>Value</label><input id="igcVal" value="${attr(this.customDraft.value || "")}" oninput="Settings.integrationCustomEdit('value',this.value)"></div></div>
+      <label class="set-check"><input type="checkbox" id="igcSec"${this.customDraft.secret ? " checked" : ""} onchange="Settings.integrationCustomEdit('secret',this.checked)"> Secret (hide the value after saving)</label>
+      <div><button class="primary" id="igCustomSave" style="margin-top:10px" onclick="Settings.saveCustom()"${Object.keys(this.customDraft).length ? "" : " disabled"}>Add setting</button></div></details>`;
+    this.pane("settings", `<input class="set-integration-search" type="search" placeholder="Find a setting…" oninput="Settings.filterIntegrations(this.value)">${cards}${others}${custom}`);
+  },
+  integrationEdit(kind, key, value, buttonId) {
+    const draft = kind === "other" ? this.otherDraft : this.catDraft;
+    draft[key] = value; this.dirty = true;
+    const button = document.getElementById(buttonId); if (button) button.disabled = false;
+  },
+  integrationCustomEdit(field, value) {
+    this.customDraft = this.customDraft || {}; this.customDraft[field] = value; this.dirty = true;
+    const button = document.getElementById("igCustomSave"); if (button) button.disabled = false;
+  },
+  integrationHasDrafts() {
+    return Object.keys(this.catDraft || {}).length > 0 || Object.keys(this.otherDraft || {}).length > 0 || Object.keys(this.customDraft || {}).length > 0;
+  },
+  filterIntegrations(query) {
+    const q = (query || "").trim().toLowerCase();
+    document.querySelectorAll("[data-integration-row]").forEach(row => { row.classList.toggle("hidden", !!q && !row.dataset.search.includes(q)); });
+    document.querySelectorAll(".set-integration-group").forEach(group => {
+      const visible = !!group.querySelector("[data-integration-row]:not(.hidden)");
+      group.classList.toggle("hidden", !!q && !visible);
+      if (q && visible) group.open = true;
+      else if (!q) group.open = false;
+    });
   },
   async saveCat(i) {
     const c = this.cat[i], el = document.getElementById("ig" + i);
-    const v = (el.value || "").trim();
+    const v = c.kind === "secret" ? (el.value || "").trim() : (el.value || "").trim();
     if (c.kind === "secret" && !v) return App.toast("Type the new value first.", true);
     const r = await Backend.call("set_master_setting", c.key, v, c.secret, c.label);
     if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
+    c.value = c.kind === "secret" ? "" : v; if (c.kind === "secret") c.is_set = true;
+    delete this.catDraft[c.key]; this.dirty = this.integrationHasDrafts();
     App.toast("Saved " + c.label);
-    this.integrations();
+    await this.integrations();
   },
   async saveOther(i) {
     const o = this.other[i], v = document.getElementById("igo" + i).value;
     if (o.secret && !v) return App.toast("Type the new value first.", true);
     const r = await Backend.call("set_master_setting", o.key, v, o.secret, o.description || "");
     if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
-    App.toast("Saved " + o.key); this.integrations();
+    if (!o.secret) o.value = v; else o.is_set = true;
+    delete this.otherDraft[o.key]; this.dirty = this.integrationHasDrafts();
+    App.toast("Saved " + o.key); await this.integrations();
   },
   async saveCustom() {
     const k = (document.getElementById("igcKey").value || "").trim(), v = document.getElementById("igcVal").value;
     if (!/^[a-z][a-z0-9_]{2,40}$/.test(k)) return App.toast("Key: lowercase letters, digits and underscores (3-41 characters).", true);
     const r = await Backend.call("set_master_setting", k, v, document.getElementById("igcSec").checked, "");
     if (!r || !r.ok) return App.toast((r && r.error) || "Could not save.", true);
-    App.toast("Added " + k); this.integrations();
+    this.customDraft = {}; this.dirty = this.integrationHasDrafts();
+    App.toast("Added " + k); await this.integrations();
   },
 
   /* ---- platform: divisions (list + editor) ---- */
@@ -702,8 +969,8 @@ const Settings = {
     if (!r || !r.ok || !r.super_admin) return this.pane("settings", `<div class="empty">${esc((r && r.error) || "Super admins only.")}</div>`);
     this.rows = r.divisions; this.dv = null;
     const cards = this.rows.map((d, i) => `<div class="set-div">
-        <div><b>${esc(d.name)}</b> <span class="muted">${esc(d.id)}</span> ${d.enabled ? "" : SetUI.pill("warn", "Hidden")}
-          <p>${esc(d.company_name)} &middot; Intune: ${esc(d.intune_category)} &middot; ${(d.sites || []).length} site(s) &middot; ${(d.access || []).length ? (d.access.includes("*") ? "everyone" : d.access.length + " allowed") : "super admins only"}</p></div>
+      <div><b>${esc(d.name)}</b> <span class="muted">${esc(d.id)}</span> ${d.enabled ? "" : SetUI.pill("warn", "Hidden")}
+          <p>${esc((d.company_names || [d.company_name]).join(", "))} &middot; Intune: ${esc((d.intune_categories || [d.intune_category]).join(", "))} &middot; ${(d.sites || []).length} site(s) &middot; ${(d.access || []).length ? (d.access.includes("*") ? "everyone" : d.access.length + " allowed") : "super admins only"}</p></div>
         <button class="ghost" onclick="Settings.dvEdit(${i})">Edit</button></div>`).join("");
     this.pane("settings", SetUI.card("Divisions", "Each division is its own set of people, devices, sites and data. Changes reach other users within about 5 minutes (or on restart).",
       cards || `<div class="empty">No divisions yet.</div>`, `<button class="primary" onclick="Settings.dvNew()">+ Add division</button>`));
@@ -725,7 +992,7 @@ const Settings = {
       `<button class="ghost" onclick="Settings.divisions()">Back to divisions</button>`));
   },
   dvFromTemplate(id) {
-    const emptySite = () => ({ code: "", name: "", city_prefixes: [], device_prefixes: [] });
+    const emptySite = () => ({ code: "", name: "", city_prefixes: [], device_prefixes: [], company_names: [], intune_categories: [] });
     const base = { id: "", name: "", company_name: "", intune_category: "", sharepoint_hostname: "", site_path: "", ad_domain: "", sql_server: "",
       timesheet_db: "", timesheet_table: "", employee_db: "", employee_table: "", sites: [], access: [], enabled: true, _new: true };
     if (id === "one") base.sites = [emptySite()];
@@ -733,7 +1000,7 @@ const Settings = {
     else if (id === "copy") {
       const src = this.rows[+document.getElementById("tplCopy").value] || {};
       ["ad_domain", "sql_server", "timesheet_db", "timesheet_table", "employee_db", "employee_table"].forEach(k => base[k] = src[k] || "");
-      base.sites = (src.sites || []).map(s => ({ code: "", name: "", city_prefixes: [], device_prefixes: [] }));    // same number of sites, none of the names
+      base.sites = (src.sites || []).map(s => ({ code: "", name: "", city_prefixes: [], device_prefixes: [], company_names: [], intune_categories: [] }));    // same number of sites, none of the names
     }
     this.dvEdit(-2, base);
   },
@@ -753,12 +1020,7 @@ const Settings = {
           <div class="field"><label>Display name</label><input id="dvName" value="${attr(d.name)}" oninput="Settings.dvSet('name',this.value)" placeholder="NBGTX - NBG Terrell"></div>
           <div class="field"><label>Id ${d._new ? "<span class='muted'>(short, cannot change later)</span>" : "<span class='muted'>(fixed)</span>"}</label>
             <input id="dvId" value="${attr(d.id)}" ${d._new ? "" : "disabled"} oninput="Settings.dvId(this.value)" placeholder="nbgtx"></div></div>
-        <div class="field"><label>Entra company <span class="muted">(people are scoped by this exact value)</span></label>
-          ${d.company_name ? `<div class="dp-chips"><span class="dp-chip">${esc(d.company_name)} <button onclick="Settings.dvSet('company_name','');Settings.dvRender()" title="Change">&times;</button></span></div>` : ""}
-          <div id="dvCo" style="max-width:520px;${d.company_name ? "display:none" : ""}"></div></div>
-        <div class="field" style="max-width:420px"><label>Intune device category <span class="muted">(devices are scoped by it)</span></label>
-          ${this.cats && this.cats.length ? SetUI.select("dvCat", this.cats.map(c => ({ id: c, label: c })), d.intune_category, "Settings.dvSet('intune_category',this.value)", "Choose…")
-            : `<input id="dvCat" value="${attr(d.intune_category)}" oninput="Settings.dvSet('intune_category',this.value)"><p class="muted" style="font-size:12px;margin:6px 0 0">Could not load the category list from Intune; type the exact name.</p>`}</div>
+        <p class="muted" style="font-size:12px">Entra company names and Intune categories are assigned per site in the <b>Sites</b> tab.</p>
         <label class="set-check"><input type="checkbox" ${d.enabled ? "checked" : ""} onchange="Settings.dvSet('enabled',this.checked)"> Visible (untick to hide this division from everyone)</label>
         <p class="muted" style="font-size:12px">Time zone is set per division on <b>Settings &rarr; General</b> while you are in that division.</p>`;
     } else if (this.dvTab === "sites") body = `<div id="dvSites"></div>`;
@@ -773,8 +1035,7 @@ const Settings = {
     this.pane("settings", `<div class="set-card"><div class="set-card-head"><h3>${d._new ? "Add division" : "Edit " + esc(d.name)}</h3></div>
       <div class="config-tabs" style="padding:0 18px">${tabs}</div><div class="set-card-body">${body}</div>
       <div class="modal-foot"><button class="ghost" onclick="Settings.dvCancel()">Back to divisions</button><button class="primary" onclick="Settings.dvSave()">Save division</button></div></div>`);
-    if (this.dvTab === "identity" && !d.company_name) DirPicker.mount("dvCo", "company", it => { this.dvSet("company_name", it.name); this.dvRender(); }, "Search company names (type 2+ letters)…");
-    if (this.dvTab === "sites") SitesEditor.render("dvSites", d, () => this.markDirty());
+    if (this.dvTab === "sites") SitesEditor.render("dvSites", d, () => this.markDirty(), { allowScopeEdit: true, categories: this.cats || [] });
     if (this.dvTab === "sql") SqlEditor.render("dvSql", d, () => this.markDirty());
     if (this.dvTab === "access") this.dvAccRender();
   },

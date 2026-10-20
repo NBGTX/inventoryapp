@@ -31,6 +31,12 @@ try {
       <button class="navitem" data-view="inventory" onclick="Nav.go('inventory')">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7L12 3 4 7l8 4 8-4z"/><path d="M4 7v10l8 4 8-4V7"/><path d="M12 11v10"/></svg>
         Devices<span class="nav-badge hidden" id="badge-specs" onclick="Badges.openSpecs(event)"></span></button>
+      <button class="navitem" data-view="windowsupdates" onclick="Nav.go('windowsupdates')" title="Windows security update status by device">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M5.6 9A7 7 0 0 1 18 6l2 2M4 16l2 2a7 7 0 0 0 12.4-3"/><path d="M12 8v4l2.5 1.5"/></svg>
+        Windows Updates</button>
+      <button class="navitem" data-view="otdevices" onclick="Nav.go('otdevices')">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="7" height="6" rx="1"/><rect x="14" y="14" width="7" height="6" rx="1"/><circle cx="17.5" cy="7" r="3.5"/><path d="M10 7h4M7 10v5h10M17.5 10.5V14"/></svg>
+        OT Devices</button>
       <button class="navitem" data-view="people" onclick="Nav.go('people')">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         Teammates</button>
@@ -80,6 +86,14 @@ try {
 
   <!-- ============ CONTENT ============ -->
   <div class="content">
+    <div class="global-search-wrap" id="globalSearchWrap">
+      <div class="global-search-box">
+        <span class="global-search-icon" aria-hidden="true">⌕</span>
+        <input id="globalSearchInput" type="search" placeholder="Search devices, people, software, OT assets, issues…" autocomplete="off" aria-label="Search all NBG Hub records" aria-controls="globalSearchResults" aria-expanded="false" oninput="GlobalSearch.typed(this.value)" onkeydown="GlobalSearch.keydown(event)">
+        <kbd>Ctrl K</kbd>
+      </div>
+      <div class="global-search-results hidden" id="globalSearchResults" role="listbox" aria-label="Search results"></div>
+    </div>
 
     <!-- ---------- SIGN-IN GATE (shown instead of the pages while nobody is signed in) ---------- -->
     <div class="signin-gate" id="signinGate">
@@ -96,7 +110,7 @@ try {
     <!-- ---------- SETTINGS ---------- -->
     <section class="appview" id="appview-settings">
       <div class="pagehead"><div><h2>Settings</h2><p id="setSub">Division and platform settings.</p></div></div>
-      <div class="set-layout"><nav class="set-rail" id="setRail"></nav><div class="set-pane" id="setPane"></div></div>
+      <div class="set-layout"><div class="set-nav"><label class="set-search-label" for="setSearch">Find a setting</label><input id="setSearch" class="set-search" type="search" placeholder="Search settings…" autocomplete="off" oninput="Settings.filterRail(this.value)"><nav class="set-rail" id="setRail"></nav></div><div class="set-pane" id="setPane"></div></div>
     </section>
 
     <!-- ---------- DASHBOARD ---------- -->
@@ -132,6 +146,10 @@ try {
           <button class="choice" onclick="Hub.startUser()">
             <div class="cic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg></div>
             <h3>New User Setup</h3><p>Mailbox, AD, licenses, access for a teammate.</p>
+          </button>
+          <button class="choice" onclick="Hub.startOffboarding()">
+            <div class="cic">↗</div>
+            <h3>Teammate Offboarding</h3><p>Track account, access, equipment, and handoff steps.</p>
           </button>
         </div>
         <h4 class="blkhead">In progress &amp; recent setups <span class="num" id="setupCount">0</span></h4>
@@ -295,10 +313,38 @@ try {
           </select>
           <span id="ufChip" class="uf-chip hidden"></span>
           <button id="fClear" class="rowbtn hidden" onclick="App.clearFilters()">Clear filters</button>
-          <span class="dev-tools-r"><span class="muted" id="devCount"></span><button class="rowbtn" onclick="App.copyList()" title="Copy the rows shown, ready to paste into Excel">Copy list</button></span>
+          <span class="dev-tools-r"><span class="muted" id="devCount"></span><select id="savedReports" class="filt" aria-label="Saved reports" onchange="SavedReports.apply(this.value)"><option value="">Saved reports</option></select><button class="rowbtn" onclick="SavedReports.saveCurrent()">Save report</button><button class="rowbtn" onclick="App.copyList()" title="Copy the rows shown, ready to paste into Excel">Copy list</button></span>
         </div>
         <div id="bulkBar" class="bulk-bar hidden"></div>
         <div id="tableWrap"><div class="empty">Loading…</div></div>
+      </div>
+    </section>
+
+    <!-- ---------- WINDOWS UPDATE WATCH ---------- -->
+    <section class="appview" id="appview-windowsupdates">
+      <div class="toprow">
+        <div><h2>Windows Update Watch</h2><p>Security update status for Windows devices managed by this division in Intune.</p></div>
+        <div class="actions"><button class="ghost" onclick="WindowsUpdates.exportCsv()">Export CSV</button><button class="ghost" onclick="WindowsUpdates.copyList()">Copy list</button><button class="primary" id="wuRefresh" onclick="WindowsUpdates.refresh()">↻ Refresh from Intune</button></div>
+      </div>
+      <div class="panel wu-standard">
+        <b>Update standard</b><span>Critical or actively exploited updates: 72 hours. Other security updates: 14 days, with warning after day 7. No check-in for 7+ days means status unknown; 30+ days means stale.</span>
+        <small>Based on Intune’s reported running Windows build and Microsoft’s security-update catalog. A device may remain behind until it installs and restarts. This report does not install updates.</small>
+      </div>
+      <div class="stats wu-stats">
+        <div class="stat clickable wu-critical" onclick="WindowsUpdates.setStatus('critical-overdue')"><div class="n" id="wuCritical">–</div><div class="l">Critical overdue</div></div>
+        <div class="stat clickable" onclick="WindowsUpdates.setStatus('behind')"><div class="n" id="wuBehind">–</div><div class="l">Security behind</div></div>
+        <div class="stat clickable" onclick="WindowsUpdates.setStatus('due-soon')"><div class="n" id="wuDue">–</div><div class="l">Due soon</div></div>
+        <div class="stat clickable" onclick="WindowsUpdates.setStatus('current')"><div class="n" id="wuCurrent">–</div><div class="l">Current</div></div>
+        <div class="stat clickable" onclick="WindowsUpdates.setStatus('unknown')"><div class="n" id="wuUnknown">–</div><div class="l">Unknown / stale</div></div>
+      </div>
+      <div class="panel">
+        <div class="tools wu-tools">
+          <input id="wuSearch" type="search" placeholder="Search device, user, site, model, KB…" oninput="WindowsUpdates.render()">
+          <select id="wuStatus" class="filt" onchange="WindowsUpdates.render()"><option value="">All update states</option><option value="critical-overdue">Critical overdue</option><option value="critical-due">Critical due within 72 hours</option><option value="behind">Security behind</option><option value="due-soon">Due soon</option><option value="pending">Within 14 days</option><option value="current">Current</option><option value="unknown">Status unknown</option><option value="stale">Stale check-in</option></select>
+          <select id="wuSite" class="filt" onchange="WindowsUpdates.render()"><option value="">All sites</option></select>
+          <span class="dev-tools-r"><span class="muted" id="wuCount"></span><span class="muted" id="wuUpdated"></span></span>
+        </div>
+        <div id="wuHost"><div class="empty">Loading Windows update status…</div></div>
       </div>
     </section>
 
@@ -366,13 +412,18 @@ try {
             <button class="ghost" id="spmScanWholeSite" onclick="SharePointPermissions.scan(this)">Scan whole site</button>
             <button class="ghost" onclick="SharePointPermissions.showBrowserPage()">Change site</button>
           </div>
-          <div class="spm-safety">Scans are read-only. To fix a folder tree, first set the desired permissions on its parent in SharePoint, then preview and apply inheritance to descendants.</div>
+          <div class="spm-safety">Scans are read-only. Preview any permission change before applying. Propagate a parent’s permissions to descendants, or copy grants between folders and libraries on this site.</div>
           <div class="spm-folder-browser">
-            <div class="spm-section-head spm-folder-browser-head"><div><h3>Browse folders</h3><p class="muted">Choose one or more folders. Scanning includes all nested folders and files.</p></div><div class="spm-folder-browser-controls"><span id="spmFolderSelectionCount" class="muted">Loading libraries…</span><button type="button" class="ghost" id="spmFolderBrowserToggle" aria-expanded="true" aria-controls="spmFolderBrowserBody" onclick="SharePointPermissions.toggleFolderBrowser()">Collapse</button></div></div>
+            <div class="spm-section-head spm-folder-browser-head"><div><h3>Browse folders</h3><p class="muted">Choose folders or libraries. Scanning includes nested folders and files.</p></div><div class="spm-folder-browser-controls"><span id="spmFolderSelectionCount" class="muted">Loading libraries…</span><button type="button" class="ghost" id="spmFolderBrowserToggle" aria-expanded="true" aria-controls="spmFolderBrowserBody" onclick="SharePointPermissions.toggleFolderBrowser()">Collapse</button></div></div>
             <div id="spmFolderBrowserBody">
               <div id="spmFolderBrowserStatus" class="spm-site-search-status" role="status" aria-live="polite">Loading document libraries…</div>
               <div id="spmFolderBrowserTree" class="spm-folder-tree"></div>
-              <div class="tools spm-folder-actions"><button class="primary" id="spmPropagateButton" onclick="SharePointPermissions.prepareInheritance()" disabled>Preview permission propagation</button><span class="muted">Select exactly one parent folder. Descendant unique grants and sharing links will be shown before any change.</span></div>
+              <div class="tools spm-folder-actions"><button class="primary" id="spmPropagateButton" onclick="SharePointPermissions.prepareInheritance()" disabled>Preview permission propagation</button><span class="muted">Select one folder or library. Descendant unique grants and sharing links will be shown before any change.</span></div>
+              <div class="spm-copy-tools">
+                <div class="tools spm-folder-actions"><button class="ghost" id="spmCopySourceButton" onclick="SharePointPermissions.captureCopyEndpoint('source')" disabled>Use selection as source</button><button class="ghost" id="spmCopyTargetButton" onclick="SharePointPermissions.captureCopyEndpoint('target')" disabled>Use selection as destination</button><button class="primary" id="spmCopyPreviewButton" onclick="SharePointPermissions.preparePermissionCopy()" disabled>Preview permission copy</button></div>
+                <div id="spmCopySelectionSummary" class="muted" aria-live="polite">Choose a source and destination from this site.</div>
+                <div class="muted">Copy grants between folders or libraries in this site. Unique destination descendants inherit from destination; sharing links are not copied.</div>
+              </div>
             </div>
           </div>
           <div class="spm-status-wrap"><div id="spmStatus" class="spm-status" role="status" aria-live="polite">Choose a site to scan.</div><button id="spmFixOpen" class="rowbtn hidden" onclick="SharePointPermissions.showFixTutorial()">Fix access</button></div>
@@ -432,6 +483,28 @@ try {
           </div>
           <div id="spmTab-changes" class="spm-tab-panel hidden"><div class="panel"><div id="spmChanges"></div></div></div>
         </div>
+      </div>
+    </section>
+
+    <!-- ---------- OT DEVICE REGISTER ---------- -->
+    <section class="appview" id="appview-otdevices">
+      <div class="pagehead">
+        <div><h2>OT Devices</h2><p>Manually maintained, division-shared OT register for Windows systems, controllers, and other operational technology. Separate from Intune.</p></div>
+        <div class="actions"><button class="ghost" onclick="OTDevices.load(true)">↻ Refresh</button><div class="menu-wrap" id="otMoreWrap"><button class="ghost" onclick="OTDevices.toggleMore(event)" aria-haspopup="true" aria-expanded="false" aria-controls="otMore">⋯ More</button><div class="menu hidden" id="otMore"><button onclick="OTDevices.closeMore();OTDevices.sampleCsv()">Download sample CSV</button><button class="hidden" id="otImportBtn" onclick="OTDevices.closeMore();OTDevices.importCsv()">Import spreadsheet…</button><button class="hidden" id="otReminderBtn" onclick="OTDevices.closeMore();OTDevices.sendReminders()">Email update reminders…</button><button onclick="OTDevices.closeMore();OTDevices.exportCsv()">Export CSV</button></div></div><button class="primary" id="otAddBtn" onclick="OTDevices.open()">＋ Add OT device</button></div>
+      </div>
+      <div class="help-slot" data-help="ot-devices"></div>
+      <div id="otStats" class="stats"></div>
+      <div class="panel">
+        <div class="tools ot-tools">
+          <input id="otSearch" type="search" placeholder="Search name, IP, vendor, model, area…" autocomplete="off" oninput="OTDevices.render()">
+          <select id="otType" class="filt" onchange="OTDevices.render()"><option value="">All device types</option></select>
+          <select id="otStatus" class="filt" onchange="OTDevices.render()"><option value="">All statuses</option><option>Active</option><option>Spare</option><option>Maintenance</option><option>Retired</option></select>
+          <select id="otCriticality" class="filt" onchange="OTDevices.render()"><option value="">All criticalities</option><option>Low</option><option>Medium</option><option>High</option><option>Critical</option></select>
+          <select id="otFreshness" class="filt" onchange="OTDevices.render()"><option value="">All data quality</option><option value="stale">Verification due / overdue</option><option value="missing">Missing key information</option><option value="verify">Needs verification</option><option value="attention">Needs attention</option></select>
+          <details class="ot-column-picker"><summary>Columns</summary><div id="otColumnsMenu"></div></details>
+          <span class="dev-tools-r"><span class="muted" id="otCount"></span></span>
+        </div>
+        <div id="otHost"><div class="empty">Loading OT inventory…</div></div>
       </div>
     </section>
 
@@ -557,6 +630,8 @@ try {
 <div id="toasts"></div>
 
 <script src="app.js"></script>
+<script src="windows_updates.js"></script>
+<script src="ot_devices.js"></script>
 <script src="settings.js"></script>
 <script src="issues.js"></script>
 <script src="sharepoint_permissions.js"></script>

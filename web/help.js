@@ -25,16 +25,26 @@ const Help = {
           <li><b>Missing specs</b> (appears when there are any): devices with no CPU, RAM or warranty date recorded. This happens for makers whose lookup is not available yet (Dell and HP need an API key). Click it, then <b>Edit specs</b> on a row, or <b>Fill them one by one</b> to step through the list with <b>Save &amp; next</b>. When other devices of the same model lack the same data, one tick fills their processor, RAM and storage too (warranty stays per device). Values count immediately toward the upgrade rules. Virtual machines are left out.</li>
           <li><b>No check-in N+ days</b>: devices that have not reported to Intune for longer than the stale limit (30 days unless a super admin changed it).</li>
           <li><b>Users without MFA</b>: people with a device but no registered multi-factor method.</li>
-          <li><b>Not part of this division</b>: devices in the division's Intune category whose user is not in the division's Entra company. Usually a mis-categorized device.</li>
+          <li><b>Not part of this division</b>: devices in any Intune category assigned to its sites whose user is outside its assigned Entra company names. Usually a mis-categorized device.</li>
         </ul>
         <h5>The cards</h5>
         <ul>
           <li><b>Warranty status</b>: click a bar to list the devices in that range.</li>
           <li><b>Upgrade Forecast by site</b>: the top of the queue. <b>Open list</b> goes to the Upgrades page.</li>
-          <li><b>In stock by department</b>: spare machines grouped by who they are for. <b>Configure</b> opens Settings → Model departments, where you decide which department each model belongs to.</li>
+          <li><b>In stock by department</b>: spare machines grouped by intended departments. A shared model can belong to multiple departments, so it appears in each matching group. <b>Configure</b> opens Settings → Model departments.</li>
         </ul>
         <h5>Refreshing</h5>
         <p><b>Refresh</b> re-reads everything and shows a confirmation. <b>Last sync</b> (under the title) says when this division's devices were last pulled from Intune. It turns red when that was more than 36 hours ago, never happened, or had errors. Run <b>Sync now</b> on the Devices page, or a super admin can run <b>Sync all divisions</b> in Settings.</p>`
+    },
+    "ot-devices": {
+      title: "How the OT device register works",
+      html: `
+        <p>This division-shared register tracks OT systems separately from Intune: host, controller/runtime, network, operating system, AD membership, job folder, configuration record, documentation state, and connected equipment.</p>
+        <ul>
+          <li>Use <b>Documented</b> when records are complete; use <b>Needs Verification</b> for unknown or assumed details. CSV placeholders such as “To be captured”, “Unknown - confirm”, “Not recorded”, and “Yes - assumed, confirm” convert automatically.</li>
+          <li>The sample CSV shows supported columns. Import preview maps this inventory's headers; review the mapping before import. “Pending” becomes <b>Needs Verification</b>; “Documented” stays documented.</li>
+          <li><b>Needs verification</b> filter finds records with that documentation state or unresolved fields. Use row-level <b>Verify</b> after checking the live device.</li>
+        </ul>`
     },
     basics: {
       title: "Getting around the app",
@@ -45,7 +55,7 @@ const Help = {
           <li><b>Spinner chip above your name</b>: a long job (sync, software pull, MFA) is still running. You can move to other pages meanwhile.</li>
           <li><b>"Saving…" pill</b> at the top: a save is in progress. Wait for it to finish before closing the app.</li>
           <li><b>Number badges</b> on a menu item: something there needs attention. On <b>Issues</b>, super admins see how many issues are still <b>New</b> (not triaged); everyone else sees how many of their own or watched issues have news since they last opened the page. The badge clears when you open the page (for super admins it clears as each New issue is triaged). <b>Devices</b> shows how many devices have missing specs (click the badge to fill them in); <b>Upgrades</b> shows how many devices are on the Upgrade list.</li>
-          <li><b>Version</b> (bottom of the sidebar): click it to see which version each person is running. A yellow or red version means an update is available or required.</li>
+          <li><b>Version</b> (bottom of the sidebar): click it to see which version each person is running and reopen <b>What’s new</b>. After an update, release notes appear once on first launch. A yellow or red version means an update is available or required.</li>
           <li><b>Report bug / feature</b>: opens a short form that files an issue on the shared Issues board.</li>
           <li><b>Settings</b>: what you see there depends on your role. Everyone sees General; division admins see more; super admins also see the Platform section.</li>
         </ul>`
@@ -290,6 +300,7 @@ const Help = {
           <li>Use the <b>one search box</b> for software (name or publisher) <i>or</i> a person or device. A software name lists those apps; a person or device name lists everything installed on them. If a word matches both, chips let you choose. The <b>department</b> list narrows it further; a department comes from each person's Entra profile.</li>
           <li>Each app is <b>one row</b>, whatever its version: the install count covers every version, and the <b>Versions</b> column shows how many there are and which is the latest. Click <b>N versions</b> (or the arrow) to list them; click a version to see only the people with that one.</li>
           <li>Click an app (anywhere on its row) to see <b>who has it</b>, with the version each person has. In that window, type to filter, pick a <b>Version</b> from the list to narrow it, click a column heading to sort, use <b>Copy list</b> to paste the rows into Excel, or click a user's name to see <b>everything that person has</b>.</li>
+            <li>Use <b>Flag not allowed</b> on an app to add it to this division's Not allowed report. This is a report flag only; it does not block installation. Open <b>Not allowed</b> to see each flagged app and its current install count; click <b>Who has it</b> to inspect one app, or <b>Export full report</b> to download all flagged apps and their device, user, version, site, and department rows in one CSV. The export ignores current search and department filters; flagged apps with no matches still get a row. Intune's last refreshed inventory determines what appears.</li>
           <li><b>Mandatory</b> apps are worked out automatically as each department's <b>most-installed apps</b> (10 by default; the <b>Mandatory apps…</b> button changes that). Its <b>Department list</b> tab lets you add or remove apps for one department, copy another department's list, or <b>Clear my changes</b> to undo your additions and removals and use the automatic list again. Its <b>Automatic rule</b> tab (division admins only) sets how many apps, the minimum share of the department that must have an app, and the smallest department that gets an automatic list. You can flag or unflag an app as mandatory for a department to override that. Switch to <b>Mandatory only</b> to hide everything else: with one department chosen it shows the mandatory list of that department, with all departments it shows apps mandatory in at least one.</li>
         </ol>
         <p>"Missing" is judged against the <b>newest version</b> of an app only: someone with an old release but not the latest still counts as missing. Versions of one app are grouped under its name. The Dashboard's compliance counts use exactly the same rules.</p>`
@@ -383,14 +394,42 @@ const Help = {
       title: "About General settings",
       html: `
         <ul>
-          <li><b>About this division</b> is read-only: name, id, Entra company, Intune device category and sites. A super admin changes these under Platform → Divisions.</li>
-          <li><b>Appearance</b> changes colors on this computer only. NBG Green stays the default; all theme choices apply immediately and are saved for your next session.</li>
-          <li><b>My default division</b> (only if you can see more than one division): the division NBG Hub opens in at every start. Only you see this choice. Leave it on "The last division I used" to keep the old behaviour.</li>
-          <li><b>Time zone</b>: every date and time in the app for this division is shown in this zone. "Use the default" uses the platform default, or each PC's own zone if there is none. The line under the box shows what the time is right now in the zone you pick.</li>
-          <li><b>Inventory options</b> (division admins): <i>Devices to sync from Intune</i> chooses between Windows computers only (the default) and every device type. <i>Hot spare departments</i> are the department groups on the Hot spares window; "Other" is always added at the end.</li>
-          <li><b>Project Hub</b>: where the sidebar's Project Hub item opens for this division. Leave it blank to use the platform default. "Open this address" lets you test it first.</li>
+          <li>Use tabs to keep division identity, your personal preferences, inventory, OT device lists, mail delivery and notification recipients separate.</li>
+          <li>Each tab saves its own changes. Unsaved edits are flagged before leaving Settings.</li>
         </ul>
-        <p>Plain users see this page read-only. Changes are saved with the button on each card.</p>`
+        <p>Options only affect this division unless a tab says they are personal.</p>`
+    },
+    "set-general-about": {
+      title: "About this division",
+      html: `<p>This read-only summary shows division name, id, Entra company, Intune category and sites. A super admin changes division identity under <b>Platform → Divisions</b>.</p>`
+    },
+    "set-general-personal": {
+      title: "Your preferences",
+      html: `<p><b>Appearance</b> applies only on this computer. Your theme is saved for your next session. If you can access several divisions, <b>My default division</b> sets which one opens at startup; it does not change anyone else's choice.</p>`
+    },
+    "set-general-timezone": {
+      title: "Division time zone",
+      html: `<p>Dates and times in this division use this time zone. <b>Use the default</b> selects the platform default, or each PC's own zone if no platform default exists. The preview shows current time in the selected zone.</p>`
+    },
+    "set-general-inventory": {
+      title: "Inventory options",
+      html: `<p>These division settings control which device types sync from Intune and which department groups appear in Hot Spares. <b>Other</b> stays available as the final department. Set minimum spare stock to zero to disable its alert.</p>`
+    },
+    "set-general-ot": {
+      title: "OT device lists and review cycle",
+      html: `<p>Maintain dropdown choices used for this division's OT assets. Site choices come from <b>Settings → Sites</b>. The stale period controls when assets need another verification.</p>`
+    },
+    "set-general-mail": {
+      title: "Division mail delivery",
+      html: `<p>When enabled and complete, this division's SMTP relay sends its notification mail. Credentials are not stored. If relay is off or missing required details, the platform delivery route is used. Send a sample from <b>Recipients &amp; tests</b>.</p>`
+    },
+    "set-general-alerts": {
+      title: "Recipients and test emails",
+      html: `<p>These recipients receive selected issue events and operational alerts for this division. Platform issue recipients are managed separately under <b>Platform → Issue notifications</b>. Test samples go only to your signed-in account.</p>`
+    },
+    "set-general-project": {
+      title: "Project Hub address",
+      html: `<p>Set where the Project Hub sidebar item opens for this division. Leave blank to use the platform default. Use <b>Open this address</b> to check it before saving.</p>`
     },
     "set-access": {
       title: "How access works",
@@ -431,11 +470,11 @@ const Help = {
     "set-models": {
       title: "How Model departments work",
       html: `
-        <p>Here you say which <b>department each computer model is for</b>. The Dashboard then shows how many spare machines each department has in stock, and the Reserve-a-computer list in Endpoint Provisioning uses the same grouping.</p>
+        <p>Assign each model to one or more departments. Shared models appear under every assigned department in the Dashboard and reserve list; counts are per department and can include the same model in multiple groups.</p>
         <ol>
           <li>Add or remove <b>departments</b> with the box at the top (press Enter or <b>+ Add</b>).</li>
-          <li>In the table, choose a department for each model. You can also tick several models and use <b>Assign selected to</b> + <b>Apply</b>. Use the search and filter above the table to find models.</li>
-          <li>Click <b>Save</b>. Models you leave unassigned show as <b>Unassigned</b>.</li>
+          <li>Open a model's <b>Departments</b> selector and check every department that uses it. For several models, select rows and use <b>Add selected to</b>. Choose <b>Remove all assignments</b> to unassign them.</li>
+          <li>Click <b>Save</b>. Models with no department show as <b>Unassigned</b>.</li>
         </ol>
         <p>Every model currently in stock or in use is listed, plus any model already mapped.</p>`
     },
@@ -498,7 +537,7 @@ const Help = {
         <p>When someone files an issue, changes its status or comments, the app tells the right people. Everyone involved in an issue (reporter, assignee, watchers) is told about status changes and comments. <b>The people listed here</b> are told about the events you tick, for <b>every</b> issue.</p>
         <ol>
           <li><b>Add a person</b>: type a name or sign-in; the list comes from Entra. Each person starts with all three events ticked: <i>New issue</i>, <i>Status change</i>, <i>New comment</i>. Untick what they do not need, then click <b>Save people</b>.</li>
-          <li><b>How the e-mail leaves the app.</b> An enabled division SMTP relay in Settings → General is used first. Otherwise, the app uses the platform notification webhook (Settings → Integrations) or Graph mail if already permitted. SMTP uses anonymous relay; the server must accept connections from the user's network.</li>
+          <li><b>How the e-mail leaves the app.</b> An enabled division SMTP relay in Settings → General → Mail delivery is used first. Otherwise, the app uses the platform notification webhook (Settings → Integrations &amp; options) or Graph mail if already permitted. SMTP uses anonymous relay; the server must accept connections from the user's network.</li>
           <li>Click <b>Send a test</b> to send a sample to the people on the list (or to you if the list is empty).</li>
         </ol>
         <p>No SMTP relay, webhook or mail permission means nothing is sent; the issue's activity log says "not sent" so you can see it. Nothing is sent in Local data mode.</p>
@@ -556,7 +595,7 @@ const Help = {
     "set-integrations": {
       title: "How integrations & options work",
       html: `
-        <p>These are platform-wide settings, kept in the central Master Settings list. Each row has its own <b>Save</b> button.</p>
+        <p>These are platform-wide settings, kept in the central Master Settings list. Search by name or description, expand a group, then use that row's <b>Save</b> button. Unsaved edits are protected when leaving Settings.</p>
         <ul>
           <li><b>Vendor APIs</b>: keys for Lenovo, Dell and HP warranty and spec lookups. Secrets are stored hidden and are <b>never shown again</b>; type a new value to replace one. Dell and HP only give model and warranty date, not CPU or RAM.</li>
           <li><b>Regional</b>: the default time zone and the default Project Hub address, used by divisions that have not set their own.</li>

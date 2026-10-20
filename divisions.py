@@ -48,6 +48,7 @@ def _legacy(cfg: dict) -> dict:
                      ("ad_domain", "ad_domain"), ("timesheet_sql_server", "sql_server")):
         if cfg.get(src):
             d[dst] = cfg[src]
+    d["sites"] = clean_sites(d.get("sites"), d.get("company_name"), d.get("intune_category"))
     return d
 
 
@@ -59,7 +60,7 @@ def valid_id(div_id) -> bool:
     return bool(_ID_RE.match(str(div_id or "")))
 
 
-def clean_sites(sites) -> list[dict]:
+def clean_sites(sites, company_name="", intune_category="") -> list[dict]:
     """Keep only well-formed sites. A code ends up in HTML attributes and CSS classes, so anything
     that is not 2-6 letters/digits is dropped (the registry can be edited by many people)."""
     out, seen = [], set()
@@ -71,8 +72,11 @@ def clean_sites(sites) -> list[dict]:
             continue
         seen.add(code)
         lst = lambda v: [str(x).strip() for x in (v or []) if str(x).strip()] if isinstance(v, list) else []
+        companies = lst(s.get("company_names")) if isinstance(s.get("company_names"), list) else ([str(company_name).strip()] if company_name else [])
+        categories = lst(s.get("intune_categories")) if isinstance(s.get("intune_categories"), list) else ([str(intune_category).strip()] if intune_category else [])
         out.append({"code": code, "name": str(s.get("name") or code).strip(),
-                    "city_prefixes": lst(s.get("city_prefixes")), "device_prefixes": lst(s.get("device_prefixes"))})
+                    "city_prefixes": lst(s.get("city_prefixes")), "device_prefixes": lst(s.get("device_prefixes")),
+                    "company_names": companies, "intune_categories": categories})
     return out
 
 
@@ -93,7 +97,13 @@ def load_registry(cfg: dict) -> list[dict]:
         d.setdefault("legacy_data", False)
         if not valid_id(d["id"]):
             continue
-        d["sites"] = clean_sites(d.get("sites"))
+        d["sites"] = clean_sites(d.get("sites"), d.get("company_name"), d.get("intune_category"))
+        companies = company_names(d)
+        categories = intune_categories(d)
+        if companies:
+            d["company_name"] = companies[0]
+        if categories:
+            d["intune_category"] = categories[0]
         out.append(d)
     return out or [_legacy(cfg)]
 
@@ -107,9 +117,41 @@ def find(registry: list[dict], div_id: str | None) -> dict:
 
 def public(d: dict) -> dict:
     """Division fields safe/useful to send to the UI."""
-    return {"id": d["id"], "name": d["name"], "company_name": d["company_name"],
+    companies = company_names(d)
+    categories = intune_categories(d)
+    return {"id": d["id"], "name": d["name"], "company_name": (companies[0] if companies else d.get("company_name", "")),
+            "company_names": companies, "intune_category": (categories[0] if categories else d.get("intune_category", "")),
+            "intune_categories": categories,
             "ad_domain": d.get("ad_domain", ""), "has_timesheet": all(d.get(k) for k in ("sql_server", "timesheet_db", "timesheet_table", "employee_db", "employee_table")),
-            "sites": [{"code": s["code"], "name": s.get("name", s["code"])} for s in d.get("sites", [])]}
+            "sites": [{"code": s["code"], "name": s.get("name", s["code"]),
+                       "company_names": list(s.get("company_names") or []),
+                       "intune_categories": list(s.get("intune_categories") or [])} for s in d.get("sites", [])]}
+
+
+def company_names(d: dict) -> list[str]:
+    """Unique Entra companyName values assigned across division sites."""
+    values = []
+    for site in d.get("sites", []):
+        for value in site.get("company_names", []):
+            value = str(value or "").strip()
+            if value and value.casefold() not in {x.casefold() for x in values}:
+                values.append(value)
+    if not values and d.get("company_name"):
+        values.append(str(d["company_name"]).strip())
+    return values
+
+
+def intune_categories(d: dict) -> list[str]:
+    """Unique Intune device categories assigned across division sites."""
+    values = []
+    for site in d.get("sites", []):
+        for value in site.get("intune_categories", []):
+            value = str(value or "").strip()
+            if value and value.casefold() not in {x.casefold() for x in values}:
+                values.append(value)
+    if not values and d.get("intune_category"):
+        values.append(str(d["intune_category"]).strip())
+    return values
 
 
 def site_codes(d: dict) -> list[str]:

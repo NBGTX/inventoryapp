@@ -725,6 +725,7 @@ The scope lists are in `graph.py:72-100` (V). Sign-in requests core + optional s
 17. Consolidate duplicated helpers.
 18. Fix the stale docstrings and comments (§11 #16). The README itself was rewritten on 2026-09-30.
 19. Pin dependency versions.
+20. **Network discovery (planned; not started).** Add division-scoped scan targets, ideally associated with sites, with IP ranges/subnets, exclusions, schedules, and scan status. Reliable scheduled discovery across sites requires a scanner service or host on each reachable network; scans launched from the desktop app alone only work while that client is running and can reach the target network. Design for conservative, low-impact OT discovery and explicit target approval before implementation.
 
 ---
 

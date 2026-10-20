@@ -12,7 +12,7 @@ Target: one **central** SharePoint site that every division's users can reach, h
 |---|---|---|
 | Devices, audit log | `nucor.sharepoint.com/sites/NBGW/systems` (NBGW lists) | Central site, shared lists with a `Division` column |
 | Hub data (setups, upgrades, hot spares, baselines, sites + PIN, software cache) | JSON files in `SystemsData\_EndpointHub\` (OneDrive sync, last-writer-wins) | `Hub Items` list (one row per item) plus a `Hub Files` library for large blobs |
-| Division config (companyName, Intune category, site list, AD/SQL) | Hardcoded for NBGW in `graph.py` / `app.py` / `hub.py` / `web/app.js` | `Divisions` list (and `divisions` in config.json as a fallback) |
+| Division config (site-scoped companyName and Intune categories, site list, AD/SQL) | Hardcoded for NBGW in `graph.py` / `app.py` / `hub.py` / `web/app.js` | `Divisions` list (and `divisions` in config.json as a fallback) |
 | Timesheet week locks | SQL `NBSTimesheet.dbo.WeekLocked` | Unchanged |
 
 **Central site:** `https://nucor.sharepoint.com/sites/NBGTX.nbghubdata` (dedicated site "NBG Hub Data"; owner: the project owner).
@@ -37,7 +37,7 @@ Prefix defaults to `Inventory`. Column display name (internal name) in parenthes
 
 | List | Columns (besides `Title`) |
 |---|---|
-| `Inventory - Divisions` | Display Name, Company Name, Intune Category, SharePoint Host, Site Path, AD Domain, SQL Server, Sites JSON (note), Access JSON (note), Enabled (yes/no). `Title` = division id (e.g. `nbgw`). |
+| `Inventory - Divisions` | Display Name, Company Name, Intune Category, SharePoint Host, Site Path, AD Domain, SQL Server, Sites JSON (note; includes per-site Entra company names and Intune categories), Access JSON (note), Enabled (yes/no). `Title` = division id (e.g. `nbgw`). Company Name and Intune Category retain first-value compatibility for older app versions. |
 | `Inventory - New Stock` | **Division** (indexed), Manufacturer, Model, Site Tag, CPU, Memory (RAM), Storage, Warranty Expiration, Status, Date Added. `Title` = serial. |
 | `Inventory - In Use` | **Division** (indexed), Device Name, Manufacturer, Model, Site Tag, Primary User, CPU, Memory (RAM), Storage, OS Version, OS Install Date, Last Sign In, Warranty Expiration, MFA. `Title` = serial. |
 | `Inventory - Model Specs` | CPU, Memory (RAM). `Title` = model. |
@@ -117,6 +117,6 @@ The PowerShell script creates `Enabled` as Yes/No and `Rev` as Number. The manua
 
 ## 9. Adding a division
 
-1. Add a row to `Inventory - Divisions` on the central site: Title = short id (lowercase, e.g. `nbgtx`), Display Name, Company Name (exact Entra `companyName`), Intune Category, SharePoint Host + Site Path (the old per-division site, only needed as a migration source), AD Domain, SQL Server, Sites JSON (code, name, city_prefixes, device_prefixes), Access JSON (`[]` = super admins only, `["*"]` = everyone, or `["a@nucor.com"]`), Enabled = Yes.
+1. Add a row to `Inventory - Divisions` on the central site: Title = short id (lowercase, e.g. `nbgtx`), Display Name, SharePoint Host + Site Path (the old per-division site, only needed as a migration source), AD Domain, SQL Server, Sites JSON (code, name, city_prefixes, device_prefixes, company_names, intune_categories), Access JSON (`[]` = super admins only, `["*"]` = everyone, or `["a@nucor.com"]`), Enabled = Yes. Company Name and Intune Category scalar columns retain first-value compatibility for older app versions.
 2. Users see it in the header switcher within about 5 minutes (restart the app to see it immediately).
 3. Load the division's existing data with the loader: `python tools\load_central.py --division <id>` (needs a snapshot of that division's old site).

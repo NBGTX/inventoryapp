@@ -301,11 +301,35 @@ const Feedback = {
     const title = (document.getElementById("mfbTitle")?.value || "").trim();
     const detail = (document.getElementById("mfbDetail")?.value || "").trim();
     const hasAttachments = Attach.payload("new").length > 0;
-    if (!submitted && (title || detail || hasAttachments) && !window.confirm("Discard this issue draft? Your title, details, and attachments will be lost.")) return false;
+    if (!submitted && (title || detail || hasAttachments)) {
+      this.askDiscard();
+      return false;
+    }
     if (!submitted) this.deleteDraft().catch(() => {});
     this.minimized = false;
     document.getElementById("modalRoot").innerHTML = "";
     return true;
+  },
+  askDiscard() {
+    if (document.getElementById("mfbDiscardConfirm")) return;
+    const prompt = document.createElement("div");
+    prompt.id = "mfbDiscardConfirm";
+    prompt.className = "overlay feedback-confirm-overlay";
+    prompt.innerHTML = `<div class="modal feedback-confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="mfbDiscardTitle">
+      <div class="modal-head"><h3 id="mfbDiscardTitle">Discard issue draft?</h3></div>
+      <div class="modal-body"><p style="margin:0">Your title, details, and attached files will be lost.</p></div>
+      <div class="modal-foot"><button type="button" class="ghost" onclick="Feedback.cancelDiscard()">Keep editing</button><button type="button" class="primary feedback-discard-button" onclick="Feedback.discardNow()">Discard draft</button></div>
+    </div>`;
+    document.getElementById("modalRoot").appendChild(prompt);
+    prompt.querySelector("button")?.focus();
+  },
+  cancelDiscard() {
+    document.getElementById("mfbDiscardConfirm")?.remove();
+  },
+  discardNow() {
+    this.deleteDraft().catch(() => {});
+    this.minimized = false;
+    document.getElementById("modalRoot").innerHTML = "";
   },
   updateRestoreTitle() {
     const input = document.getElementById("mfbTitle"), label = document.getElementById("mfbRestoreTitle");

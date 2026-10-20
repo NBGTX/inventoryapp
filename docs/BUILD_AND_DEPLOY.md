@@ -24,7 +24,8 @@ One command builds a tested installer. Techs run the installer; it needs no admi
 ## Cutting a release
 
 1. Make sure everything is committed and pushed to `origin main`.
-2. `python tools\bump_version.py` (updates `version.py`, `version.txt`, mock strings). Commit and push.
+2. Add this release's user-facing highlights to `APP_RELEASE_NOTES` in `web/app.js` using the target version. The What's New modal includes every release note after the previous packaged installer through the current version, and appears once on first launch; users can reopen it from Versions in use. The installer build reads the prior setup version from `release\` and sets that baseline automatically. Then run `python tools\bump_version.py` (updates `version.py`, `version.txt`, mock strings). Commit and push.
+   To intentionally show a longer history, pass `-WhatsNewBaseline YYYY.MM.DD` (or `YYYY.MM.DD.N`) to `build.ps1`.
 3. Close the running app, then:
 
 ```powershell
@@ -74,6 +75,12 @@ The installer is already managed-deployment friendly:
 - Per-user app, so deploy in **user** context.
 - Detection rule: file `%LOCALAPPDATA%\Programs\NBG Hub\NBG Hub.exe`, version greater than or equal to the release version (or the Uninstall registry key under `HKCU`, AppId `{6F1D2C54-3B7A-4E58-9A1C-0B8E5D4F7A21}`).
 - Wrap with the Microsoft Win32 Content Prep Tool to get a `.intunewin`.
+
+## PSAppDeployToolkit package
+
+The `PSADT` folder contains a ready-to-wrap PSAppDeployToolkit deployment package. Keep exactly one `NBG-Hub-Setup-<version>.exe` in `PSADT\Files`; `Deploy-Application.ps1` detects its version, silently removes existing NBG Hub installs published by Nucor for the signed-in user, then installs the staged release. The app's user data under `%LOCALAPPDATA%\NBG Hub` is retained by the app uninstaller.
+
+Deploy this package in the **signed-in user's context**, not SYSTEM. NBG Hub is per-user; the script stops with an explanation if launched as SYSTEM. For each release, replace the setup file under `PSADT\Files` with the new installer and wrap the `PSADT` folder using the Microsoft Win32 Content Prep Tool.
 
 ## Troubleshooting
 
