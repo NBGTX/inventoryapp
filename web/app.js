@@ -1020,7 +1020,7 @@ const Combo = {
 
 /* Release history is cumulative from the last packaged installer baseline. The installer build
    updates APP_LAST_INSTALLER_VERSION from the latest previously packaged release. */
-const APP_LAST_INSTALLER_VERSION = "2026.10.19.2";
+const APP_LAST_INSTALLER_VERSION = "2026.10.16.15";
 const APP_RELEASE_NOTES = {
   "2026.10.20": [
     { title: "Windows Update Watch", detail: "Review Windows security update status by device using Microsoft’s update catalog. Critical or actively exploited updates are due within 72 hours; other security updates are due within 14 days, with a warning after day 7. Devices without a recent Intune check-in are marked unknown or stale. Filter by status or site and export the report." },

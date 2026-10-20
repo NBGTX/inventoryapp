@@ -33,8 +33,8 @@ Try {
 
     [String]$appVendor = 'Nucor'
     [String]$appName = 'NBG Hub'
-    [String]$appScriptVersion = '1.0.2'
-    [String]$appScriptDate = '10/19/2026'
+    [String]$appScriptVersion = '1.0.3'
+    [String]$appScriptDate = '10/20/2026'
     [String]$appScriptAuthor = 'Nucor'
     [String]$installTitle = 'NBG Hub'
     [Int32]$mainExitCode = 0
