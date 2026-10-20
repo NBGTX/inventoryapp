@@ -14,8 +14,7 @@ Build division-owned scan targets tied to division sites. Each target should sup
 
 1. **Protect checklist data from read failures.** `hub.py` returns `None` both when a checklist is absent and when an existing file/document cannot be read. `Hub.boot()` treats either case as permission to seed defaults and save them. Distinguish missing from unreadable; seed only when missing. Preserve the existing checklist on every read/parse error.
 2. **Isolate external full-window pages from the app API.** `app.py` opens configured external sites in the same pywebview window with the full `js_api` attached. The injected Back button calls `site_back`; other API methods are also exposed to that page context. Use a restricted bridge or open external sites without the app bridge. Review allowed full-window sites and custom-site permissions.
-3. **Remove the startup race.** `web/app.js` falls back to Mock mode 300 ms after page load; a later `pywebviewready` event is ignored because `_started` is already set. Wait for the bridge with a bounded timeout and show a clear startup error if unavailable. Never leave a packaged app silently showing demo data.
-4. **Harden concurrent shared-document edits.** Central SharePoint hub documents use revision checks, while legacy file-backed documents rely on atomic replacement without a cross-process lock. Keep writes conflict-aware, surface conflicts clearly, and avoid reintroducing periodic writes. Treat legacy OneDrive conflict copies as a migration/cleanup task if that storage mode is still in use.
+3. **Harden concurrent shared-document edits.** Central SharePoint hub documents use revision checks, while legacy file-backed documents rely on atomic replacement without a cross-process lock. Keep writes conflict-aware, surface conflicts clearly, and avoid reintroducing periodic writes. Treat legacy OneDrive conflict copies as a migration/cleanup task if that storage mode is still in use.
 
 ## Sync and operations
 
@@ -34,3 +33,4 @@ Build division-owned scan targets tied to division sites. Each target should sup
 - Git and offline tests are present. The old “no git/no tests” roadmap claim was incorrect; CI is still absent.
 - Upgrade-list auto-add now writes only when it adds entries; the old claim that every dashboard load writes the list was stale.
 - OT register, CSV import/value matching, stale-data indicators/reminders, and configurable site-level Entra/Intune scopes are part of the current app; they are not open roadmap items.
+- Desktop startup no longer falls back to Mock after a short timer; silent sign-in now reuses the previously selected account instead of whichever cached account MSAL lists first.

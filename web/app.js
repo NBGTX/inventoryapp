@@ -182,8 +182,8 @@ const Mock = {
   async sharepoint_permissions_prepare_remove_links() { return { ok: false, error: "Sharing-link removal needs the signed-in NBG Hub desktop app." }; },
   async sharepoint_permissions_apply_remove_links() { return { ok: false, error: "Sharing-link removal needs the signed-in NBG Hub desktop app." }; },
   async sign_out() { return { ok: true }; },
-  async app_version() { return { ok: true, version: "2026.10.20" }; },
-  async register_client() { return { ok: true, version: "2026.10.20" }; },
+  async app_version() { return { ok: true, version: "2026.10.20.2" }; },
+  async register_client() { return { ok: true, version: "2026.10.20.2" }; },
   async get_clients() {
     return { ok: true, clients: [
       { machine: "BGPF5MDA4B", user: "blake.stevenson", version: "2026.09.29", last_seen: "2026-09-28T15:40:00Z" },
@@ -1022,6 +1022,10 @@ const Combo = {
    updates APP_LAST_INSTALLER_VERSION from the latest previously packaged release. */
 const APP_LAST_INSTALLER_VERSION = "2026.10.16.15";
 const APP_RELEASE_NOTES = {
+  "2026.10.20.2": [
+    { title: "Sign-in — keep the chosen account", detail: "NBG Hub now reuses the account you selected last time. If multiple accounts are cached and no choice is saved, it asks you to sign in instead of picking one at random." },
+    { title: "Startup — no demo data fallback", detail: "A slow desktop connection no longer opens the browser demo in the installed app. NBG Hub waits for desktop services and offers a retry if they do not start." },
+  ],
   "2026.10.20": [
     { title: "Windows Update Watch", detail: "Review Windows security update status by device using Microsoft’s update catalog. Critical or actively exploited updates are due within 72 hours; other security updates are due within 14 days, with a warning after day 7. Devices without a recent Intune check-in are marked unknown or stale. Filter by status or site and export the report." },
   ],
@@ -8064,6 +8068,8 @@ function refreshShared() {
 }
 async function _boot(real) {
   if (_started) return; _started = true;
+  const bridgeError = document.getElementById("startupBridgeError");
+  if (bridgeError) bridgeError.remove();
   Backend.real = real;
   /* Nothing reads data until sign-in is settled and the division is known: the signed-in account decides
      which divisions it may see, and every list/hub read is scoped by the active division. */
@@ -8083,5 +8089,25 @@ async function _boot(real) {
   window.addEventListener("focus", () => Badges.refresh());
   setTimeout(() => Badges.refresh(), 2500);
 }
+function showBridgeStartupError() {
+  if (_started || document.getElementById("startupBridgeError")) return;
+  const el = document.createElement("div");
+  el.id = "startupBridgeError";
+  el.style.cssText = "position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;background:rgba(0,0,0,.82);color:#e8f4ef;font:15px Segoe UI,sans-serif;text-align:center;padding:24px";
+  el.innerHTML = '<div style="max-width:440px"><h2 style="margin:0 0 12px">NBG Hub could not connect</h2><p style="line-height:1.5">Desktop services did not finish starting. No demo data was loaded. Retry the connection or close and reopen NBG Hub.</p><button class="primary" onclick="location.reload()">Retry</button></div>';
+  document.body.appendChild(el);
+}
+const _mockPreview = new URLSearchParams(window.location.search).get("mock") === "1";
 window.addEventListener("pywebviewready", () => _boot(true));
-window.addEventListener("load", () => setTimeout(() => { if (!_started) _boot(false); }, 300));
+// The bridge event may fire before this script registers its listener.
+if (window.pywebview && window.pywebview.api) _boot(true);
+window.addEventListener("load", () => {
+  if (_mockPreview) { if (!_started) _boot(false); return; }
+  // Packaged app must never silently switch to the browser Mock. Wait for a slow
+  // desktop bridge, then show a retry screen while still accepting a late ready event.
+  setTimeout(() => {
+    if (_started) return;
+    if (window.pywebview && window.pywebview.api) _boot(true);
+    else showBridgeStartupError();
+  }, 10000);
+});

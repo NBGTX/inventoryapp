@@ -56,7 +56,7 @@ Hub documents (named docs, via `Hub.get_named/put_named`): division hub = `devic
 - Commands, rules and conventions: `CLAUDE.md`. Build and deploy: `docs/BUILD_AND_DEPLOY.md`.
 - The user wants short answers, a commit and push after every change set (trailer `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`), and the app **restarted** after each change so they can see it. Restart: stop `python ... app.py`, then in PowerShell `$env:NBG_NO_AUTOSYNC='1'; Start-Process py -ArgumentList '-3.12','app.py' -WorkingDirectory <project> -WindowStyle Hidden`.
 - Never launch the app in Live mode without the user's say-so for anything that writes (Rule 2); `NBG_NO_AUTOSYNC=1` stops the launch sync.
-- Check UI changes in the Mock preview: `python -m http.server <fresh port> --directory web`, then drive it with the browser tool's JavaScript (screenshots time out in that pane). Stop the server afterwards.
+- Check UI changes in the Mock preview: `python -m http.server <fresh port> --directory web`, then open `http://localhost:<port>/?mock=1` and drive it with the browser tool's JavaScript (screenshots time out in that pane). Stop the server afterwards.
 - Why restart: pywebview loads `app.py` once, web files reload from disk. A new `Api` method used before a restart silently falls back to the Mock (symptom: a real card "not found", Mock-only data).
 - Write edit scripts with the Write tool; bash heredocs turn `\n` and backslashes into real characters.
 - Do not mention the old NBGW site access problem (resolved).

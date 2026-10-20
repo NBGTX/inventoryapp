@@ -144,6 +144,7 @@ try:
 except Exception:
     _USER_DIR = HERE  # fallback: behave as before
 _TOKEN_CACHE = os.path.join(_USER_DIR, ".token_cache.bin")
+_ACCOUNT_PREF = os.path.join(_USER_DIR, ".selected_account.json")
 _INTUNE_SELECT = (
     "id,serialNumber,manufacturer,model,deviceName,userPrincipalName,"
     "userDisplayName,osVersion,operatingSystem,enrolledDateTime,lastSyncDateTime,"
@@ -961,6 +962,33 @@ class GraphClient:
             except Exception:
                 pass            # never fall back to plaintext; worst case: sign in again next launch
 
+    @staticmethod
+    def _load_account_preference() -> dict:
+        try:
+            with open(_ACCOUNT_PREF, encoding="utf-8") as f:
+                value = json.load(f)
+            return value if isinstance(value, dict) else {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _save_account_preference(account: dict | None, username: str) -> None:
+        username = str(username or "").strip()
+        if not username:
+            return
+        value = {"username": username,
+                 "home_account_id": str((account or {}).get("home_account_id") or "")}
+        temp = _ACCOUNT_PREF + ".tmp"
+        try:
+            with open(temp, "w", encoding="utf-8") as f:
+                json.dump(value, f)
+            os.replace(temp, _ACCOUNT_PREF)
+        except Exception:
+            try:
+                os.remove(temp)
+            except OSError:
+                pass
+
     def sign_in(self, interactive: bool = True) -> str:
         # Reuse the in-memory access token only while it's still valid (5-minute
         # safety buffer). Once it nears expiry we fall through and let MSAL
@@ -1084,11 +1112,24 @@ class GraphClient:
         )
         result = None
         accounts = self._app.get_accounts()
+        preferred = self._load_account_preference()
+        preferred_home_id = str(preferred.get("home_account_id") or "").lower()
+        preferred_username = str(preferred.get("username") or "").lower()
+        silent_account = next((a for a in accounts if preferred_home_id
+                               and str(a.get("home_account_id") or "").lower() == preferred_home_id), None)
+        if not silent_account and preferred_username:
+            silent_account = next((a for a in accounts
+                                   if str(a.get("username") or "").lower() == preferred_username), None)
+        # A first launch can safely reuse a single cached account. If the cache has
+        # multiple accounts and no saved choice, require the account picker instead
+        # of silently logging into whichever account MSAL happens to return first.
+        if not preferred and len(accounts) == 1:
+            silent_account = accounts[0]
         full = SCOPES + [DIR_SCOPE, AUDITLOG_SCOPE, AUTHMETHOD_SCOPE, USER_READ_SCOPE,
                          WINDOWS_UPDATES_SCOPE]   # optional directory, MFA, department, and update-catalog reads
-        if accounts:
-            result = (self._app.acquire_token_silent(full, account=accounts[0])
-                      or self._app.acquire_token_silent(SCOPES, account=accounts[0]))
+        if silent_account:
+            result = (self._app.acquire_token_silent(full, account=silent_account)
+                      or self._app.acquire_token_silent(SCOPES, account=silent_account))
         if (not result or "access_token" not in result) and interactive:
             # Request the FULL scope set on interactive sign-in. Once an admin has
             # consented these tenant-wide, this returns them with no user prompt AND
@@ -1129,14 +1170,25 @@ class GraphClient:
         self._has_authmethod_read = "userauthenticationmethod.read.all" in _granted
         self._has_user_read = "user.read.all" in _granted
         self._has_windows_updates_read = WINDOWS_UPDATES_SCOPE.lower() in _granted
-        self.account_name = (result.get("id_token_claims") or {}).get("name") or (
-            accounts[0]["username"] if accounts else None
-        )
-        self.account_upn = ((result.get("id_token_claims") or {}).get("preferred_username")
-                            or (accounts[0]["username"] if accounts else "") or "")
         id_claims = result.get("id_token_claims") or {}
+        cached_accounts = self._app.get_accounts()
+        selected_username = str(id_claims.get("preferred_username") or _claims.get("preferred_username")
+                                or _claims.get("upn") or "")
+        selected_account = next((a for a in cached_accounts
+                                 if selected_username and str(a.get("username") or "").lower() == selected_username.lower()), None)
+        result_account = result.get("account")
+        if not selected_account and isinstance(result_account, dict):
+            selected_account = result_account
+        if not selected_account and silent_account:
+            selected_account = silent_account
+        if not selected_account and len(cached_accounts) == 1:
+            selected_account = cached_accounts[0]
+        selected_username = selected_username or str((selected_account or {}).get("username") or "")
+        self.account_name = id_claims.get("name") or selected_username or None
+        self.account_upn = selected_username
         self.account_oid = str(id_claims.get("oid") or _claims.get("oid") or "")
         self.account_tid = str(id_claims.get("tid") or _claims.get("tid") or self.cfg.get("tenant_id") or "")
+        self._save_account_preference(selected_account or silent_account, selected_username)
         return self._token
 
     def sign_out(self) -> None:
@@ -1146,6 +1198,10 @@ class GraphClient:
         self._token = None
         try:
             os.remove(_TOKEN_CACHE)
+        except OSError:
+            pass
+        try:
+            os.remove(_ACCOUNT_PREF)
         except OSError:
             pass
 
@@ -2016,9 +2072,10 @@ class GraphClient:
         """
         if not self._has_windows_updates_read:
             raise GraphError(
-                "Windows Update Watch needs the delegated Microsoft Graph permission "
-                "WindowsUpdates.Read.All with admin consent. Add it to the Inventory "
-                "Dashboard app registration, grant admin consent, then sign out and back in."
+                "Windows Update Watch needs delegated Microsoft Graph permission WindowsUpdates.Read.All. "
+                "Ask an admin to add that delegated permission to the existing NBG Hub app and grant consent, "
+                "then sign out and back in. The signed-in account also needs Windows Update Deployment "
+                "Administrator access, directly or through an authorized group."
             )
 
         filter_text = (
@@ -2036,9 +2093,9 @@ class GraphClient:
             msg = str(exc)
             if "403" in msg:
                 raise GraphError(
-                    "Microsoft denied access to the Windows update catalog. Confirm "
-                    "WindowsUpdates.Read.All admin consent and assign your account an "
-                    "Intune Administrator or Windows Update Deployment Administrator role."
+                    "Microsoft denied delegated access to the Windows update catalog. Confirm delegated "
+                    "WindowsUpdates.Read.All consent and that your account has Windows Update Deployment "
+                    "Administrator access, directly or through its assigned group."
                 ) from exc
             raise
 

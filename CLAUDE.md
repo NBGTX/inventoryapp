@@ -45,7 +45,7 @@ Central site: `https://nucor.sharepoint.com/sites/NBGTX.nbghubdata` (NBG Hub Dat
 
 ```powershell
 python -m unittest discover -s tests                 # offline tests (no network, no real config)
-python -m http.server 8810 --directory web           # SAFE: Mock backend, no network writes
+python -m http.server 8810 --directory web           # then browse to http://localhost:8810/?mock=1 for SAFE Mock preview
 python tools\pull_snapshot.py --hub-only             # copy hub folder to the local sandbox (no sign-in)
 python tools\pull_snapshot.py --switch-local         # read-only prod snapshot, then start the app in Local mode
 python tools\load_central.py                         # DRY RUN: snapshot → central lists (add --hub / --hub-only)

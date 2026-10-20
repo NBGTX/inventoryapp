@@ -115,9 +115,9 @@ copy config.example.json config.json
 ### 3. Run the UI safely against the Mock backend
 ```powershell
 python -m http.server 8810 --directory web
-# open http://localhost:8810  — every Backend.call goes to the in-browser Mock; nothing touches Microsoft or SQL
+# open http://localhost:8810/?mock=1 — every Backend.call goes to the in-browser Mock; nothing touches Microsoft or SQL
 ```
-The browser caches `app.js` aggressively. Use a fresh port, or hard-reload, after edits.
+Mock mode is explicit so a packaged app can never mistake a slow desktop bridge for permission to show demo data. The browser caches `app.js` aggressively. Use a fresh port, or hard-reload, after edits.
 
 ### 4. Read-only checks against the real tenant
 ```powershell
